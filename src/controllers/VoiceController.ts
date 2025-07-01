@@ -4,54 +4,47 @@ import { VoiceService } from "../business/services/VoiceService";
 import twilio from "twilio";
 
 export class VoiceController {
-    async handleIncomingCall(req: Request, res: Response) {
-        if (!req.body.From) {
-            return res.status(400).send("Missing From parameter");
-        }
-        try {
-            const from = req.body.From;
-            const to = req.body.To;
-            const recordingUrl = req.body.RecordingUrl;
+    // POST /voice/twilio/conversation
+    async handleConversation(req: Request, res: Response) {
+        const twiml = new twilio.twiml.VoiceResponse();
 
-            if (!recordingUrl) {
-                // Step 1: Tell Twilio to record the call
-                const twiml = new twilio.twiml.VoiceResponse();
-                twiml.say("U wordt doorverbonden met onze assistent.");
-                twiml.record({
-                    action: "/voice/twilio/callback", // will receive recordingUrl here
-                    method: "POST",
-                    maxLength: 30,
-                    playBeep: true,
-                    trim: "do-not-trim",
-                });
-                res.type("text/xml").send(twiml.toString());
-                return;
-            }
+        // Check of er al een opname is (dus beller sprak iets in)
+        const recordingUrl = req.body.RecordingUrl;
+        const from = req.body.From;
+        const to = req.body.To;
 
-            // Step 2: Process the recording
+        if (recordingUrl) {
+            // Stap 1: transcriptie ophalen
             const voiceService = container.resolve(VoiceService);
-            await voiceService.processCall(from, to, recordingUrl);
-            res.sendStatus(200);
-        } catch (err) {
-            console.error("❌ Error in TwilioVoiceController:", err);
-            res.status(500).send("Internal server error");
+            const transcript = await voiceService.transcribe(recordingUrl);
+
+            // Stap 2: antwoord genereren (bijv. met GPT)
+            const reply = await voiceService.generateReply(transcript, from);
+
+            // Stap 3: antwoord terugzeggen
+            twiml.say(reply);
+        } else {
+            // Eerste keer? Dan even een welkomstzin
+            twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
         }
+
+        // Stap 4: opname starten voor volgende input
+        twiml.record({
+            action: "/voice/twilio/conversation",
+            method: "POST",
+            maxLength: 10,
+            playBeep: true,
+            trim: "do-not-trim",
+            timeout: 3, // wacht max 3 seconden op stem
+        });
+
+        res.type("text/xml").send(twiml.toString());
     }
+
 
     async handleIncomingCallTwilio(req: Request, res: Response) {
         const twiml = new twilio.twiml.VoiceResponse();
         twiml.say("Hallo! Je Twilio webhook werkt.");
         res.type("text/xml").send(twiml.toString());
-    }
-
-    async handleLocalTest(req: Request, res: Response) {
-        const service = container.resolve(VoiceService);
-        try {
-            await service.processCallTest();
-            res.status(200).send("✅ Local test completed, check audio/output.mp3");
-        } catch (e) {
-            console.error("❌ Local test failed:", e);
-            res.status(500).send("Error in local test");
-        }
     }
 }

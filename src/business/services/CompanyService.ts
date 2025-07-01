@@ -14,11 +14,12 @@ export class CompanyService {
     // Company CRUD
     async create(name: string, twilioNumber: string, website: string): Promise<void> {
         const bytes = crypto.randomBytes(8); // 8 bytes = 64-bit
+        const sanitizedTwilioNumber = twilioNumber.replace(/\s+/g, "");
         const id = BigInt("0x" + bytes.toString("hex"));
         const company = new CompanyModel(
             id,
             name,
-            twilioNumber,
+            sanitizedTwilioNumber,
             website,
             false,
             new Date(),
@@ -28,7 +29,8 @@ export class CompanyService {
     }
 
     async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel> {
-        const company = await this.repo.findByTwilioNumber(twilioNumber);
+        const sanitizedTwilioNumber = twilioNumber.replace(/\s+/g, "");
+        const company = await this.repo.findByTwilioNumber(sanitizedTwilioNumber);
         if (!company) {
             throw new Error("Unknown company");
         }

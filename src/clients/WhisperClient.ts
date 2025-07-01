@@ -1,21 +1,32 @@
 import axios from "axios";
-import fs from "fs";
 import FormData from "form-data";
 import { injectable } from "tsyringe";
 
 @injectable()
 export class WhisperClient {
-    async transcribe(filePath: string): Promise<string> {
-        const form = new FormData();
-        form.append("file", fs.createReadStream(filePath));
-        form.append("model", "whisper-1");
-
-        const response = await axios.post("https://api.openai.com/v1/audio/transcriptions", form, {
-            headers: {
-                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-                ...form.getHeaders(),
-            },
+    async transcribe(fileUrl: string): Promise<string> {
+        const audioStream = await axios.get(fileUrl, {
+            responseType: "stream",
         });
+
+        const formData = new FormData();
+        formData.append("file", audioStream.data, {
+            filename: "audio.mp3", // OpenAI requires this
+            contentType: "audio/mpeg", // Or whatever it is
+        });
+        formData.append("model", "whisper-1");
+
+        const response = await axios.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            formData,
+            {
+                headers: {
+                    ...formData.getHeaders(),
+                    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+                },
+            }
+        );
+
         return response.data.text;
     }
 }

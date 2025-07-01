@@ -9,17 +9,18 @@ export class CompanyRepository implements ICompanyRepository {
     // Create a new company
     async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
-            INSERT INTO company (id, name, twilio_number, website)
+            INSERT INTO company (id, name, website, twilio_number)
             VALUES (?, ?, ?, ?)
         `;
-        await pool.query<ResultSetHeader>(sql, [company.id, company.name, company.twilioNumber, company.website]);
+        await pool.query<ResultSetHeader>(sql, [company.id, company.name, company.website, company.twilioNumber]);
     }
 
     // Fetch company by Twilio number
     async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
+        console.log(twilioNumber);
         const sql = `
             SELECT id, name, website, twilio_number, calendar_connected, created_at, updated_at
-            FROM companies
+            FROM company
             WHERE twilio_number = ?
                 LIMIT 1
         `;
