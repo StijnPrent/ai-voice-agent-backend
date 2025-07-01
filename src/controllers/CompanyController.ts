@@ -4,7 +4,6 @@ import { Request, Response } from "express";
 import {container, inject, injectable} from "tsyringe";
 import { CompanyService } from "../business/services/CompanyService";
 
-container.register("CompanyService", { useClass: CompanyService });
 
 @injectable()
 export class CompanyController {

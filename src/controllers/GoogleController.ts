@@ -5,8 +5,6 @@ import {injectable, inject, container} from "tsyringe";
 import { GoogleService } from "../business/services/GoogleService";
 import { calendar_v3 } from "googleapis";
 
-container.register("GoogleService", { useClass: GoogleService });
-
 @injectable()
 export class GoogleController {
 

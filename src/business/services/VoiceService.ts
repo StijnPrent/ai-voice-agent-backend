@@ -15,7 +15,7 @@ export class VoiceService {
         @inject("ElevenLabsClient") private tts: ElevenLabsClient,
         @inject("TwilioClient") private twilio: TwilioClient,
         @inject("CompanyService") private companyService: CompanyService,
-        @inject("GoogleIntegrationService") private calendarService: GoogleService
+        @inject("GoogleService") private calendarService: GoogleService
     ) {}
 
     async processCallTest(): Promise<void> {
