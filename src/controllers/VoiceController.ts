@@ -18,7 +18,7 @@ export class VoiceController {
                 const twiml = new twilio.twiml.VoiceResponse();
                 twiml.say("U wordt doorverbonden met onze assistent.");
                 twiml.record({
-                    action: "/api/twilio/callback", // will receive recordingUrl here
+                    action: "/voice/twilio/callback", // will receive recordingUrl here
                     method: "POST",
                     maxLength: 30,
                     playBeep: true,
@@ -36,6 +36,12 @@ export class VoiceController {
             console.error("❌ Error in TwilioVoiceController:", err);
             res.status(500).send("Internal server error");
         }
+    }
+
+    async handleIncomingCallTwilio(req: Request, res: Response) {
+        const twiml = new twilio.twiml.VoiceResponse();
+        twiml.say("Hallo! Je Twilio webhook werkt.");
+        res.type("text/xml").send(twiml.toString());
     }
 
     async handleLocalTest(req: Request, res: Response) {
