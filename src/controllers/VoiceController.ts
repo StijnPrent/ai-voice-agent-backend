@@ -29,7 +29,7 @@ export class VoiceController {
                 twiml.play(audioUrl);
             } else {
                 // Eerste keer? Gebruik eventueel een standaard ElevenLabs-audio
-                twiml.play("https://api.voiceagent.stite.nl/audio/welcome.mp3");
+                twiml.play("https://603cf3305d49b41e00703058c9360072.r2.cloudflarestorage.com/voice-audio/Welcome.mp3");
 
                 // Of fallback naar TTS
                 // twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
