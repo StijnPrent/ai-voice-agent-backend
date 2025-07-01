@@ -9,34 +9,40 @@ export class VoiceController {
         try {
             const twiml = new twilio.twiml.VoiceResponse();
 
-            // Check of er al een opname is (dus beller sprak iets in)
             const recordingUrl = req.body.RecordingUrl;
             const from = req.body.From;
             const to = req.body.To;
 
+            const voiceService = container.resolve(VoiceService);
+
             if (recordingUrl) {
                 // Stap 1: transcriptie ophalen
-                const voiceService = container.resolve(VoiceService);
                 const transcript = await voiceService.transcribe(recordingUrl);
 
-                // Stap 2: antwoord genereren (bijv. met GPT)
+                // Stap 2: antwoord genereren
                 const reply = await voiceService.generateReply(transcript, from);
 
-                // Stap 3: antwoord terugzeggen
-                twiml.say(reply);
+                // 🔊 Stap 3: audio genereren met ElevenLabs
+                const audioUrl = await voiceService.synthesizeReply(reply, from); // retourneert een publieke URL
+
+                // 🎧 Stap 4: afspelen in plaats van say()
+                twiml.play(audioUrl);
             } else {
-                // Eerste keer? Dan even een welkomstzin
-                twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
+                // Eerste keer? Gebruik eventueel een standaard ElevenLabs-audio
+                twiml.play("https://api.voiceagent.stite.nl/audio/welcome.mp3");
+
+                // Of fallback naar TTS
+                // twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
             }
 
-            // Stap 4: opname starten voor volgende input
+            // Stap 5: opnieuw opnemen
             twiml.record({
                 action: "/voice/twilio/conversation",
                 method: "POST",
                 maxLength: 10,
-                playBeep: true,
+                playBeep: false,
                 trim: "do-not-trim",
-                timeout: 3, // wacht max 3 seconden op stem
+                timeout: 3,
             });
 
             res.type("text/xml").send(twiml.toString());
@@ -45,6 +51,7 @@ export class VoiceController {
             res.status(500).type("text/xml").send("<Response><Say>Er ging iets mis.</Say></Response>");
         }
     }
+
 
 
     async handleIncomingCallTwilio(req: Request, res: Response) {
