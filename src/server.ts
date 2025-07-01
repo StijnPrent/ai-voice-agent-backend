@@ -6,6 +6,7 @@ import "./container";
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use("/voice", voiceRoutes);
 app.use('/company', companyRoutes);
 
