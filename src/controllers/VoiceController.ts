@@ -3,6 +3,8 @@ import { container } from "tsyringe";
 import { VoiceService } from "../business/services/VoiceService";
 import twilio from "twilio";
 
+container.register("VoiceService", { useClass: VoiceService });
+
 export class VoiceController {
     async handleIncomingCall(req: Request, res: Response) {
         if (!req.body.From) {
