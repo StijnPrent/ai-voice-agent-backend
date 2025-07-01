@@ -1,24 +1,24 @@
 import pool from "../../config/database";
+import crypto from "crypto";
 import { ResultSetHeader, RowDataPacket } from "mysql2";
-import { Company, CompanyInfoItem } from "../../business/services/CompanyService";
+import { CompanyModel } from "../../business/models/CompanyModel";
+import { CompanyInfoModel} from "../../business/models/CompanyInfoModel";
 import { ICompanyRepository } from "../interfaces/ICompanyRepository";
 
 export class CompanyRepository implements ICompanyRepository {
     // Create a new company
-    async createCompany(name: string, twilioNumber: string): Promise<Company> {
+    async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
-            INSERT INTO companies (name, twilio_number)
-            VALUES (?, ?)
+            INSERT INTO company (id, name, twilio_number, website)
+            VALUES (?, ?, ?, ?)
         `;
-        const [result] = await pool.query<ResultSetHeader>(sql, [name, twilioNumber]);
-        const id = result.insertId;
-        return { id, name, twilioNumber, isCalendarConnected: false };
+        await pool.query<ResultSetHeader>(sql, [company.id, company.name, company.twilioNumber, company.website]);
     }
 
     // Fetch company by Twilio number
-    async findByTwilioNumber(twilioNumber: string): Promise<Company | null> {
+    async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT id, name, twilio_number, calendar_connected
+            SELECT id, name, website, twilio_number, calendar_connected, created_at, updated_at
             FROM companies
             WHERE twilio_number = ?
                 LIMIT 1
@@ -26,16 +26,19 @@ export class CompanyRepository implements ICompanyRepository {
         const [rows] = await pool.query<RowDataPacket[]>(sql, [twilioNumber]);
         if (rows.length === 0) return null;
         const row = rows[0];
-        return {
-            id: row.id,
-            name: row.name,
-            twilioNumber: row.twilio_number,
-            isCalendarConnected: row.calendar_connected === 1
-        };
+        return new CompanyModel(
+            row.id,
+            row.name,
+            row.website,
+            row.twilio_number,
+            row.calendar_connected ? true : false,
+            new Date(row.created_at),
+            new Date(row.updated_at)
+        )
     }
 
     // Toggle calendar_connected flag
-    async setCalendarConnected(companyId: number, connected: boolean): Promise<void> {
+    async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
         const sql = `
       UPDATE companies
       SET calendar_connected = ?, updated_at = CURRENT_TIMESTAMP
@@ -45,13 +48,12 @@ export class CompanyRepository implements ICompanyRepository {
     }
 
     // Add a company_info record
-    async addInfo(companyId: number, value: string): Promise<CompanyInfoItem> {
+    async addInfo(companyId: bigint, value: string): Promise<void> {
         const sql = `
       INSERT INTO company_info (company_id, info_value)
       VALUES (?, ?)
     `;
-        const [result] = await pool.query<ResultSetHeader>(sql, [companyId, value]);
-        return { id: result.insertId, companyId, value };
+        await pool.query<ResultSetHeader>(sql, [companyId, value]);
     }
 
     // Remove a company_info record by ID
@@ -61,7 +63,7 @@ export class CompanyRepository implements ICompanyRepository {
     }
 
     // Fetch all info entries for a company
-    async fetchInfo(companyId: number): Promise<CompanyInfoItem[]> {
+    async fetchInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
         const sql = `
       SELECT id, info_value
       FROM company_info
@@ -69,6 +71,10 @@ export class CompanyRepository implements ICompanyRepository {
       ORDER BY created_at
     `;
         const [rows] = await pool.query<RowDataPacket[]>(sql, [companyId]);
-        return rows.map(r => ({ id: r.id, companyId, value: r.info_value }));
+        return rows.map(r => new CompanyInfoModel(
+            r.id,
+            r.info_value,
+            new Date(r.created_at)
+        ));
     }
 }
