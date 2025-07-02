@@ -16,7 +16,7 @@ export class VoiceService {
      */
     async processConversation(recordingUrl: string): Promise<string> {
         // Twilio returns a URL to a WAV by default
-        const transcript = await this.whisperClient.transcribe(`${recordingUrl}.wav`);
+        const transcript = await this.whisperClient.transcribe(`${recordingUrl}`);
         const replyText = await this.chatGptClient.getReply(transcript);
         return replyText;
     }
