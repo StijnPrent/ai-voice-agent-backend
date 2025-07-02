@@ -5,21 +5,27 @@ import { VoiceController } from "../controllers/VoiceController";
 const router = Router();
 const controller = new VoiceController();
 
-// 1) Bij binnenkomende call: speel welkom + start Gather
+// 1) Incoming call
 router.post(
-    "/twilio/incoming",
+    "/voice/twilio/incoming",
     controller.handleIncomingCallTwilio.bind(controller)
 );
 
-// 2) Na elke SpeechResult: AI → TTS + nieuwe Gather
+// 2) Conversation loop
 router.post(
-    "/twilio/conversation",
+    "/voice/twilio/conversation",
     controller.handleConversation.bind(controller)
 );
 
-// 3) TTS-streaming endpoint voor ElevenLabs
+// 3a) HEAD for TTS – Twilio does this first
+router.head("/voice/tts", (_req, res) => {
+    // Geef direct 200, geen body
+    res.sendStatus(200);
+});
+
+// 3b) GET for TTS – jouw streaming handler
 router.get(
-    "/tts",
+    "/voice/tts",
     controller.tts.bind(controller)
 );
 
