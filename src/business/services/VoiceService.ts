@@ -1,7 +1,7 @@
-import { inject, injectable } from "tsyringe";
-import { WhisperClient } from "../../clients/WhisperClient";
-import { ChatGPTClient } from "../../clients/ChatGPTClient";
-import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
+import {inject, injectable} from "tsyringe";
+import {WhisperClient} from "../../clients/WhisperClient";
+import {ChatGPTClient} from "../../clients/ChatGPTClient";
+import {ElevenLabsClient} from "../../clients/ElevenLabsClient";
 
 @injectable()
 export class VoiceService {
@@ -17,7 +17,6 @@ export class VoiceService {
     async processConversation(recordingUrl: string): Promise<string> {
         // Twilio returns a URL to a WAV by default
         const transcript = await this.whisperClient.transcribe(`${recordingUrl}`);
-        const replyText = await this.chatGptClient.getReply(transcript);
-        return replyText;
+        return await this.chatGptClient.getReply(transcript);
     }
 }

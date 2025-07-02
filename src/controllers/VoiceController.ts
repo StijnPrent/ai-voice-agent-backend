@@ -14,42 +14,26 @@ export class VoiceController {
         try {
             const { RecordingUrl } = req.body;
             if (!RecordingUrl) {
-                twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
+                twiml.say("Er is geen opname gevonden. Probeer opnieuw.");
             } else {
-                const voiceService = container.resolve(VoiceService);
-                const replyText = await voiceService.processConversation(RecordingUrl);
-                // Play generated speech via our TTS endpoint
-                const ttsUrl = `${process.env.SERVER_URL}/voice/tts?text=${encodeURIComponent(replyText)}`;
-                twiml.play(ttsUrl);
+                const replyText = await container.resolve(VoiceService).processConversation(RecordingUrl);
+
+                // SevenLabs-stem: chunked streaming
+                twiml.play(`${process.env.SERVER_URL}/voice/tts?text=${encodeURIComponent(replyText)}`);
             }
-            // Optionally continue recording for follow-up (loop)
             twiml.record({
                 action: `${process.env.SERVER_URL}/voice/twilio/conversation`,
                 method: "POST",
                 maxLength: 30,
+                playBeep: false,
+                timeout: 1,
             });
             twiml.hangup();
         } catch (err) {
-            console.error("❌ Error in handleConversation:", err);
+            console.error(err);
             twiml.say("Er is iets misgegaan. Probeer het later opnieuw.");
             twiml.hangup();
         }
-        res.type("text/xml").send(twiml.toString());
-    }
-
-    /**
-     * Answers new calls by recording user after a prompt.
-     */
-    async handleIncomingCallTwilio(req: Request, res: Response) {
-        const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say("Hallo! U wordt verbonden met onze spraakassistent. Spreek na de piep.");
-        twiml.record({
-            action: `${process.env.BASE_URL}/voice/twilio/conversation`,
-            method: "POST",
-            maxLength: 30,
-            playBeep: true,
-        });
-        twiml.hangup();
         res.type("text/xml").send(twiml.toString());
     }
 
@@ -60,11 +44,16 @@ export class VoiceController {
         try {
             const text = req.query.text as string;
             const elevenLabsClient = container.resolve(ElevenLabsClient);
-            const audioStream = await elevenLabsClient.synthesizeSpeechStream(text);
+
+            // Chunked transfer zodat Twilio meteen kan starten met afspelen
             res.setHeader("Content-Type", "audio/mpeg");
+            res.setHeader("Transfer-Encoding", "chunked");
+            res.flushHeaders?.();
+
+            const audioStream = await elevenLabsClient.synthesizeSpeechStream(text);
             audioStream.pipe(res);
         } catch (err) {
-            console.error("❌ Error in TTS endpoint:", err);
+            console.error(err);
             res.status(500).send("Error generating speech");
         }
     }
