@@ -1,24 +1,33 @@
+// src/clients/ElevenLabsClient.ts
 import axios from "axios";
 import { Readable } from "stream";
 import { injectable } from "tsyringe";
 
 @injectable()
 export class ElevenLabsClient {
-    /**
-     * Synthesize speech and return a readable stream (no file saved to disk).
-     */
-    // src/clients/ElevenLabsClient.ts
     async synthesizeSpeechStream(text: string): Promise<Readable> {
+        const voiceId = process.env.ELEVENLABS_VOICE_ID!;
+        const apiKey  = process.env.ELEVENLABS_API_KEY!;
+
         const response = await axios.post(
-            `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
-            { text, voice_settings: { stability: 0.2, similarity_boost: 0.2 } },
+            `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
             {
-                params: { optimize_streaming_latency: true },
+                text,
+                voice_settings: {
+                    stability:        0.0,   // minimaal voor supersnelle chunks
+                    similarity_boost: 0.0,
+                },
+            },
+            {
+                params: {
+                    optimize_streaming_latency: true,
+                    format: "wav",         // belangrijk!
+                },
                 responseType: "stream",
-                headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY! },
+                headers: { "xi-api-key": apiKey },
             }
         );
+
         return response.data as Readable;
     }
-
 }

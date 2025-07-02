@@ -81,20 +81,46 @@ export class VoiceController {
      * zodat Twilio vrijwel direct kan starten met afspelen.
      */
     async tts(req: Request, res: Response) {
+        const text = req.query.text as string | undefined;
+        if (!text) return res.status(400).send("Missing text");
+
+        // 1) Stel headers in
+        res.setHeader("Content-Type", "audio/wav");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.flushHeaders?.();
+
         try {
-            const text = req.query.text as string;
-            const elevenLabsClient = container.resolve(ElevenLabsClient);
+            const client = container.resolve(ElevenLabsClient);
+            const audioStream = await client.synthesizeSpeechStream(text);
 
-            // Zet WAV + chunked encoding voor lage latency
-            res.setHeader("Content-Type", "audio/mpeg");
-            res.setHeader("Transfer-Encoding", "chunked");
-            res.flushHeaders?.();
+            // 2) Pre-buffer eerste chunk (anders Twilio timeout)
+            const firstChunk: Buffer = await new Promise((resolve, reject) => {
+                const onData = (chunk: Buffer) => {
+                    cleanup();
+                    resolve(chunk);
+                };
+                const onError = (err: any) => {
+                    cleanup();
+                    reject(err);
+                };
+                const cleanup = () => {
+                    audioStream.off("data", onData);
+                    audioStream.off("error", onError);
+                };
+                audioStream.once("data", onData);
+                audioStream.once("error", onError);
+            });
 
-            const audioStream = await elevenLabsClient.synthesizeSpeechStream(text);
+            // Stuur ‘m direct door
+            res.write(firstChunk);
+
+            // 3) Dan de rest van de audio
             audioStream.pipe(res);
+
         } catch (err) {
             console.error("❌ Error in TTS endpoint:", err);
-            res.status(500).send("Error generating speech");
+            if (!res.headersSent) res.status(500).send("Error generating speech");
         }
     }
+
 }
