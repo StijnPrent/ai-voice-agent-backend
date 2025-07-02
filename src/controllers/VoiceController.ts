@@ -19,7 +19,7 @@ export class VoiceController {
 
         // 2) Directe STT via Twilio Gather
         const gather = twiml.gather({
-            input:         "speech",
+            input:         ["speech"],
             action:        `${baseUrl}/voice/twilio/conversation`,
             method:        "POST",
             timeout:       1,
@@ -59,7 +59,7 @@ export class VoiceController {
 
             // 3) Start opnieuw een <Gather> voor de volgende vraag:
             const gather = twiml.gather({
-                input:         "speech",
+                input:         ["speech"],
                 action:        `${baseUrl}/voice/twilio/conversation`,
                 method:        "POST",
                 timeout:       1,
