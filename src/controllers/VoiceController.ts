@@ -23,7 +23,6 @@ export class VoiceController {
                 action: `${process.env.BASE_URL}/voice/twilio/conversation`,
                 method: "POST",
                 maxLength: 30,
-                playBeep: true,
             });
             twiml.hangup();
         } catch (err) {

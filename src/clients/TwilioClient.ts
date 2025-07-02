@@ -11,10 +11,6 @@ export class TwilioClient {
         this.client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
     }
 
-    getAudio(recordingUrl: string) {
-        return await axios.get(recordingUrl);
-    }
-
     sendAudio(to: string, from: string, audioUrl: string) {
         return this.client.calls.create({ url: audioUrl, to, from });
     }
