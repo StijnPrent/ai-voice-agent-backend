@@ -26,7 +26,6 @@ export class VoiceController {
                 method: "POST",
                 maxLength: 30,
                 playBeep: false,
-                timeout: 1,
             });
             twiml.hangup();
         } catch (err) {
