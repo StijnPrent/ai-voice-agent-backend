@@ -13,11 +13,15 @@ export class VoiceController {
         const twiml = new twilio.twiml.VoiceResponse();
         try {
             const { RecordingUrl } = req.body;
-            const voiceService = container.resolve(VoiceService);
-            const replyText = await voiceService.processConversation(RecordingUrl);
-            // Play generated speech via our TTS endpoint
-            const ttsUrl = `${process.env.SERVER_URL}/voice/tts?text=${encodeURIComponent(replyText)}`;
-            twiml.play(ttsUrl);
+            if (!RecordingUrl) {
+                twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
+            } else {
+                const voiceService = container.resolve(VoiceService);
+                const replyText = await voiceService.processConversation(RecordingUrl);
+                // Play generated speech via our TTS endpoint
+                const ttsUrl = `${process.env.SERVER_URL}/voice/tts?text=${encodeURIComponent(replyText)}`;
+                twiml.play(ttsUrl);
+            }
             // Optionally continue recording for follow-up (loop)
             twiml.record({
                 action: `${process.env.SERVER_URL}/voice/twilio/conversation`,
