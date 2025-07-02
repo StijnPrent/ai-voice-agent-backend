@@ -83,7 +83,7 @@ export class VoiceController {
         }
 
         // 1) Stel headers in
-        res.setHeader("Content-Type", "audio/wav");
+        res.setHeader("Content-Type", "audio/mpeg");
         res.setHeader("Transfer-Encoding", "chunked");
         res.flushHeaders?.();
 

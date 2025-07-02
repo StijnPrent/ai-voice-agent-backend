@@ -5,29 +5,13 @@ import { injectable } from "tsyringe";
 
 @injectable()
 export class ElevenLabsClient {
+    // src/clients/ElevenLabsClient.ts
     async synthesizeSpeechStream(text: string): Promise<Readable> {
-        const voiceId = process.env.ELEVENLABS_VOICE_ID!;
-        const apiKey  = process.env.ELEVENLABS_API_KEY!;
-
-        const response = await axios.post(
+        const resp = await axios.post(
             `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
-            {
-                text,
-                voice_settings: {
-                    stability:        0.0,   // minimaal voor supersnelle chunks
-                    similarity_boost: 0.0,
-                },
-            },
-            {
-                params: {
-                    optimize_streaming_latency: true,
-                    format: "wav",         // belangrijk!
-                },
-                responseType: "stream",
-                headers: { "xi-api-key": apiKey },
-            }
+            { text, voice_settings: { stability:0.0, similarity_boost:0.0 } },
+            { params: { optimize_streaming_latency: true }, responseType: "stream", headers }
         );
-
-        return response.data as Readable;
+        return resp.data;
     }
 }
