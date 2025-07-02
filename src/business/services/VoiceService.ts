@@ -20,20 +20,15 @@ export class VoiceService {
         const mp3Url = recordingUrl.endsWith(".mp3") ? recordingUrl : `${recordingUrl}.mp3`;
 
         // ✅ Twilio basic auth
-        const audioRes = await axios.get(mp3Url, {
-            responseType: "arraybuffer", // Whisper expects buffer
-            auth: {
-                username: process.env.TWILIO_SID!,
-                password: process.env.TWILIO_AUTH!,
-            },
-        });
+        const audioRes = await axios.get(mp3Url);
 
         const formData = new FormData();
-        formData.append("file", Buffer.from(audioRes.data), {
-            filename: "audio.mp3",
-            contentType: "audio/mpeg",
+        formData.append("file", audioRes.data, {
+            filename: "audio.wav",
+            contentType: "audio/x-wav",
         });
         formData.append("model", "whisper-1");
+        formData.append("language", "nl");
 
         const response = await axios.post("https://api.openai.com/v1/audio/transcriptions", formData, {
             headers: {
