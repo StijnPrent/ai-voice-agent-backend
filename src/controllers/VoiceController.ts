@@ -26,11 +26,9 @@ export class VoiceController {
 
         // 2) Speel binnen Gather je welkoms-MP3 en prompt
         gather.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
-        gather.say("Spreek nu uw vraag in.");
 
         // 3) Fallback binnen dezelfde Gather: bij geen input
-        gather.say("Sorry, ik versta u niet. Nogmaals alstublieft.");
-        gather.redirect(`${baseUrl}/voice/twilio/incoming`);
+        twiml.redirect(`${baseUrl}/voice/twilio/incoming`);
 
         // 4) _Niet_ meer buiten de Gather redirect of hangup
         res.type("text/xml").send(twiml.toString());
@@ -48,7 +46,7 @@ export class VoiceController {
             const userSpeech = req.body.SpeechResult as string;
 
             if (!userSpeech) {
-                twiml.say("Sorry, ik heb u niet verstaan. Probeer het opnieuw.");
+                twiml.say("Sorry, i didn't catch that. Please try again.");
             } else {
                 // 1) AI-antwoord ophalen
                 const voiceService = container.resolve(VoiceService);
