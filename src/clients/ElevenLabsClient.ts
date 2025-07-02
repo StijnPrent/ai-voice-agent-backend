@@ -13,7 +13,7 @@ export class ElevenLabsClient {
             `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
             { text, voice_settings: { stability: 0.2, similarity_boost: 0.2 } },
             {
-                params: { optimize_streaming_latency: true, format: "wav" },
+                params: { optimize_streaming_latency: true },
                 responseType: "stream",
                 headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY! },
             }

@@ -86,7 +86,7 @@ export class VoiceController {
             const elevenLabsClient = container.resolve(ElevenLabsClient);
 
             // Zet WAV + chunked encoding voor lage latency
-            res.setHeader("Content-Type", "audio/wav");
+            res.setHeader("Content-Type", "audio/mpeg");
             res.setHeader("Transfer-Encoding", "chunked");
             res.flushHeaders?.();
 
