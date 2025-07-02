@@ -16,6 +16,7 @@ export class VoiceController {
             const voiceService = container.resolve(VoiceService);
 
             if (recordingUrl) {
+                twiml.play(recordingUrl);
                 // Stap 1: transcriptie ophalen
                 const transcript = await voiceService.transcribe(recordingUrl);
 
@@ -29,7 +30,7 @@ export class VoiceController {
                 twiml.play(audioUrl);
             } else {
                 // Eerste keer? Gebruik eventueel een standaard ElevenLabs-audio
-                twiml.play("https://603cf3305d49b41e00703058c9360072.r2.cloudflarestorage.com/voice-audio/Welcome.mp3");
+                twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
 
                 // Of fallback naar TTS
                 // twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
@@ -48,7 +49,7 @@ export class VoiceController {
             res.type("text/xml").send(twiml.toString());
         } catch (err) {
             console.error("❌ Error in TwilioVoiceController:", err);
-            res.status(500).type("text/xml").send("<Response><Say>Er ging iets mis.</Say></Response>");
+            twiml.say("Er is iets misgegaan. Probeer het later opnieuw.");
         }
     }
 
