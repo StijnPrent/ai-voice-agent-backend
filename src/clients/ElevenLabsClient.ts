@@ -26,4 +26,3 @@ export class ElevenLabsClient {
         return response.data as Readable;
     }
 }
-}
