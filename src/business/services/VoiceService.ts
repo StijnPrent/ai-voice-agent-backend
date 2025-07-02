@@ -14,14 +14,22 @@ export class VoiceService {
     }
 
     /**
-     * Transcribe audio file from a Twilio recording URL
+     * Transcribe audio file from a Twilio recording URL (requires auth)
      */
     async transcribe(recordingUrl: string): Promise<string> {
         const mp3Url = recordingUrl.endsWith(".mp3") ? recordingUrl : `${recordingUrl}.mp3`;
-        const audioRes = await axios.get(mp3Url, { responseType: "stream" });
+
+        // ✅ Twilio basic auth
+        const audioRes = await axios.get(mp3Url, {
+            responseType: "arraybuffer", // Whisper expects buffer
+            auth: {
+                username: process.env.TWILIO_SID!,
+                password: process.env.TWILIO_AUTH!,
+            },
+        });
 
         const formData = new FormData();
-        formData.append("file", audioRes.data, {
+        formData.append("file", Buffer.from(audioRes.data), {
             filename: "audio.mp3",
             contentType: "audio/mpeg",
         });
