@@ -61,7 +61,6 @@ export class VoiceController {
                 speechTimeout: "auto",
                 language:      "nl-NL",
             });
-            gather.say("U kunt nog iets vragen.");
 
         } catch (err) {
             console.error("❌ Error in handleConversation:", err);
