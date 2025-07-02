@@ -77,42 +77,22 @@ export class VoiceController {
      * met pre-buffer van de eerste chunk om Twilio timeouts te omzeilen.
      */
     async tts(req: Request, res: Response) {
-        const text = (req.query.text as string | undefined) ?? "";
+        const text = (req.query.text as string | undefined)?.trim();
         if (!text) {
             return res.status(400).send("Missing `text` parameter");
         }
 
-        // 1) Stel headers in
+        // 1) Stel headers in voor MP3 + chunked
         res.setHeader("Content-Type", "audio/mpeg");
         res.setHeader("Transfer-Encoding", "chunked");
         res.flushHeaders?.();
 
         try {
-            const client = container.resolve(ElevenLabsClient);
+            // 2) Stream van ElevenLabs
+            const client      = container.resolve(ElevenLabsClient);
             const audioStream = await client.synthesizeSpeechStream(text);
 
-            // 2) Pre-buffer eerste chunk
-            const firstChunk: Buffer = await new Promise((resolve, reject) => {
-                const onData = (chunk: Buffer) => {
-                    cleanup();
-                    resolve(chunk);
-                };
-                const onError = (err: any) => {
-                    cleanup();
-                    reject(err);
-                };
-                const cleanup = () => {
-                    audioStream.off("data", onData);
-                    audioStream.off("error", onError);
-                };
-                audioStream.once("data", onData);
-                audioStream.once("error", onError);
-            });
-
-            // 3) Stuur direct de eerste chunk
-            res.write(firstChunk);
-
-            // 4) Pipe de rest
+            // 3) Pipe door naar Twilio
             audioStream.pipe(res);
         } catch (err) {
             console.error("❌ Error in TTS endpoint:", err);
