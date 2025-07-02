@@ -14,23 +14,25 @@ export class VoiceController {
         const baseUrl = process.env.SERVER_URL ?? `${req.protocol}://${req.get("host")}`;
         const twiml = new twilio.twiml.VoiceResponse();
 
-        // 1) Groet
-        twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
-
-        // 2) Directe STT via Twilio Gather
+        // 1) Begin een Gather met bargeIn en langere timeout
         const gather = twiml.gather({
             input:         ["speech"],
             action:        `${baseUrl}/voice/twilio/conversation`,
             method:        "POST",
-            timeout:       1,
+            timeout:       5,           // 5s stilte toegestaan
             speechTimeout: "auto",
             language:      "nl-NL",
         });
+
+        // 2) Speel binnen Gather je welkoms-MP3 en prompt
+        gather.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
         gather.say("Spreek nu uw vraag in.");
 
-        // 3) Fallback als er niets binnenkomt
-        twiml.redirect(`${baseUrl}/voice/twilio/incoming`);
+        // 3) Fallback binnen dezelfde Gather: bij geen input
+        gather.say("Sorry, ik versta u niet. Nogmaals alstublieft.");
+        gather.redirect(`${baseUrl}/voice/twilio/incoming`);
 
+        // 4) _Niet_ meer buiten de Gather redirect of hangup
         res.type("text/xml").send(twiml.toString());
     }
 
@@ -66,11 +68,10 @@ export class VoiceController {
                 speechTimeout: "auto",
                 language:      "nl-NL",
             });
-            gather.say("U kunt nog iets vragen.");
 
         } catch (err) {
             console.error("❌ Error in handleConversation:", err);
-            twiml.say("Er is iets misgegaan. Probeer het later opnieuw.");
+            twiml.say("something went wrong, please try again later.");
             twiml.hangup();
         }
 
