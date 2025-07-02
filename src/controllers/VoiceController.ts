@@ -1,62 +1,68 @@
+// === controllers/VoiceController.ts ===
 import { Request, Response } from "express";
 import { container } from "tsyringe";
 import { VoiceService } from "../business/services/VoiceService";
+import { ElevenLabsClient } from "../clients/ElevenLabsClient";
 import twilio from "twilio";
 
 export class VoiceController {
-    // POST /voice/twilio/conversation
+    /**
+     * Handles Twilio webhook after recording user input.
+     */
     async handleConversation(req: Request, res: Response) {
+        const twiml = new twilio.twiml.VoiceResponse();
         try {
-            const twiml = new twilio.twiml.VoiceResponse();
-
-            const recordingUrl = req.body.RecordingUrl;
-            const from = req.body.From;
-            const to = req.body.To;
-
+            const { RecordingUrl } = req.body;
             const voiceService = container.resolve(VoiceService);
-
-            if (recordingUrl) {
-                // Stap 1: transcriptie ophalen
-                const transcript = await voiceService.transcribe(recordingUrl);
-
-                // Stap 2: antwoord genereren
-                const reply = await voiceService.generateReply(transcript, from);
-
-                // 🔊 Stap 3: audio genereren met ElevenLabs
-                const audioUrl = await voiceService.synthesizeReply(reply, from); // retourneert een publieke URL
-
-                // 🎧 Stap 4: afspelen in plaats van say()
-                twiml.play(audioUrl);
-            } else {
-                // Eerste keer? Gebruik eventueel een standaard ElevenLabs-audio
-                twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
-
-                // Of fallback naar TTS
-                // twiml.say("Hallo, u spreekt met onze assistent. Wat kan ik voor u doen?");
-            }
-
-            // Stap 5: opnieuw opnemen
+            const replyText = await voiceService.processConversation(RecordingUrl);
+            // Play generated speech via our TTS endpoint
+            const ttsUrl = `${process.env.BASE_URL}/voice/tts?text=${encodeURIComponent(replyText)}`;
+            twiml.play(ttsUrl);
+            // Optionally continue recording for follow-up (loop)
             twiml.record({
-                action: "/voice/twilio/conversation",
+                action: `${process.env.BASE_URL}/voice/twilio/conversation`,
                 method: "POST",
-                maxLength: 10,
-                playBeep: false,
-                trim: "do-not-trim",
-                timeout: 3,
+                maxLength: 30,
+                playBeep: true,
             });
-
-            res.type("text/xml").send(twiml.toString());
+            twiml.hangup();
         } catch (err) {
-            console.error("❌ Error in TwilioVoiceController:", err);
+            console.error("❌ Error in handleConversation:", err);
             twiml.say("Er is iets misgegaan. Probeer het later opnieuw.");
+            twiml.hangup();
         }
+        res.type("text/xml").send(twiml.toString());
     }
 
-
-
+    /**
+     * Answers new calls by recording user after a prompt.
+     */
     async handleIncomingCallTwilio(req: Request, res: Response) {
         const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say("Hallo! Je Twilio webhook werkt.");
+        twiml.say("Hallo! U wordt verbonden met onze spraakassistent. Spreek na de piep.");
+        twiml.record({
+            action: `${process.env.BASE_URL}/voice/twilio/conversation`,
+            method: "POST",
+            maxLength: 30,
+            playBeep: true,
+        });
+        twiml.hangup();
         res.type("text/xml").send(twiml.toString());
+    }
+
+    /**
+     * Streams TTS audio for Twilio to play (no disk storage).
+     */
+    async tts(req: Request, res: Response) {
+        try {
+            const text = req.query.text as string;
+            const elevenLabsClient = container.resolve(ElevenLabsClient);
+            const audioStream = await elevenLabsClient.synthesizeSpeechStream(text);
+            res.setHeader("Content-Type", "audio/mpeg");
+            audioStream.pipe(res);
+        } catch (err) {
+            console.error("❌ Error in TTS endpoint:", err);
+            res.status(500).send("Error generating speech");
+        }
     }
 }

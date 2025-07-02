@@ -12,9 +12,10 @@ export class WhisperClient {
         const formData = new FormData();
         formData.append("file", audioStream.data, {
             filename: "audio.mp3", // OpenAI requires this
-            contentType: "audio/mpeg", // Or whatever it is
+            contentType: "audio/x-wav", // Or whatever it is
         });
         formData.append("model", "whisper-1");
+        formData.append("language", "nl");
 
         const response = await axios.post(
             "https://api.openai.com/v1/audio/transcriptions",
