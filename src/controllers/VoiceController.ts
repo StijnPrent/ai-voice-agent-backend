@@ -14,7 +14,7 @@ export class VoiceController {
         try {
             const { RecordingUrl } = req.body;
             if (!RecordingUrl) {
-                twiml.say("Er is geen opname gevonden. Probeer opnieuw.");
+                twiml.play("https://pub-9a2504ce068d4a6fa3cac4fa81a29210.r2.dev/Welkom.mp3");
             } else {
                 const replyText = await container.resolve(VoiceService).processConversation(RecordingUrl);
 
