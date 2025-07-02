@@ -16,7 +16,6 @@ export class VoiceController {
             const voiceService = container.resolve(VoiceService);
 
             if (recordingUrl) {
-                twiml.play(recordingUrl);
                 // Stap 1: transcriptie ophalen
                 const transcript = await voiceService.transcribe(recordingUrl);
 
