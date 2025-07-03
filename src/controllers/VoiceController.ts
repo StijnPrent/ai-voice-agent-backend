@@ -15,13 +15,15 @@ export class VoiceController {
 
         console.log(`📞 Initiating stream to: ${websocketUrl}`);
 
-        // Start de stream
-        twiml.connect().stream({
+        // Start de stream en stuur een 'mark' bericht als de AI klaar is met praten
+        const connect = twiml.connect();
+        connect.stream({
             url: websocketUrl,
+            track: 'inbound_track'
         });
-
-        // Een korte pauze om de stream op te zetten
+        twiml.say(' '); // Noodzakelijk om de call actief te houden
         twiml.pause({ length: 20 });
+
 
         res.type("text/xml").send(twiml.toString());
     }

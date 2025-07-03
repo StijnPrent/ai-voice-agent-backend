@@ -23,15 +23,18 @@ export class ChatGPTClient {
             },
         ];
 
+        let sentenceBuffer = "";
+
         inputStream.on("data", async (chunk) => {
             const transcript = chunk.toString();
+            console.log(`[ChatGPT] Received transcript: ${transcript}`);
             messages.push({ role: "user", content: transcript });
 
             try {
                 const stream = await this.openai.chat.completions.create({
-                    model: "gpt-3.5-turbo",
+                    model: "gpt-4o",
                     messages,
-                    max_tokens: 100,
+                    max_tokens: 150,
                     temperature: 0.7,
                     stream: true,
                 });
@@ -41,10 +44,26 @@ export class ChatGPTClient {
                     const delta = part.choices[0]?.delta?.content || "";
                     if (delta) {
                         fullResponse += delta;
-                        outputStream.write(delta);
+                        sentenceBuffer += delta;
+
+                        // Als we een punt, vraagteken of uitroepteken hebben, stuur de zin door.
+                        if (/[.?!]/.test(sentenceBuffer)) {
+                            console.log(`[ChatGPT] Sending sentence: ${sentenceBuffer.trim()}`);
+                            outputStream.write(sentenceBuffer.trim());
+                            sentenceBuffer = "";
+                        }
                     }
                 }
+
+                // Stuur de resterende inhoud van de buffer door
+                if (sentenceBuffer.trim()) {
+                    console.log(`[ChatGPT] Sending remaining buffer: ${sentenceBuffer.trim()}`);
+                    outputStream.write(sentenceBuffer.trim());
+                    sentenceBuffer = "";
+                }
+
                 messages.push({ role: "assistant", content: fullResponse });
+                console.log(`[ChatGPT] Full response: ${fullResponse}`);
 
             } catch (err) {
                 console.error("[ChatGPT] Error:", err);
@@ -52,6 +71,7 @@ export class ChatGPTClient {
         });
 
         inputStream.on("end", () => {
+            console.log("[ChatGPT] Input stream ended.");
             outputStream.end();
         });
     }

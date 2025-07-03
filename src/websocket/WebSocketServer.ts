@@ -1,73 +1,57 @@
-
 // src/websocket/WebSocketServer.ts
-import { Server } from "http";
+import { Server as HttpServer, IncomingMessage } from "http";
 import { inject, singleton } from "tsyringe";
-import WebSocket from "ws";
+import WebSocket, { Server as WsServer } from "ws";
 import { VoiceService } from "../business/services/VoiceService";
 
 @singleton()
 export class WebSocketServer {
-    private wss!: WebSocket.Server;
+    private wss!: WsServer;
 
     constructor(
         @inject(VoiceService) private voiceService: VoiceService,
     ) {}
 
     /**
-     * Start de WebSocket-server.
-     * Koppel aan een bestaande HTTP-server.
+     * Must be called from your main file with your `http.createServer(app)` instance.
+     * This ensures ws handles the Upgrade before Express sees the request.
      */
-    start(server: Server) {
-        this.wss = new WebSocket.Server({ server, path: "/ws" });
-        this.wss.on("connection", this.handleConnection.bind(this));
-        console.log("✅ WebSocket-server gestart op /ws");
-    }
+    public start(server: HttpServer) {
+        // ==== This is the magic bit: ====
+        this.wss = new WsServer({ server, path: "/ws" });
 
-    /**
-     * Nieuwe WebSocket-verbinding van Twilio.
-     */
-    private handleConnection(ws: WebSocket) {
-        console.log("🔌 Nieuwe WebSocket-verbinding");
+        this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+            console.log("🔌 WS connection established");
 
-        // State voor deze verbinding
-        let callSid: string | null = null;
-
-        ws.on("message", async (message: string) => {
-            const data = JSON.parse(message);
-
-            switch (data.event) {
-                // 1) Eerste bericht: 'start' met metadata
-                case "start":
-                    callSid = data.start.callSid;
-                    console.log(`📞 Call gestart: ${callSid}`);
-                    // Hier starten we de streaming-pipeline
-                    await this.voiceService.startStreaming(ws, callSid!);
-                    break;
-
-                // 2) Audio-data van Twilio
-                case "media":
-                    // Base64-encoded audio payload
-                    const audioChunk = data.media.payload;
-                    // Stuur door naar de VoiceService
-                    this.voiceService.sendAudio(audioChunk);
-                    break;
-
-                // 3) Einde van de stream
-                case "stop":
-                    console.log(`🏁 Call beëindigd: ${callSid}`);
-                    this.voiceService.stopStreaming();
-                    break;
+            // Twilio will append ?streamSid=XXX or ?CallSid=YYY
+            const url = new URL(req.url!, `https://${req.headers.host}`);
+            const callSid = url.searchParams.get("streamSid") || url.searchParams.get("CallSid");
+            if (!callSid) {
+                ws.close(1008, "Missing CallSid");
+                return;
             }
-        });
 
-        ws.on("close", () => {
-            console.log("🔌 Verbinding gesloten");
-            this.voiceService.stopStreaming();
-        });
+            // Kick off your streaming service
+            this.voiceService.startStreaming(ws, callSid);
 
-        ws.on("error", (err) => {
-            console.error("❌ WebSocket-fout:", err);
-            this.voiceService.stopStreaming();
+            ws.on("message", (msg) => {
+                const data = JSON.parse(msg.toString());
+                if (data.event === "media") {
+                    this.voiceService.sendAudio(data.media.payload);
+                } else if (data.event === "mark") {
+                    this.voiceService.handleMark(data.markName);
+                }
+            });
+
+            ws.on("close", () => {
+                console.log("🔌 Connection closed");
+                this.voiceService.stopStreaming();
+            });
+
+            ws.on("error", (err) => {
+                console.error("❌ WebSocket error:", err);
+                this.voiceService.stopStreaming();
+            });
         });
     }
 }

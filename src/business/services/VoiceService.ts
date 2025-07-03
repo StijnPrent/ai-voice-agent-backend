@@ -19,6 +19,7 @@ export class VoiceService {
     private chatGptInput!: PassThrough;
     private elevenLabsInput!: PassThrough;
     private twilioOutput!: Writable;
+    private callSid: string | null = null;
 
     constructor(
         @inject(DeepgramClient) deepgramClient: DeepgramClient,
@@ -34,6 +35,7 @@ export class VoiceService {
      * Start de streaming-pipeline voor een nieuwe call.
      */
     async startStreaming(ws: WebSocket, callSid: string) {
+        this.callSid = callSid;
         console.log(`[${callSid}] Starting streaming pipeline...`);
 
         // 1. Initialiseer alle PassThrough-streams
@@ -53,6 +55,9 @@ export class VoiceService {
         await this.chatGptClient.start(this.chatGptInput, this.elevenLabsInput);
         await this.elevenLabsClient.start(this.elevenLabsInput, this.twilioOutput);
 
+        // 5. Speel de welkomstboodschap af
+        this.sendWelcomeMessage();
+
         console.log(`[${callSid}] Streaming pipeline started.`);
     }
 
@@ -60,30 +65,38 @@ export class VoiceService {
      * Stopt de streaming-pipeline.
      */
     stopStreaming() {
+        console.log(`[${this.callSid}] Stopping streaming pipeline.`);
         this.twilioInput?.end();
         this.deepgramInput?.end();
         this.chatGptInput?.end();
         this.elevenLabsInput?.end();
-        console.log("Streaming pipeline stopped.");
     }
 
     /**
      * Ontvangt audio van de WebSocket en stuurt het de pipeline in.
      */
     sendAudio(audioChunk: string) {
-        // Twilio stuurt audio als base64-encoded string. Decodeer naar een Buffer.
-        const buffer = Buffer.from(audioChunk, "base64");
-        this.twilioInput.write(buffer);
+        this.twilioInput.write(Buffer.from(audioChunk, "base64"));
+    }
+
+    /**
+     * Verwerk een 'mark' bericht van Twilio om de verbinding levend te houden.
+     */
+    handleMark(markName: string) {
+        console.log(`[${this.callSid}] Received mark: ${markName}`);
+    }
+
+    private sendWelcomeMessage() {
+        const welcomeText = "Hallo, hoe kan ik je helpen vandaag?";
+        console.log(`[${this.callSid}] Sending welcome message: "${welcomeText}"`);
+        this.elevenLabsInput.write(welcomeText);
     }
 
     /**
      * Verbindt de verschillende streams met elkaar.
      */
     private setupPipeline() {
-        // Converteer Twilio's 8-bit mu-law audio naar 16-bit PCM voor Deepgram
         const pcmStream = this.convertMuLawToPcm(this.twilioInput);
-
-        // Pipe de geconverteerde audio naar de Deepgram-client
         pcmStream.pipe(this.deepgramInput);
     }
 
@@ -93,19 +106,15 @@ export class VoiceService {
     private createTwilioOutput(ws: WebSocket, callSid: string): Writable {
         return new Writable({
             write: (chunk, encoding, callback) => {
-                // Converteer de audio chunk (PCM) terug naar mu-law en base64
                 const pcmBuffer = Buffer.from(chunk);
                 const muLawBuffer = this.convertPcmToMuLaw(pcmBuffer);
                 const base64 = muLawBuffer.toString("base64");
 
-                // Stuur als 'media' event naar Twilio
                 ws.send(
                     JSON.stringify({
                         event: "media",
-                        streamSid: callSid, // Belangrijk: streamSid is hier callSid
-                        media: {
-                            payload: base64,
-                        },
+                        streamSid: callSid,
+                        media: { payload: base64 },
                     })
                 );
                 callback();
@@ -113,10 +122,7 @@ export class VoiceService {
         });
     }
 
-    /**
-     * Converteert een 8-bit mu-law stream naar 16-bit PCM.
-     * Dit is nodig omdat Deepgram een hogere kwaliteit audio verwacht.
-     */
+    // ... (mu-law conversie functies blijven hetzelfde)
     private convertMuLawToPcm(muLawStream: PassThrough): PassThrough {
         const pcmStream = new PassThrough();
         muLawStream.on("data", (chunk) => {
@@ -130,9 +136,6 @@ export class VoiceService {
         return pcmStream;
     }
 
-    /**
-     * Converteert een 16-bit PCM buffer terug naar 8-bit mu-law.
-     */
     private convertPcmToMuLaw(pcmBuffer: Buffer): Buffer {
         const muLawBuffer = Buffer.alloc(pcmBuffer.length / 2);
         for (let i = 0; i < muLawBuffer.length; i++) {
@@ -142,7 +145,6 @@ export class VoiceService {
         return muLawBuffer;
     }
 
-    // Mu-law conversie functies (standaard algoritmes)
     private muLawToPcm(muLaw: number): number {
         const MU = 255;
         const sign = (muLaw & 0x80) === 0 ? -1 : 1;
