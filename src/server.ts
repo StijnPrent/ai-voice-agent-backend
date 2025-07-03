@@ -14,7 +14,7 @@ app.use("/voice", voiceRoutes);
 app.use('/company', companyRoutes);
 
 const server = createServer(app);
-const webSocketServer = container.resolve(WebSocketServer);
+const webSocketServer: WebSocketServer = container.resolve(WebSocketServer);
 webSocketServer.start(server);
 
 const PORT = process.env.PORT || 3002;

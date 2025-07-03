@@ -5,7 +5,7 @@ import WebSocket from "ws";
 
 @injectable()
 export class ElevenLabsClient {
-    private ws: WebSocket;
+    private ws!: WebSocket;
 
     /**
      * Start een streaming TTS-sessie met ElevenLabs via WebSocket.
