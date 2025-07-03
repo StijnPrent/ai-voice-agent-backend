@@ -1,7 +1,7 @@
 
 // src/websocket/WebSocketServer.ts
-import { Server, IncomingMessage } from "http";
-import { Socket } from "net";
+import { IncomingMessage } from "http";
+import { Duplex } from "stream";
 import { inject, singleton } from "tsyringe";
 import WebSocket from "ws";
 import { VoiceService } from "../business/services/VoiceService";
@@ -26,7 +26,7 @@ export class WebSocketServer {
     /**
      * Handel een 'upgrade' request van de HTTP-server af.
      */
-    handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+    handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         const { pathname } = parse(request.url!);
 
         if (pathname === "/ws") {
