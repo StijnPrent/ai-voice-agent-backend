@@ -10,6 +10,9 @@ interface Config {
     // OpenAI
     openAiKey: string;
 
+    // deepgram
+    deepgramKey: string;
+
     // ElevenLabs
     elevenLabsKey: string;
     elevenLabsVoiceId: string;
@@ -49,6 +52,8 @@ const config: Config = {
     nodeEnv: process.env.NODE_ENV || "development",
 
     openAiKey: process.env.OPENAI_API_KEY || "",
+
+    deepgramKey: process.env.DEEPGRAM_API_KEY || "",
 
     elevenLabsKey: process.env.ELEVENLABS_API_KEY || "",
     elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID || "",

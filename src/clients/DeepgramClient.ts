@@ -3,13 +3,18 @@
 import { createClient, DeepgramClient as SDKClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
+import config from "../config/config";
 
 @injectable()
 export class DeepgramClient {
     private deepgram: SDKClient;
 
     constructor() {
-        this.deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
+        const apiKey = config.deepgramKey;
+        if (!apiKey) {
+            throw new Error("DEEPGRAM_API_KEY is not set in the environment variables.");
+        }
+        this.deepgram = createClient(apiKey);
     }
 
     /**
@@ -36,7 +41,8 @@ export class DeepgramClient {
             });
 
             transcription.on(LiveTranscriptionEvents.Error, (err) => {
-                console.error("[Deepgram] Connection error:", err);
+                // Log the full error object for detailed diagnostics
+                console.error("[Deepgram] Connection error:", JSON.stringify(err, null, 2));
                 reject(err);
             });
         });
