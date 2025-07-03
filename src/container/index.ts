@@ -1,5 +1,5 @@
 import { container } from "tsyringe";
-import { WhisperClient } from "../clients/WhisperClient";
+import { DeepgramClient } from "../clients/DeepgramClient";
 import { ChatGPTClient } from "../clients/ChatGPTClient";
 import { ElevenLabsClient } from "../clients/ElevenLabsClient";
 import { TwilioClient } from "../clients/TwilioClient";
@@ -13,7 +13,7 @@ import {GoogleRepository} from "../data/repositories/GoogleRepository";
 import {GoogleCalendarClient} from "../clients/GoogleCalenderClient";
 
 // Register all clients and services in the container
-container.register("WhisperClient", { useClass: WhisperClient });
+container.register("DeepgramClient", { useClass: DeepgramClient });
 container.register("ChatGPTClient", { useClass: ChatGPTClient });
 container.register("ElevenLabsClient", { useClass: ElevenLabsClient });
 container.register("TwilioClient", { useClass: TwilioClient });

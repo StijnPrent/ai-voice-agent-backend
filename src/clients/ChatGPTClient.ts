@@ -1,69 +1,59 @@
+
 // src/clients/ChatGPTClient.ts
 import OpenAI from "openai";
+import { Readable, Writable } from "stream";
+import { injectable } from "tsyringe";
 import type { ChatCompletionMessageParam } from "openai/resources/chat";
 
+@injectable()
 export class ChatGPTClient {
     private openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
     });
 
     /**
-     * Haal een antwoord op bij OpenAI Chat.
-     * - `opts.stream = true` retourneert een AsyncIterable waar we tokens uit lezen.
+     * Start een streaming chat-sessie met OpenAI.
      */
-    async getReply(
-        userContent: string,
-        opts: {
-            model: string;
-            max_tokens: number;
-            temperature: number;
-            stream?: boolean;
-        }
-    ): Promise<string> {
+    async start(inputStream: Readable, outputStream: Writable) {
         const messages: ChatCompletionMessageParam[] = [
             {
                 role: "system",
                 content:
-                    "Je bent een behulpzame Nederlandse spraakassistent. Antwoord in maximaal 60 woorden, direct en to the point.",
-            },
-            {
-                role: "user",
-                content: userContent,
+                    "Je bent een behulpzame Nederlandse spraakassistent. Antwoord kort en direct, alsof je praat. Gebruik geen volzinnen maar spreektaal.",
             },
         ];
 
-        if (opts.stream) {
-            // Streaming-mode: request zonder tweede options-object
-            const stream = await this.openai.chat.completions.create({
-                model: opts.model,
-                messages,
-                max_tokens: opts.max_tokens,
-                temperature: opts.temperature,
-                stream: true,
-            });
-            return await this._consumeStream(stream);
-        } else {
-            // Klassieke non-stream call
-            const res = await this.openai.chat.completions.create({
-                model: opts.model,
-                messages,
-                max_tokens: opts.max_tokens,
-                temperature: opts.temperature,
-            });
-            return res.choices?.[0].message?.content?.trim() ?? "";
-        }
-    }
+        inputStream.on("data", async (chunk) => {
+            const transcript = chunk.toString();
+            messages.push({ role: "user", content: transcript });
 
-    /**
-     * Verwerkt een AsyncIterable (stream) van OpenAI en bouwt een string op.
-     */
-    private async _consumeStream(stream: AsyncIterable<any>): Promise<string> {
-        let result = "";
-        for await (const part of stream) {
-            // part.choices[0].delta.content bevat de volgende token
-            const delta = part.choices?.[0]?.delta?.content;
-            if (delta) result += delta;
-        }
-        return result.trim();
+            try {
+                const stream = await this.openai.chat.completions.create({
+                    model: "gpt-3.5-turbo",
+                    messages,
+                    max_tokens: 100,
+                    temperature: 0.7,
+                    stream: true,
+                });
+
+                let fullResponse = "";
+                for await (const part of stream) {
+                    const delta = part.choices[0]?.delta?.content || "";
+                    if (delta) {
+                        fullResponse += delta;
+                        outputStream.write(delta);
+                    }
+                }
+                messages.push({ role: "assistant", content: fullResponse });
+
+            } catch (err) {
+                console.error("[ChatGPT] Error:", err);
+            }
+        });
+
+        inputStream.on("end", () => {
+            outputStream.end();
+        });
     }
 }
+
