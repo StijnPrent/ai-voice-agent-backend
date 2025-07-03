@@ -1,9 +1,11 @@
 
 // src/websocket/WebSocketServer.ts
-import { Server } from "http";
+import { Server, IncomingMessage } from "http";
+import { Socket } from "net";
 import { inject, singleton } from "tsyringe";
 import WebSocket from "ws";
 import { VoiceService } from "../business/services/VoiceService";
+import { parse } from "url";
 
 @singleton()
 export class WebSocketServer {
@@ -14,12 +16,28 @@ export class WebSocketServer {
     ) {}
 
     /**
-     * Start de WebSocket-server.
+     * Start de WebSocket-server in 'noServer' mode.
      */
-    start(server: Server) {
-        this.wss = new WebSocket.Server({ server, path: "/ws" });
-        this.wss.on("connection", this.handleConnection.bind(this));
-        console.log("✅ WebSocket server started on /ws");
+    start() {
+        this.wss = new WebSocket.Server({ noServer: true });
+        console.log("✅ WebSocket server initialized in noServer mode");
+    }
+
+    /**
+     * Handel een 'upgrade' request van de HTTP-server af.
+     */
+    handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+        const { pathname } = parse(request.url!);
+
+        if (pathname === "/ws") {
+            this.wss.handleUpgrade(request, socket, head, (ws) => {
+                this.wss.emit("connection", ws, request);
+                this.handleConnection(ws);
+            });
+        } else {
+            // Belangrijk: vernietig de socket als het pad niet overeenkomt.
+            socket.destroy();
+        }
     }
 
     /**

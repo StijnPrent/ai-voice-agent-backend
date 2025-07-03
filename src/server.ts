@@ -14,8 +14,13 @@ app.use("/voice", voiceRoutes);
 app.use('/company', companyRoutes);
 
 const server = createServer(app);
-const webSocketServer: WebSocketServer = container.resolve(WebSocketServer);
-webSocketServer.start(server);
+const webSocketServer = container.resolve(WebSocketServer);
+webSocketServer.start();
+
+// Luister naar het 'upgrade' event voor WebSockets
+server.on('upgrade', (request, socket, head) => {
+    webSocketServer.handleUpgrade(request, socket, head);
+});
 
 const PORT = process.env.PORT || 3002;
 server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
