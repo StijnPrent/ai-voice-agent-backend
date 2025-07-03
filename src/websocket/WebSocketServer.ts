@@ -1,57 +1,65 @@
+
 // src/websocket/WebSocketServer.ts
-import { Server as HttpServer, IncomingMessage } from "http";
+import { Server } from "http";
 import { inject, singleton } from "tsyringe";
-import WebSocket, { Server as WsServer } from "ws";
+import WebSocket from "ws";
 import { VoiceService } from "../business/services/VoiceService";
 
 @singleton()
 export class WebSocketServer {
-    private wss!: WsServer;
+    private wss!: WebSocket.Server;
 
     constructor(
         @inject(VoiceService) private voiceService: VoiceService,
     ) {}
 
     /**
-     * Must be called from your main file with your `http.createServer(app)` instance.
-     * This ensures ws handles the Upgrade before Express sees the request.
+     * Start de WebSocket-server.
      */
-    public start(server: HttpServer) {
-        // ==== This is the magic bit: ====
-        this.wss = new WsServer({ server, path: "/ws" });
+    start(server: Server) {
+        this.wss = new WebSocket.Server({ server, path: "/ws" });
+        this.wss.on("connection", this.handleConnection.bind(this));
+        console.log("✅ WebSocket server started on /ws");
+    }
 
-        this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-            console.log("🔌 WS connection established");
+    /**
+     * Handel een nieuwe WebSocket-verbinding van Twilio af.
+     */
+    private handleConnection(ws: WebSocket) {
+        console.log("🔌 New WebSocket connection");
 
-            // Twilio will append ?streamSid=XXX or ?CallSid=YYY
-            const url = new URL(req.url!, `https://${req.headers.host}`);
-            const callSid = url.searchParams.get("streamSid") || url.searchParams.get("CallSid");
-            if (!callSid) {
-                ws.close(1008, "Missing CallSid");
-                return;
-            }
+        ws.on("message", async (message: string) => {
+            const data = JSON.parse(message);
 
-            // Kick off your streaming service
-            this.voiceService.startStreaming(ws, callSid);
+            switch (data.event) {
+                case "start":
+                    console.log(`[${data.start.callSid}] Received start event`);
+                    await this.voiceService.startStreaming(ws, data.start.callSid);
+                    break;
 
-            ws.on("message", (msg) => {
-                const data = JSON.parse(msg.toString());
-                if (data.event === "media") {
+                case "media":
                     this.voiceService.sendAudio(data.media.payload);
-                } else if (data.event === "mark") {
-                    this.voiceService.handleMark(data.markName);
-                }
-            });
+                    break;
 
-            ws.on("close", () => {
-                console.log("🔌 Connection closed");
-                this.voiceService.stopStreaming();
-            });
+                case "mark":
+                    this.voiceService.handleMark(data.mark.name);
+                    break;
 
-            ws.on("error", (err) => {
-                console.error("❌ WebSocket error:", err);
-                this.voiceService.stopStreaming();
-            });
+                case "stop":
+                    console.log(`[${data.stop.callSid}] Received stop event`);
+                    this.voiceService.stopStreaming();
+                    break;
+            }
+        });
+
+        ws.on("close", () => {
+            console.log("🔌 Connection closed");
+            this.voiceService.stopStreaming();
+        });
+
+        ws.on("error", (err) => {
+            console.error("❌ WebSocket error:", err);
+            this.voiceService.stopStreaming();
         });
     }
 }
