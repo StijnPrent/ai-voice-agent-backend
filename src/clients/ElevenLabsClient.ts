@@ -1,3 +1,4 @@
+
 // src/clients/ElevenLabsClient.ts
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
@@ -9,8 +10,9 @@ export class ElevenLabsClient {
 
     /**
      * Start een streaming TTS-sessie met ElevenLabs via WebSocket.
+     * Retourneert een Promise die oplost zodra de verbinding open is.
      */
-    async start(inputStream: Readable, outputStream: Writable) {
+    async start(inputStream: Readable, outputStream: Writable): Promise<void> {
         const voiceId = process.env.ELEVENLABS_VOICE_ID!;
         const apiKey = process.env.ELEVENLABS_API_KEY!;
         const model = "eleven_multilingual_v2";
@@ -20,17 +22,27 @@ export class ElevenLabsClient {
             headers: { "xi-api-key": apiKey },
         });
 
-        this.ws.on("open", () => {
-            console.log("[ElevenLabs] Connection opened.");
-            // Stuur de voice settings
-            this.ws.send(JSON.stringify({
-                voice_settings: {
-                    stability: 0.2,
-                    similarity_boost: 0.2,
-                },
-            }));
+        // Wacht tot de verbinding daadwerkelijk open is
+        await new Promise<void>((resolve, reject) => {
+            this.ws.on("open", () => {
+                console.log("[ElevenLabs] Connection opened.");
+                // Stuur de initiële voice settings
+                this.ws.send(JSON.stringify({
+                    voice_settings: {
+                        stability: 0.5,
+                        similarity_boost: 0.8,
+                    },
+                }));
+                resolve(); // Verbinding is klaar voor gebruik
+            });
+
+            this.ws.on("error", (err) => {
+                console.error("[ElevenLabs] Connection error:", err);
+                reject(err);
+            });
         });
 
+        // Nu de verbinding open is, kunnen we de rest van de listeners opzetten
         this.ws.on("message", (data: Buffer) => {
             const res = JSON.parse(data.toString());
             if (res.audio) {
@@ -43,19 +55,19 @@ export class ElevenLabsClient {
             outputStream.end();
         });
 
-        this.ws.on("error", (err) => {
-            console.error("[ElevenLabs] Error:", err);
-            outputStream.end();
-        });
-
         // Pipe de tekst van ChatGPT naar ElevenLabs
         inputStream.on("data", (chunk) => {
-            this.ws.send(JSON.stringify({ text: chunk.toString() }));
+            if (this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ text: `${chunk.toString()} ` })); // Spatie toevoegen voor betere flow
+            }
         });
 
         // Als ChatGPT stopt met praten, stuur een lege string om de stream te flushen
         inputStream.on("end", () => {
-            this.ws.send(JSON.stringify({ text: "" }));
+            if (this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ text: "" }));
+            }
         });
     }
 }
+

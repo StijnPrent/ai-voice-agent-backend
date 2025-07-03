@@ -10,20 +10,20 @@ export class VoiceController {
     async handleIncomingCallTwilio(req: Request, res: Response) {
         const twiml = new twilio.twiml.VoiceResponse();
 
-        // Haal de WebSocket-URL op (wss:// voor productie)
-        const websocketUrl = `wss://${req.get("host")}/ws`;
+        // Gebruik de SERVER_URL van .env en vervang http door wss
+        const serverUrl = process.env.SERVER_URL!;
+        const websocketUrl = serverUrl.replace(/^http/, "ws");
 
-        console.log(`📞 Initiating stream to: ${websocketUrl}`);
+        console.log(`📞 Initiating stream to: ${websocketUrl}/ws`);
 
-        // Start de stream en stuur een 'mark' bericht als de AI klaar is met praten
+        // Start de stream
         const connect = twiml.connect();
         connect.stream({
-            url: websocketUrl,
-            track: 'inbound_track'
+            url: `${websocketUrl}/ws`,
         });
-        twiml.say(' '); // Noodzakelijk om de call actief te houden
-        twiml.pause({ length: 20 });
 
+        // Een korte pauze om de stream op te zetten
+        twiml.pause({ length: 20 });
 
         res.type("text/xml").send(twiml.toString());
     }

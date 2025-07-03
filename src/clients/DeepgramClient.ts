@@ -1,6 +1,6 @@
 
 // src/clients/DeepgramClient.ts
-import { createClient, DeepgramClient as SDKClient } from "@deepgram/sdk";
+import { createClient, DeepgramClient as SDKClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
 
@@ -14,8 +14,9 @@ export class DeepgramClient {
 
     /**
      * Start een real-time transcriptie-stream met Deepgram.
+     * Retourneert een Promise die oplost zodra de verbinding open is.
      */
-    async start(inputStream: Readable, outputStream: Writable) {
+    async start(inputStream: Readable, outputStream: Writable): Promise<void> {
         const transcription = this.deepgram.listen.live({
             language: "nl",
             punctuate: true,
@@ -23,41 +24,43 @@ export class DeepgramClient {
             model: "nova-2",
             encoding: "linear16",
             sample_rate: 16000,
+            endpointing: 300, // Stuur transcriptie na 300ms stilte
+            utterance_end_ms: 1000, // Einde van een uiting na 1s stilte
         });
 
-        // Event: verbinding is open
-        transcription.on("open", () => {
-            console.log("[Deepgram] Connection opened.");
-
-            // Pipe de inkomende audio naar Deepgram
-            inputStream.on('data', (chunk) => {
-                transcription.send(chunk);
+        // Wacht tot de verbinding daadwerkelijk open is
+        await new Promise<void>((resolve, reject) => {
+            transcription.on(LiveTranscriptionEvents.Open, () => {
+                console.log("[Deepgram] Connection opened.");
+                resolve();
             });
 
-            inputStream.on('end', () => {
-                transcription.finish();
+            transcription.on(LiveTranscriptionEvents.Error, (err) => {
+                console.error("[Deepgram] Connection error:", err);
+                reject(err);
             });
+        });
 
-            // Event: transcriptie is beschikbaar
-            transcription.on("transcript", (data) => {
-                const transcript = data.channel.alternatives[0].transcript;
-                if (transcript) {
-                    console.log(`[Deepgram] Transcript: ${transcript}`);
-                    outputStream.write(transcript);
-                }
-            });
+        // Nu de verbinding open is, kunnen we de rest van de listeners opzetten
+        inputStream.on('data', (chunk) => {
+            transcription.send(chunk);
+        });
 
-            // Event: verbinding is gesloten
-            transcription.on("close", () => {
-                console.log("[Deepgram] Connection closed.");
-                outputStream.end();
-            });
+        inputStream.on('end', () => {
+            transcription.finish();
+        });
 
-            // Event: fout opgetreden
-            transcription.on("error", (err) => {
-                console.error("[Deepgram] Error:", err);
-                outputStream.end();
-            });
+        transcription.on(LiveTranscriptionEvents.Transcript, (data) => {
+            const transcript = data.channel.alternatives[0].transcript;
+            if (transcript && data.is_final) {
+                console.log(`[Deepgram] Final Transcript: ${transcript}`);
+                outputStream.write(transcript);
+            }
+        });
+
+        transcription.on(LiveTranscriptionEvents.Close, () => {
+            console.log("[Deepgram] Connection closed.");
+            outputStream.end();
         });
     }
 }
