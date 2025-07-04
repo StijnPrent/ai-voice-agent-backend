@@ -5,76 +5,61 @@ import WebSocket from "ws";
 
 @injectable()
 export class ElevenLabsClient {
-    private ws!: WebSocket;
-
     /**
-     * Start een streaming TTS-sessie met ElevenLabs via WebSocket.
-     * Retourneert een Promise die oplost zodra de verbinding open is.
+     * Starts a streaming TTS session with ElevenLabs via WebSocket.
+     * Creates a dedicated WebSocket connection for the given input stream.
+     * Returns a Promise that resolves when the audio has been fully streamed and the connection is closed.
      */
-    async start(inputStream: Readable, outputStream: Writable): Promise<void> {
-        const voiceId = process.env.ELEVENLABS_VOICE_ID!;
-        const apiKey  = process.env.ELEVENLABS_API_KEY!;
-        const model   = "eleven_multilingual_v2";
+    start(inputStream: Readable, outputStream: Writable): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const voiceId = process.env.ELEVENLABS_VOICE_ID!;
+            const apiKey  = process.env.ELEVENLABS_API_KEY!;
+            const model   = "eleven_multilingual_v2";
+            const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
 
-        const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
-        this.ws = new WebSocket(wsUrl, {
-            headers: { "xi-api-key": apiKey },
-        });
-
-        // 1️⃣ Register all WS listeners *before* sending anything
-        this.ws.on("message", (data: Buffer) => {
-            const res = JSON.parse(data.toString());
-            if (res.audio) {
-                console.log("[ElevenLabs] Received audio chunk.");
-                outputStream.write(Buffer.from(res.audio, "base64"));
-            }
-        });
-
-        this.ws.on("close", () => {
-            console.log("[ElevenLabs] Connection closed.");
-            outputStream.end();
-        });
-
-        this.ws.on("error", (err) => {
-            console.error("[ElevenLabs] Connection error:", err);
-            outputStream.end();
-        });
-
-        // 2️⃣ Wait for the socket to open, then send settings + kickoffs
-        await new Promise<void>((resolve, reject) => {
-            this.ws.on("open", () => {
-                console.log("[ElevenLabs] Connection opened.");
-
-                // Send initial voice settings & output format
-                this.ws.send(JSON.stringify({
-                    voice_settings: {
-                        stability: 0.5,
-                        similarity_boost: 0.8,
-                    },
-                    output_format: "ulaw_8000",
-                }));
-
-                // Immediately send an empty text chunk to keep the stream alive
-                this.ws.send(JSON.stringify({ text: "" }));
-
-                resolve();
+            const ws = new WebSocket(wsUrl, {
+                headers: { "xi-api-key": apiKey },
             });
 
-            this.ws.on("error", reject);
-        });
+            ws.on("open", () => {
+                console.log("[ElevenLabs] Connection opened.");
+                ws.send(JSON.stringify({
+                    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+                    output_format: "ulaw_8000",
+                }));
+                ws.send(JSON.stringify({ text: " " })); // Send a space to keep the connection alive
+            });
 
-        // 3️⃣ Pipe incoming text to ElevenLabs
-        inputStream.on("data", (chunk) => {
-            if (this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ text: chunk.toString() }));
-            }
-        });
+            ws.on("message", (data: Buffer) => {
+                const res = JSON.parse(data.toString());
+                if (res.audio) {
+                    outputStream.write(Buffer.from(res.audio, "base64"));
+                }
+            });
 
-        inputStream.on("end", () => {
-            if (this.ws.readyState === WebSocket.OPEN) {
-                // Signal end of text so ElevenLabs will finalize & close
-                this.ws.send(JSON.stringify({ text: "" }));
-            }
+            ws.on("close", () => {
+                console.log("[ElevenLabs] Connection closed.");
+                resolve(); // Resolve the promise when the connection closes
+            });
+
+            ws.on("error", (err) => {
+                console.error("[ElevenLabs] Connection error:", err);
+                reject(err); // Reject the promise on error
+            });
+
+            // Pipe the input stream to the WebSocket
+            inputStream.on("data", (chunk) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ text: chunk.toString() }));
+                }
+            });
+
+            inputStream.on("end", () => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    // Signal that we're done sending text
+                    ws.send(JSON.stringify({ text: "" }));
+                }
+            });
         });
     }
 }

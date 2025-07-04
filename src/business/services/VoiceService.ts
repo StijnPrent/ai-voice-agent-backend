@@ -90,17 +90,16 @@ export class VoiceService {
         const elevenLabsInputStream = new PassThrough();
 
         try {
-            // Start a new ElevenLabs streaming session.
-            // This returns a promise that resolves when the connection is open.
-            await this.elevenLabsClient.start(elevenLabsInputStream, this.twilioOutput);
+            // Start a new ElevenLabs streaming session and wait for it to complete.
+            const ttsPromise = this.elevenLabsClient.start(elevenLabsInputStream, this.twilioOutput);
 
-            // Write the text to the stream
+            // Write the text to the stream and end it.
             elevenLabsInputStream.write(text);
-
-            // End the stream. This is critical.
-            // It signals to ElevenLabsClient that we are done sending text.
-            // The client will then send a flush message ("{ text: '' }") and close gracefully.
             elevenLabsInputStream.end();
+
+            // Await the completion of the TTS streaming.
+            await ttsPromise;
+            console.log(`[${this.callSid}] Finished speaking: "${text}"`);
 
         } catch (err) {
             console.error(`[${this.callSid}] Error during ElevenLabs TTS streaming:`, err);
