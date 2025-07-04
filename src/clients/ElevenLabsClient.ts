@@ -1,4 +1,3 @@
-
 // src/clients/ElevenLabsClient.ts
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
@@ -14,36 +13,15 @@ export class ElevenLabsClient {
      */
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
         const voiceId = process.env.ELEVENLABS_VOICE_ID!;
-        const apiKey = process.env.ELEVENLABS_API_KEY!;
-        const model = "eleven_multilingual_v2";
+        const apiKey  = process.env.ELEVENLABS_API_KEY!;
+        const model   = "eleven_multilingual_v2";
 
         const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
         this.ws = new WebSocket(wsUrl, {
             headers: { "xi-api-key": apiKey },
         });
 
-        // Wacht tot de verbinding daadwerkelijk open is
-        await new Promise<void>((resolve, reject) => {
-            this.ws.on("open", () => {
-                console.log("[ElevenLabs] Connection opened.");
-                // Stuur de initiële voice settings, inclusief het gewenste output formaat
-                this.ws.send(JSON.stringify({
-                    voice_settings: {
-                        stability: 0.5,
-                        similarity_boost: 0.8,
-                    },
-                    output_format: "ulaw_8000" // Vraag om mu-law audio op 8kHz
-                }));
-                resolve(); // Verbinding is klaar voor gebruik
-            });
-
-            this.ws.on("error", (err) => {
-                console.error("[ElevenLabs] Connection error:", err);
-                reject(err);
-            });
-        });
-
-        // Nu de verbinding open is, kunnen we de rest van de listeners opzetten
+        // 1️⃣ Register all WS listeners *before* sending anything
         this.ws.on("message", (data: Buffer) => {
             const res = JSON.parse(data.toString());
             if (res.audio) {
@@ -54,21 +32,49 @@ export class ElevenLabsClient {
 
         this.ws.on("close", () => {
             console.log("[ElevenLabs] Connection closed.");
+            outputStream.end();
         });
 
-        // Pipe de tekst van ChatGPT naar ElevenLabs
+        this.ws.on("error", (err) => {
+            console.error("[ElevenLabs] Connection error:", err);
+            outputStream.end();
+        });
+
+        // 2️⃣ Wait for the socket to open, then send settings + kickoffs
+        await new Promise<void>((resolve, reject) => {
+            this.ws.on("open", () => {
+                console.log("[ElevenLabs] Connection opened.");
+
+                // Send initial voice settings & output format
+                this.ws.send(JSON.stringify({
+                    voice_settings: {
+                        stability: 0.5,
+                        similarity_boost: 0.8,
+                    },
+                    output_format: "ulaw_8000",
+                }));
+
+                // Immediately send an empty text chunk to keep the stream alive
+                this.ws.send(JSON.stringify({ text: "" }));
+
+                resolve();
+            });
+
+            this.ws.on("error", reject);
+        });
+
+        // 3️⃣ Pipe incoming text to ElevenLabs
         inputStream.on("data", (chunk) => {
             if (this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ text: `${chunk.toString()} ` })); // Spatie toevoegen voor betere flow
+                this.ws.send(JSON.stringify({ text: chunk.toString() }));
             }
         });
 
-        // Als ChatGPT stopt met praten, stuur een lege string om de stream te flushen
         inputStream.on("end", () => {
             if (this.ws.readyState === WebSocket.OPEN) {
+                // Signal end of text so ElevenLabs will finalize & close
                 this.ws.send(JSON.stringify({ text: "" }));
             }
         });
     }
 }
-
