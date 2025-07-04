@@ -5,7 +5,7 @@ import {
     DeepgramClient as SDKClient,
     LiveTranscriptionEvents,
 } from "@deepgram/sdk";
-
+import WebSocket from "ws";
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
 import config from "../config/config";
@@ -15,17 +15,7 @@ export class DeepgramClient {
     private deepgram: SDKClient;
 
     constructor() {
-        // 1) Pass the `ws` library so that Node.js uses a real WebSocket under the hood
-        this.deepgram = createClient(
-            config.deepgramKey,
-            {
-                global: {
-                    websocket: {
-                        client: WebSocket
-                    }
-                }
-            }
-        );
+        this.deepgram = createClient(config.deepgramKey);
     }
 
     /**
