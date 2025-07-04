@@ -52,7 +52,7 @@ export class WebSocketServer {
             switch (data.event) {
                 case "start":
                     console.log(`[${data.start.callSid}] Received start event`);
-                    await this.voiceService.startStreaming(ws, data.start.callSid);
+                    await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid);
                     break;
 
                 case "media":

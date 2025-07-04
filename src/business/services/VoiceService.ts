@@ -20,6 +20,7 @@ export class VoiceService {
     private elevenLabsInput!: PassThrough;
     private twilioOutput!: Writable;
     private callSid: string | null = null;
+    private streamSid: string | null = null;
 
     constructor(
         @inject(DeepgramClient) deepgramClient: DeepgramClient,
@@ -34,15 +35,16 @@ export class VoiceService {
     /**
      * Start de streaming-pipeline voor een nieuwe call.
      */
-    async startStreaming(ws: WebSocket, callSid: string) {
+    async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
         this.callSid = callSid;
+        this.streamSid = streamSid;
         console.log(`[${callSid}] Starting streaming pipeline...`);
 
         this.twilioInput = new PassThrough();
         this.deepgramInput = new PassThrough();
         this.chatGptInput = new PassThrough();
         this.elevenLabsInput = new PassThrough();
-        this.twilioOutput = this.createTwilioOutput(ws, callSid);
+        this.twilioOutput = this.createTwilioOutput(ws);
 
         this.setupPipeline();
 
@@ -106,7 +108,7 @@ export class VoiceService {
     /**
      * Creëert een Writable stream die audio chunks naar de Twilio WebSocket stuurt.
      */
-    private createTwilioOutput(ws: WebSocket, callSid: string): Writable {
+    private createTwilioOutput(ws: WebSocket): Writable {
         return new Writable({
             write: (chunk, encoding, callback) => {
                 const pcmBuffer = Buffer.from(chunk);
@@ -116,7 +118,7 @@ export class VoiceService {
                 ws.send(
                     JSON.stringify({
                         event: "media",
-                        streamSid: callSid,
+                        streamSid: this.streamSid,
                         media: { payload: base64 },
                     })
                 );
