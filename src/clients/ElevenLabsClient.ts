@@ -1,20 +1,23 @@
 // src/clients/ElevenLabsClient.ts
-import { Readable, Writable } from "stream";
+import { Writable } from "stream";
 import { injectable } from "tsyringe";
 import WebSocket from "ws";
 
 @injectable()
 export class ElevenLabsClient {
     /**
-     * Starts a streaming TTS session with ElevenLabs via WebSocket.
-     * Creates a dedicated WebSocket connection for the given input stream.
-     * Returns a Promise that resolves when the audio has been fully streamed and the connection is closed.
+     * Converts text to speech and streams the audio to the provided Writable stream.
+     * This method handles the entire lifecycle of the WebSocket connection for a single TTS request.
+     *
+     * @param text The text to be converted to speech.
+     * @param outputStream The stream to write the resulting audio data to.
+     * @returns A Promise that resolves when the audio has been fully streamed.
      */
-    start(inputStream: Readable, outputStream: Writable): Promise<void> {
+    start(text: string, outputStream: Writable): Promise<void> {
         return new Promise((resolve, reject) => {
             const voiceId = process.env.ELEVENLABS_VOICE_ID!;
-            const apiKey  = process.env.ELEVENLABS_API_KEY!;
-            const model   = "eleven_multilingual_v2";
+            const apiKey = process.env.ELEVENLABS_API_KEY!;
+            const model = "eleven_multilingual_v2";
             const wsUrl = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${model}`;
 
             const ws = new WebSocket(wsUrl, {
@@ -22,43 +25,41 @@ export class ElevenLabsClient {
             });
 
             ws.on("open", () => {
-                console.log("[ElevenLabs] Connection opened.");
+                console.log("[ElevenLabs] Connection opened for TTS.");
+                // Send initial configuration
                 ws.send(JSON.stringify({
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                     output_format: "ulaw_8000",
                 }));
-                ws.send(JSON.stringify({ text: " " })); // Send a space to keep the connection alive
+                // Send the text payload
+                ws.send(JSON.stringify({ text }));
+                // Signal the end of the text input
+                ws.send(JSON.stringify({ text: "" }));
             });
 
             ws.on("message", (data: Buffer) => {
-                const res = JSON.parse(data.toString());
-                if (res.audio) {
-                    outputStream.write(Buffer.from(res.audio, "base64"));
+                try {
+                    const res = JSON.parse(data.toString());
+                    if (res.audio) {
+                        // Write the received audio chunk to the output stream
+                        outputStream.write(Buffer.from(res.audio, "base64"));
+                    } else if (res.isFinal) {
+                        // This marks the end of the stream from ElevenLabs' side.
+                        // We can often rely on the 'close' event, but this is a good safeguard.
+                    }
+                } catch (err) {
+                    console.error("[ElevenLabs] Error parsing message:", err);
                 }
             });
 
-            ws.on("close", () => {
-                console.log("[ElevenLabs] Connection closed.");
-                resolve(); // Resolve the promise when the connection closes
+            ws.on("close", (code, reason) => {
+                console.log(`[ElevenLabs] Connection closed. Code: ${code}, Reason: ${reason}`);
+                resolve(); // Successfully finished
             });
 
             ws.on("error", (err) => {
-                console.error("[ElevenLabs] Connection error:", err);
-                reject(err); // Reject the promise on error
-            });
-
-            // Pipe the input stream to the WebSocket
-            inputStream.on("data", (chunk) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ text: chunk.toString() }));
-                }
-            });
-
-            inputStream.on("end", () => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    // Signal that we're done sending text
-                    ws.send(JSON.stringify({ text: "" }));
-                }
+                console.error("[ElevenLabs] WebSocket error:", err);
+                reject(err); // Failed
             });
         });
     }
