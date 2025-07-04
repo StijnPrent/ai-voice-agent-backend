@@ -25,13 +25,7 @@ export class DeepgramClient {
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
         const transcription = this.deepgram.listen.live({
             language: "nl",
-            punctuate: true,
-            smart_format: true,
             model: "nova-2",
-            encoding: "linear16",
-            sample_rate: 16000,
-            endpointing: 300, // Stuur transcriptie na 300ms stilte
-            utterance_end_ms: 1000, // Einde van een uiting na 1s stilte
         });
 
         // Wacht tot de verbinding daadwerkelijk open is
