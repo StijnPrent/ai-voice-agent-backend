@@ -90,23 +90,25 @@ export class VoiceService {
         if (!text) return;
         console.log(`[${this.callSid}] Preparing to speak: "${text}"`);
 
-        // Create a new, temporary stream for this specific text
         const elevenLabsInputStream = new PassThrough();
+        const ttsPromise = this.elevenLabsClient.start(elevenLabsInputStream, this.twilioOutput);
 
         try {
-            // Start a new ElevenLabs streaming session and wait for it to complete.
-            const ttsPromise = this.elevenLabsClient.start(elevenLabsInputStream, this.twilioOutput);
-
-            // Write the text to the stream and end it.
             elevenLabsInputStream.write(text);
-            elevenLabsInputStream.end();
 
-            // Await the completion of the TTS streaming.
+            // Introduce a small delay to allow the stream to be processed
+            // before we signal the end of the input.
+            setTimeout(() => {
+                elevenLabsInputStream.end();
+            }, 50); // 50ms delay
+
             await ttsPromise;
             console.log(`[${this.callSid}] Finished speaking: "${text}"`);
 
         } catch (err) {
             console.error(`[${this.callSid}] Error during ElevenLabs TTS streaming:`, err);
+            // Ensure the input stream is destroyed on error to prevent leaks
+            elevenLabsInputStream.destroy();
         }
     }
 
