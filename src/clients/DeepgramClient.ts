@@ -1,6 +1,11 @@
 
 // src/clients/DeepgramClient.ts
-import { createClient, DeepgramClient as SDKClient, LiveTranscriptionEvents } from "@deepgram/sdk";
+import {
+    createClient,
+    DeepgramClient as SDKClient,
+    LiveTranscriptionEvents,
+} from "@deepgram/sdk";
+
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
 import config from "../config/config";
@@ -28,7 +33,7 @@ export class DeepgramClient {
      * Retourneert een Promise die oplost zodra de verbinding open is.
      */
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
-        const transcription = this.deepgram.transcription.live({
+        const transcription = this.deepgram.listen.live({
             language: "nl",
             punctuate: true,
             smart_format: true,

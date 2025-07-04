@@ -1,6 +1,7 @@
 // src/clients/GoogleCalendarClient.ts
 
 import { google, calendar_v3 } from "googleapis";
+import { OAuth2Client } from "google-auth-library";
 import { injectable } from "tsyringe";
 import config from "../config/config";
 
@@ -14,7 +15,7 @@ export interface GoogleTokens {
 
 @injectable()
 export class GoogleCalendarClient {
-    oauth2Client: ReturnType<typeof google.auth.OAuth2>;
+    oauth2Client: OAuth2Client;
     private calendar: calendar_v3.Calendar;
 
     constructor(
