@@ -63,8 +63,12 @@ export class VoiceService {
             await this.deepgramClient.start(this.deepgramInput, this.chatGptInput);
 
             // The `onTextGenerated` callback will trigger the `speak` method.
-            this.chatGptClient.start(this.chatGptInput, (text) => {
-                this.speak(text);
+            this.chatGptClient.start(this.chatGptInput, async (text) => {
+                try {
+                    await this.speak(text);
+                } catch (err) {
+                    console.error(`[${this.callSid}] Error in speak callback:`, err);
+                }
             });
 
             // 4. Play the welcome message by calling the new speak method
