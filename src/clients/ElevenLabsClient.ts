@@ -26,12 +26,13 @@ export class ElevenLabsClient {
         await new Promise<void>((resolve, reject) => {
             this.ws.on("open", () => {
                 console.log("[ElevenLabs] Connection opened.");
-                // Stuur de initiële voice settings
+                // Stuur de initiële voice settings, inclusief het gewenste output formaat
                 this.ws.send(JSON.stringify({
                     voice_settings: {
                         stability: 0.5,
                         similarity_boost: 0.8,
                     },
+                    output_format: "ulaw_8000" // Vraag om mu-law audio op 8kHz
                 }));
                 resolve(); // Verbinding is klaar voor gebruik
             });

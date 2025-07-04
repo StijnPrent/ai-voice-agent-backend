@@ -136,17 +136,15 @@ export class VoiceService {
     private createTwilioOutput(ws: WebSocket): Writable {
         return new Writable({
             write: (chunk, encoding, callback) => {
-                // Check if the WebSocket is still open before sending
                 if (ws.readyState !== WebSocket.OPEN) {
                     console.log(`[${this.callSid}] WebSocket not open, skipping media send.`);
                     callback();
                     return;
                 }
 
+                // De audio is al in base64-gecodeerde mu-law, dus we kunnen het direct doorsturen.
+                const base64 = chunk.toString('base64');
                 console.log(`[${this.callSid}] Sending audio chunk to Twilio.`);
-                const pcmBuffer = Buffer.from(chunk);
-                const muLawBuffer = this.convertPcmToMuLaw(pcmBuffer);
-                const base64 = muLawBuffer.toString("base64");
 
                 ws.send(
                     JSON.stringify({
@@ -164,7 +162,7 @@ export class VoiceService {
         });
     }
 
-    // --- Mu-law conversion functions remain unchanged ---
+    // --- Mu-law conversion functions are no longer needed here ---
     private convertMuLawToPcm(muLawStream: PassThrough): PassThrough {
         const pcmStream = new PassThrough();
         muLawStream.on("data", (chunk) => {
