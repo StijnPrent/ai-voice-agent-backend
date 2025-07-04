@@ -10,11 +10,17 @@ export class DeepgramClient {
     private deepgram: SDKClient;
 
     constructor() {
-        const apiKey = config.deepgramKey;
-        if (!apiKey) {
-            throw new Error("DEEPGRAM_API_KEY is not set in the environment variables.");
-        }
-        this.deepgram = createClient(apiKey);
+        // 1) Pass the `ws` library so that Node.js uses a real WebSocket under the hood
+        this.deepgram = createClient(
+            config.deepgramKey,
+            {
+                global: {
+                    websocket: {
+                        client: WebSocket
+                    }
+                }
+            }
+        );
     }
 
     /**
