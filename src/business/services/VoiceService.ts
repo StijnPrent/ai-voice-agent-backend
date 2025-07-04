@@ -1,4 +1,3 @@
-
 // src/business/services/VoiceService.ts
 import { inject, injectable } from "tsyringe";
 import WebSocket from "ws";
@@ -9,16 +8,20 @@ import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
 
 @injectable()
 export class VoiceService {
+    // Keep the clients injected
     private deepgramClient: DeepgramClient;
     private chatGptClient: ChatGPTClient;
     private elevenLabsClient: ElevenLabsClient;
 
-    // Streams voor de audio-pipeline
+    // Streams for the INPUT pipeline (listening to the user)
     private twilioInput!: PassThrough;
     private deepgramInput!: PassThrough;
     private chatGptInput!: PassThrough;
-    private elevenLabsInput!: PassThrough;
+
+    // The output stream to Twilio. This can be reused.
     private twilioOutput!: Writable;
+
+    // Call identifiers
     private callSid: string | null = null;
     private streamSid: string | null = null;
 
@@ -33,31 +36,38 @@ export class VoiceService {
     }
 
     /**
-     * Start de streaming-pipeline voor een nieuwe call.
+     * Starts the streaming pipeline for a new call.
+     * This now only sets up the "listening" part of the pipeline.
      */
     async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
         this.callSid = callSid;
         this.streamSid = streamSid;
         console.log(`[${callSid}] Starting streaming pipeline...`);
 
+        // 1. Initialize streams for the input pipeline
         this.twilioInput = new PassThrough();
         this.deepgramInput = new PassThrough();
         this.chatGptInput = new PassThrough();
-        this.elevenLabsInput = new PassThrough();
         this.twilioOutput = this.createTwilioOutput(ws);
 
-        this.setupPipeline();
+        // 2. Connect the input streams (Twilio -> Deepgram)
+        const pcmStream = this.convertMuLawToPcm(this.twilioInput);
+        pcmStream.pipe(this.deepgramInput);
 
         try {
-            // Start alle clients en wacht tot ze klaar zijn
-            await Promise.all([
-                this.deepgramClient.start(this.deepgramInput, this.chatGptInput),
-                this.chatGptClient.start(this.chatGptInput, this.elevenLabsInput),
-                this.elevenLabsClient.start(this.elevenLabsInput, this.twilioOutput),
-            ]);
+            // 3. Start the listening clients
+            //    We assume ChatGPTClient is modified to take a callback instead of an output stream.
+            //    This is crucial for decoupling the speaking part.
+            await this.deepgramClient.start(this.deepgramInput, this.chatGptInput);
 
-            // Nu alle clients klaar zijn, speel de welkomstboodschap af
-            this.sendWelcomeMessage();
+            // The `onTextGenerated` callback will trigger the `speak` method.
+            this.chatGptClient.start(this.chatGptInput, (text) => {
+                this.speak(text);
+            });
+
+            // 4. Play the welcome message by calling the new speak method
+            await this.speak("Hallo, hoe kan ik je helpen vandaag?");
+
             console.log(`[${callSid}] Streaming pipeline started successfully.`);
 
         } catch (err) {
@@ -67,50 +77,71 @@ export class VoiceService {
     }
 
     /**
-     * Stopt de streaming-pipeline.
+     * A new method to handle text-to-speech on demand.
+     * This creates a short-lived pipeline for each utterance.
+     */
+    private async speak(text: string) {
+        if (!text) return;
+        console.log(`[${this.callSid}] Preparing to speak: "${text}"`);
+
+        // Create a new, temporary stream for this specific text
+        const elevenLabsInputStream = new PassThrough();
+
+        try {
+            // Start a new ElevenLabs streaming session.
+            // This returns a promise that resolves when the connection is open.
+            await this.elevenLabsClient.start(elevenLabsInputStream, this.twilioOutput);
+
+            // Write the text to the stream
+            elevenLabsInputStream.write(text);
+
+            // End the stream. This is critical.
+            // It signals to ElevenLabsClient that we are done sending text.
+            // The client will then send a flush message ("{ text: '' }") and close gracefully.
+            elevenLabsInputStream.end();
+
+        } catch (err) {
+            console.error(`[${this.callSid}] Error during ElevenLabs TTS streaming:`, err);
+        }
+    }
+
+    /**
+     * Stops the streaming-pipeline by ending the input streams.
      */
     stopStreaming() {
         console.log(`[${this.callSid}] Stopping streaming pipeline.`);
+        // Only end the streams that are part of the persistent input pipeline
         this.twilioInput?.end();
         this.deepgramInput?.end();
         this.chatGptInput?.end();
-        this.elevenLabsInput?.end();
     }
 
     /**
-     * Ontvangt audio van de WebSocket en stuurt het de pipeline in.
+     * Receives audio from the WebSocket and sends it into the listening pipeline.
      */
     sendAudio(audioChunk: string) {
-        this.twilioInput.write(Buffer.from(audioChunk, "base64"));
+        // Prevent writing to the stream if it has been closed
+        if (this.twilioInput && !this.twilioInput.destroyed) {
+            this.twilioInput.write(Buffer.from(audioChunk, "base64"));
+        }
     }
 
-    /**
-     * Verwerk een 'mark' bericht van Twilio om de verbinding levend te houden.
-     */
     handleMark(markName: string) {
         console.log(`[${this.callSid}] Received mark: ${markName}`);
     }
 
-    private sendWelcomeMessage() {
-        const welcomeText = "Hallo, hoe kan ik je helpen vandaag?";
-        console.log(`[${this.callSid}] Sending welcome message: "${welcomeText}"`);
-        this.elevenLabsInput.write(welcomeText);
-    }
-
     /**
-     * Verbindt de verschillende streams met elkaar.
-     */
-    private setupPipeline() {
-        const pcmStream = this.convertMuLawToPcm(this.twilioInput);
-        pcmStream.pipe(this.deepgramInput);
-    }
-
-    /**
-     * Creëert een Writable stream die audio chunks naar de Twilio WebSocket stuurt.
+     * Creates a Writable stream that sends audio chunks to the Twilio WebSocket.
      */
     private createTwilioOutput(ws: WebSocket): Writable {
         return new Writable({
             write: (chunk, encoding, callback) => {
+                // Check if the WebSocket is still open before sending
+                if (ws.readyState !== WebSocket.OPEN) {
+                    callback();
+                    return;
+                }
+
                 const pcmBuffer = Buffer.from(chunk);
                 const muLawBuffer = this.convertPcmToMuLaw(pcmBuffer);
                 const base64 = muLawBuffer.toString("base64");
@@ -124,10 +155,14 @@ export class VoiceService {
                 );
                 callback();
             },
+            destroy: (err, callback) => {
+                console.log(`[${this.callSid}] Twilio output stream destroyed.`);
+                callback(err);
+            }
         });
     }
 
-    // ... (mu-law conversie functies blijven hetzelfde)
+    // --- Mu-law conversion functions remain unchanged ---
     private convertMuLawToPcm(muLawStream: PassThrough): PassThrough {
         const pcmStream = new PassThrough();
         muLawStream.on("data", (chunk) => {
@@ -168,4 +203,3 @@ export class VoiceService {
         return sign | (127 - muLaw);
     }
 }
-

@@ -15,7 +15,7 @@ export class ChatGPTClient {
      * Start een streaming chat-sessie met OpenAI.
      * Retourneert een Promise die onmiddellijk oplost.
      */
-    async start(inputStream: Readable, outputStream: Writable): Promise<void> {
+    async start(inputStream: Readable, onTextGenerated: (text: string) => void): Promise<void> {
         const messages: ChatCompletionMessageParam[] = [
             {
                 role: "system",
@@ -50,16 +50,18 @@ export class ChatGPTClient {
                         sentenceBuffer += delta;
 
                         if (/[.?!]/.test(sentenceBuffer)) {
-                            console.log(`[ChatGPT] Sending sentence: ${sentenceBuffer.trim()}`);
-                            outputStream.write(sentenceBuffer.trim());
+                            const sentence = sentenceBuffer.trim();
+                            console.log(`[ChatGPT] Sending sentence: ${sentence}`);
+                            onTextGenerated(sentence);
                             sentenceBuffer = "";
                         }
                     }
                 }
 
                 if (sentenceBuffer.trim()) {
-                    console.log(`[ChatGPT] Sending remaining buffer: ${sentenceBuffer.trim()}`);
-                    outputStream.write(sentenceBuffer.trim());
+                    const sentence = sentenceBuffer.trim();
+                    console.log(`[ChatGPT] Sending remaining buffer: ${sentence}`);
+                    onTextGenerated(sentence);
                     sentenceBuffer = "";
                 }
 
@@ -73,7 +75,6 @@ export class ChatGPTClient {
 
         inputStream.on("end", () => {
             console.log("[ChatGPT] Input stream ended.");
-            outputStream.end();
         });
 
         // Geef aan dat de client klaar is om te luisteren
