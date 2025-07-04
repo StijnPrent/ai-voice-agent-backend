@@ -52,7 +52,6 @@ export class ElevenLabsClient {
 
         this.ws.on("close", () => {
             console.log("[ElevenLabs] Connection closed.");
-            outputStream.end();
         });
 
         // Pipe de tekst van ChatGPT naar ElevenLabs
