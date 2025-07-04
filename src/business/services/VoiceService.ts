@@ -38,27 +38,30 @@ export class VoiceService {
         this.callSid = callSid;
         console.log(`[${callSid}] Starting streaming pipeline...`);
 
-        // 1. Initialiseer alle PassThrough-streams
         this.twilioInput = new PassThrough();
         this.deepgramInput = new PassThrough();
         this.chatGptInput = new PassThrough();
         this.elevenLabsInput = new PassThrough();
-
-        // 2. Maak een Writable stream voor de output naar Twilio
         this.twilioOutput = this.createTwilioOutput(ws, callSid);
 
-        // 3. Koppel de streams aan elkaar
         this.setupPipeline();
 
-        // 4. Start de clients met de juiste streams
-        await this.deepgramClient.start(this.deepgramInput, this.chatGptInput);
-        await this.chatGptClient.start(this.chatGptInput, this.elevenLabsInput);
-        await this.elevenLabsClient.start(this.elevenLabsInput, this.twilioOutput);
+        try {
+            // Start alle clients en wacht tot ze klaar zijn
+            await Promise.all([
+                this.deepgramClient.start(this.deepgramInput, this.chatGptInput),
+                this.chatGptClient.start(this.chatGptInput, this.elevenLabsInput),
+                this.elevenLabsClient.start(this.elevenLabsInput, this.twilioOutput),
+            ]);
 
-        // 5. Speel de welkomstboodschap af
-        this.sendWelcomeMessage();
+            // Nu alle clients klaar zijn, speel de welkomstboodschap af
+            this.sendWelcomeMessage();
+            console.log(`[${callSid}] Streaming pipeline started successfully.`);
 
-        console.log(`[${callSid}] Streaming pipeline started.`);
+        } catch (err) {
+            console.error(`[${callSid}] Failed to start streaming pipeline:`, err);
+            this.stopStreaming();
+        }
     }
 
     /**
