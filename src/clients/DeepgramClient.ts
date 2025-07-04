@@ -31,7 +31,6 @@ export class DeepgramClient {
             punctuate: true,
             smart_format: true,
             endpointing: 300,
-            utterance_end_ms: 1000,
         });
 
         // Wacht tot de verbinding daadwerkelijk open is
