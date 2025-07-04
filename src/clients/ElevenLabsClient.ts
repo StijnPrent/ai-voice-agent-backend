@@ -46,6 +46,7 @@ export class ElevenLabsClient {
         this.ws.on("message", (data: Buffer) => {
             const res = JSON.parse(data.toString());
             if (res.audio) {
+                console.log("[ElevenLabs] Received audio chunk.");
                 outputStream.write(Buffer.from(res.audio, "base64"));
             }
         });

@@ -138,10 +138,12 @@ export class VoiceService {
             write: (chunk, encoding, callback) => {
                 // Check if the WebSocket is still open before sending
                 if (ws.readyState !== WebSocket.OPEN) {
+                    console.log(`[${this.callSid}] WebSocket not open, skipping media send.`);
                     callback();
                     return;
                 }
 
+                console.log(`[${this.callSid}] Sending audio chunk to Twilio.`);
                 const pcmBuffer = Buffer.from(chunk);
                 const muLawBuffer = this.convertPcmToMuLaw(pcmBuffer);
                 const base64 = muLawBuffer.toString("base64");
