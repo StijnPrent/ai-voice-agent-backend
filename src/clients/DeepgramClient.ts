@@ -22,7 +22,7 @@ export class DeepgramClient {
      * Retourneert een Promise die oplost zodra de verbinding open is.
      */
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
-        const transcription = this.deepgram.listen.live({
+        const transcription = this.deepgram.transcription.live({
             language: "nl",
             punctuate: true,
             smart_format: true,
@@ -40,7 +40,7 @@ export class DeepgramClient {
                 resolve();
             });
 
-            transcription.on(LiveTranscriptionEvents.Error, (err) => {
+            transcription.on(LiveTranscriptionEvents.Error, (err: any) => {
                 // Log the full error object for detailed diagnostics
                 console.error("[Deepgram] Connection error:", JSON.stringify(err, null, 2));
                 reject(err);
@@ -56,7 +56,7 @@ export class DeepgramClient {
             transcription.finish();
         });
 
-        transcription.on(LiveTranscriptionEvents.Transcript, (data) => {
+        transcription.on(LiveTranscriptionEvents.Transcript, (data: any) => {
             const transcript = data.channel.alternatives[0].transcript;
             if (transcript && data.is_final) {
                 console.log(`[Deepgram] Final Transcript: ${transcript}`);
