@@ -26,6 +26,10 @@ export class DeepgramClient {
         const transcription = this.deepgram.listen.live({
             language: "nl",
             model: "nova-2",
+            encoding: "linear16",
+            sample_rate: 8000,
+            punctuate: true,
+            smart_format: true,
         });
 
         // Wacht tot de verbinding daadwerkelijk open is
