@@ -24,6 +24,7 @@ export class VoiceService {
     // Call identifiers
     private callSid: string | null = null;
     private streamSid: string | null = null;
+    private isStreaming: boolean = false;
 
     constructor(
         @inject(DeepgramClient) deepgramClient: DeepgramClient,
@@ -42,6 +43,7 @@ export class VoiceService {
     async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
         this.callSid = callSid;
         this.streamSid = streamSid;
+        this.isStreaming = true;
         console.log(`[${callSid}] Starting streaming pipeline...`);
 
         // 1. Initialize streams for the input pipeline
@@ -109,7 +111,13 @@ export class VoiceService {
      * Stops the streaming-pipeline by ending the input streams.
      */
     stopStreaming() {
+        if (!this.isStreaming) {
+            console.log(`[${this.callSid}] Stop ignored: streaming is not active.`);
+            return;
+        }
         console.log(`[${this.callSid}] Stopping streaming pipeline.`);
+        this.isStreaming = false;
+
         // Only end the streams that are part of the persistent input pipeline
         this.twilioInput?.end();
         this.deepgramInput?.end();
