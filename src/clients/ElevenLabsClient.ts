@@ -17,6 +17,7 @@ export class ElevenLabsClient {
             console.error("[ElevenLabs] Output stream is not set. Call connect() first.");
             return;
         }
+        console.log(`[ElevenLabs] Speak: ${text}`);
 
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
         const ws = new WebSocket(url);

@@ -36,7 +36,6 @@ export class VoiceService {
         // 1. Clear any pending audio in Twilio's buffer
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
-                event: "clear",
                 streamSid: this.streamSid,
             }));
             console.log(`[${this.callSid}] Sent clear message to Twilio.`);
