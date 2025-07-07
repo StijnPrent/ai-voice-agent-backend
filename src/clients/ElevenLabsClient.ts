@@ -8,7 +8,7 @@ export class ElevenLabsClient {
     public speak(
         text: string,
         onStreamStart: () => void,
-        onAudio: (audio: Buffer) => void,
+        onAudio: (audio: string) => void, // Changed to string
         onClose: () => void
     ) {
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
@@ -32,7 +32,8 @@ export class ElevenLabsClient {
                     onStreamStart();
                     streamStarted = true;
                 }
-                onAudio(Buffer.from(res.audio, "base64"));
+                // Pass the raw base64 string directly
+                onAudio(res.audio);
             }
         });
 

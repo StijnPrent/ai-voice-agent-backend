@@ -29,7 +29,7 @@ export class VoiceService {
         this.isAssistantSpeaking = false;
         this.markCount = 0;
 
-        console.log(`[${this.callSid}] Starting stream with direct callback logic...`);
+        console.log(`[${this.callSid}] Starting stream with direct base64 forwarding...`);
 
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
@@ -85,18 +85,19 @@ export class VoiceService {
             }
         };
 
-        const onAudio = (audio: Buffer) => {
+        const onAudio = (audioPayload: string) => { // Changed to string
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     event: "media",
                     streamSid: this.streamSid,
-                    media: { payload: audio.toString("base64") },
+                    // Send the raw base64 payload directly
+                    media: { payload: audioPayload },
                 }));
             }
         };
 
         const onClose = () => {
-            // Nothing specific to do on close in this new model
+            // Nothing specific to do on close
         };
 
         this.elevenLabsClient.speak(text, onStreamStart, onAudio, onClose);
