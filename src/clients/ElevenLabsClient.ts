@@ -18,50 +18,38 @@ export class ElevenLabsClient {
             return;
         }
 
-        // The API key is now sent in the initial message, not the headers.
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
         const ws = new WebSocket(url);
         let streamStarted = false;
 
         ws.on("open", () => {
-            console.log(`[ElevenLabs] On-demand connection opened. Authenticating and sending text: "${text}"`);
+            console.log(`[ElevenLabs] On-demand connection opened. Sending combined auth and text message...`);
 
-            // 1. Send authentication and configuration
+            // Send a single message with authentication, settings, and the text.
+            // We no longer send an empty string afterwards, as that was prematurely closing the connection.
             ws.send(JSON.stringify({
-                xi_api_key: this.apiKey, // Correct authentication method
+                xi_api_key: this.apiKey,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+                text: text,
             }));
-
-            // 2. Send the text to be synthesized
-            ws.send(JSON.stringify({ text }));
-
-            // 3. Mark the end of the input stream
-            ws.send(JSON.stringify({ text: "" }));
         });
 
         ws.on("message", data => {
             const res = JSON.parse(data.toString());
-
-            // Check for audio and pipe it to the main stream
             if (res.audio) {
                 if (!streamStarted) {
                     console.log("[ElevenLabs] Audio stream started.");
-                    onStreamStart?.(); // Trigger the callback to send the Twilio <mark>
+                    onStreamStart?.();
                     streamStarted = true;
                 }
                 this.mainOutputStream!.write(Buffer.from(res.audio, "base64"));
-            }
-
-            // Check for an error message from ElevenLabs
-            if (res.isFinal && res.message) {
-                 console.error(`[ElevenLabs] Received error message: ${res.message}`);
             }
         });
 
         ws.on("close", (code, reason) => {
             console.log(`[ElevenLabs] On-demand connection closed. Code: ${code}, Reason: ${reason.toString()}`);
-            if (!streamStarted) {
-                console.error("[ElevenLabs] CRITICAL: Connection closed without streaming any audio. Please check API key and voice ID.");
+            if (!streamStarted && code !== 1000) {
+                 console.error("[ElevenLabs] CRITICAL: Connection closed unexpectedly without streaming audio. Please check server status or account settings.");
             }
         });
 
