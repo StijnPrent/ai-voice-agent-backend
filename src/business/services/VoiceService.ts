@@ -36,6 +36,7 @@ export class VoiceService {
         // 1. Clear any pending audio in Twilio's buffer
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
+                event: "clear",
                 streamSid: this.streamSid,
             }));
             console.log(`[${this.callSid}] Sent clear message to Twilio.`);
@@ -67,7 +68,7 @@ export class VoiceService {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
             this.elevenLabsClient.connect(this.audioOut);
             console.log(`[${this.callSid}] All clients initialized.`);
-            this.speak("Hello, how can I help you today?");
+            this.speak("Goeiedag, waar kan ik u mee helpen?");
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
