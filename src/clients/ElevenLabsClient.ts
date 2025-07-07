@@ -37,12 +37,8 @@ export class ElevenLabsClient {
                 text: text,
             }));
 
-            // 3. Send the end-of-stream message.
-            ws.send(JSON.stringify({
-                text: "",
-            }));
-
-             console.log("[ElevenLabs] All initial messages sent.");
+            // We no longer send the end-of-stream message, as this was the cause of the premature close.
+            console.log("[ElevenLabs] Configuration and text sent.");
         });
 
         ws.on("message", data => {
@@ -55,7 +51,6 @@ export class ElevenLabsClient {
                 }
                 this.mainOutputStream!.write(Buffer.from(res.audio, "base64"));
             } else {
-                // Log any non-audio messages for debugging.
                 console.log("[ElevenLabs] Received non-audio message:", res);
             }
         });
