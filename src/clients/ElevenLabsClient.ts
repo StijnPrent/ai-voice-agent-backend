@@ -16,12 +16,11 @@ export class ElevenLabsClient {
         let streamStarted = false;
 
         ws.on("open", () => {
+            ws.send(JSON.stringify({ text: " " }));
             ws.send(JSON.stringify({
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                 output_format: "ulaw_8000",
-                text: " "
-            }));
-            ws.send(JSON.stringify({ text }));
+                text: text }));
             ws.send(JSON.stringify({ text: "" }));
         });
 
