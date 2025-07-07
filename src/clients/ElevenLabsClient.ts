@@ -37,6 +37,7 @@ export class ElevenLabsClient {
             ws.send(JSON.stringify({
                 text: text,
             }));
+            console.log(`[ElevenLabs] Sent text: ${text}`);
 
             ws.send(JSON.stringify({
                 text: ' ',
