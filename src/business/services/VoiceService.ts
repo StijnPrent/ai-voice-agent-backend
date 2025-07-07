@@ -53,7 +53,7 @@ export class VoiceService {
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
-            this.speak("Hello, how can I help you today?");
+            this.speak("Goeiedag, waar kan ik u vandaag mee helpen?");
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();

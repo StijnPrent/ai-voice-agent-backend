@@ -47,26 +47,16 @@ export class ChatGPTClient {
                     const delta = part.choices[0]?.delta?.content || "";
                     if (delta) {
                         fullResponse += delta;
-                        sentenceBuffer += delta;
-
-                        if (/[.?!]/.test(sentenceBuffer)) {
-                            const sentence = sentenceBuffer.trim();
-                            console.log(`[ChatGPT] Sending sentence: ${sentence}`);
-                            onTextGenerated(sentence);
-                            sentenceBuffer = "";
-                        }
                     }
                 }
 
-                if (sentenceBuffer.trim()) {
-                    const sentence = sentenceBuffer.trim();
-                    console.log(`[ChatGPT] Sending remaining buffer: ${sentence}`);
-                    onTextGenerated(sentence);
-                    sentenceBuffer = "";
+                if (fullResponse) {
+                    console.log(`[ChatGPT] Sending full response: ${fullResponse}`);
+                    onTextGenerated(fullResponse);
                 }
 
                 messages.push({ role: "assistant", content: fullResponse });
-                console.log(`[ChatGPT] Full response: ${fullResponse}`);
+                console.log(`[ChatGPT] Full response added to history: ${fullResponse}`);
 
             } catch (err) {
                 console.error("[ChatGPT] Error:", err);
