@@ -12,7 +12,6 @@ export class VoiceService {
     private callSid: string | null = null;
     private streamSid: string | null = null;
     private audioIn: PassThrough | null = null;
-    private audioOut: PassThrough | null = null;
     private isAssistantSpeaking: boolean = false;
     private markCount: number = 0;
 
@@ -27,13 +26,11 @@ export class VoiceService {
         this.callSid = callSid;
         this.streamSid = streamSid;
         this.audioIn = new PassThrough();
-        this.audioOut = new PassThrough();
         this.isAssistantSpeaking = false;
         this.markCount = 0;
 
-        console.log(`[${this.callSid}] Starting stream with corrected turn-taking logic...`);
+        console.log(`[${this.callSid}] Starting stream with direct callback logic...`);
 
-        // 1. Clear any pending audio in Twilio's buffer
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
                 event: "clear",
@@ -41,17 +38,6 @@ export class VoiceService {
             }));
             console.log(`[${this.callSid}] Sent clear message to Twilio.`);
         }
-
-        // 2. Pipe audio from our output stream directly to the Twilio WebSocket
-        this.audioOut.on('data', (chunk) => {
-            if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({
-                    event: "media",
-                    streamSid: this.streamSid,
-                    media: { payload: chunk.toString("base64") },
-                }));
-            }
-        });
 
         const dgToGpt = new Writable({
             write: (chunk: Buffer, _encoding, callback) => {
@@ -66,9 +52,8 @@ export class VoiceService {
 
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.elevenLabsClient.connect(this.audioOut);
-            console.log(`[${this.callSid}] All clients initialized.`);
-            this.speak("Goeiedag, waar kan ik u mee helpen?");
+            console.log(`[${this.callSid}] Deepgram client initialized.`);
+            this.speak("Hello, how can I help you today?");
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
@@ -100,7 +85,21 @@ export class VoiceService {
             }
         };
 
-        this.elevenLabsClient.speak(text, onStreamStart);
+        const onAudio = (audio: Buffer) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "media",
+                    streamSid: this.streamSid,
+                    media: { payload: audio.toString("base64") },
+                }));
+            }
+        };
+
+        const onClose = () => {
+            // Nothing specific to do on close in this new model
+        };
+
+        this.elevenLabsClient.speak(text, onStreamStart, onAudio, onClose);
     }
 
     public sendAudio(payload: string) {
@@ -118,11 +117,9 @@ export class VoiceService {
         if (!this.callSid) return;
         console.log(`[${this.callSid}] Stopping stream...`);
         this.audioIn?.end();
-        this.elevenLabsClient.close();
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;
         this.audioIn = null;
-        this.audioOut = null;
     }
 }
