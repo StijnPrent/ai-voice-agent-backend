@@ -11,16 +11,16 @@ export class ElevenLabsClient {
         onAudio: (audio: string) => void, // Changed to string
         onClose: () => void
     ) {
-        const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
+        const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
         const ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
         let streamStarted = false;
 
         ws.on("open", () => {
-            ws.send(JSON.stringify({ text: " " }));
             ws.send(JSON.stringify({
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                output_format: "ulaw_8000",
-                text: text }));
+                text: " "
+            }));
+            ws.send(JSON.stringify({ text }));
             ws.send(JSON.stringify({ text: "" }));
         });
 
