@@ -20,10 +20,13 @@ export class ElevenLabsClient {
             const res = JSON.parse(data.toString());
             if (res.audio) this.out.write(Buffer.from(res.audio, "base64"));
         });
-        this.ws.on("close",  () => this.out.end());
+        this.ws.on("close", (code, reason) => {
+            console.log(`[ElevenLabs] WS connection closed. Code: ${code}, Reason: ${reason.toString()}`);
+            // We no longer end the output stream here.
+        });
         this.ws.on("error", err => {
             console.error("[ElevenLabs] WS error", err);
-            this.out.end();
+            // We no longer end the output stream here.
         });
 
         // Wait for open & send settings + empty kick-off text
