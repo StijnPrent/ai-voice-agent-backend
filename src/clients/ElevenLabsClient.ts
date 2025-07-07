@@ -37,6 +37,7 @@ export class ElevenLabsClient {
 
         ws.on("message", data => {
             const res = JSON.parse(data.toString());
+            console.log(`[ElevenLabs] Received response:`, res);
             if (res.audio) {
                 if (!streamStarted) {
                     console.log("[ElevenLabs] Audio stream started.");
