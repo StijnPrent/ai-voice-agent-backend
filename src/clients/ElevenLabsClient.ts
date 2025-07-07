@@ -39,7 +39,7 @@ export class ElevenLabsClient {
             }));
 
             ws.send(JSON.stringify({
-                text: ' ',
+                text: '',
             }));
 
             // We no longer send the end-of-stream message, as this was the cause of the premature close.
