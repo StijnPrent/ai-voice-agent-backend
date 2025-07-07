@@ -2,19 +2,6 @@
 import WebSocket from "ws";
 import { Writable } from "stream";
 
-// μ-law decoding constants
-const MU_LAW_MAX = 0x1FFF;
-const MU_LAW_BIAS = 0x84; // 132
-
-function muLawDecode(u_val: number): number {
-    // invert all bits
-    u_val = ~u_val;
-    // extract and shift
-    let t = ((u_val & 0x0F) << 3) + MU_LAW_BIAS;
-    t <<= (u_val & 0x70) >> 4;
-    return (u_val & 0x80) ? (MU_LAW_BIAS - t) : (t - MU_LAW_BIAS);
-}
-
 export class ElevenLabsClient {
     private mainOutputStream: Writable | null = null;
     private readonly voiceId = process.env.ELEVENLABS_VOICE_ID!;
@@ -49,18 +36,11 @@ export class ElevenLabsClient {
         ws.on("message", (data) => {
             const res = JSON.parse(data.toString());
             if (res.audio) {
-                // Decode μ-law to PCM16LE
-                const muBuf = Buffer.from(res.audio, "base64");
-                const pcmBuf = Buffer.alloc(muBuf.length * 2);
-                for (let i = 0; i < muBuf.length; i++) {
-                    const decoded = muLawDecode(muBuf[i]);
-                    pcmBuf.writeInt16LE(decoded, i * 2);
-                }
                 if (!streamStarted) {
                     onStreamStart?.();
                     streamStarted = true;
                 }
-                this.mainOutputStream!.write(pcmBuf);
+                this.mainOutputStream!.write(Buffer.from(res.audio, "base64"));
             }
         });
 
