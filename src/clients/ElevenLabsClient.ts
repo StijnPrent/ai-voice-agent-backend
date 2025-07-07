@@ -29,7 +29,7 @@ export class ElevenLabsClient {
 
         // Create a new connection for each speech request.
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
-        const ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey }, handshakeTimeout: 10000 });
+        const ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
 
         ws.on("open", () => {
             console.log(`[ElevenLabs] Speaking: "${text}"`);

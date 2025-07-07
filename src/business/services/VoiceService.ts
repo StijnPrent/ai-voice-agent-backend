@@ -13,6 +13,8 @@ export class VoiceService {
     private streamSid: string | null = null;
     private audioIn: PassThrough | null = null;
     private audioOut: PassThrough | null = null;
+    private isAssistantSpeaking: boolean = false;
+    private markCount: number = 0;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -20,67 +22,48 @@ export class VoiceService {
         @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient
     ) {}
 
-    /**
-     * Starts the voice streaming session for a new call.
-     */
     public async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
         this.ws = ws;
         this.callSid = callSid;
         this.streamSid = streamSid;
         this.audioIn = new PassThrough();
         this.audioOut = new PassThrough();
+        this.isAssistantSpeaking = false;
+        this.markCount = 0;
 
-        console.log(`[${this.callSid}] Starting stream...`);
+        console.log(`[${this.callSid}] Starting stream with turn-taking logic...`);
 
-        // 1. Pipe audio from ElevenLabs back to the Twilio WebSocket
+        // 1. Pipe audio from our output stream directly to the Twilio WebSocket
         this.audioOut.on('data', (chunk) => {
             if (this.ws?.readyState === WebSocket.OPEN) {
-                const message = {
+                this.ws.send(JSON.stringify({
                     event: "media",
                     streamSid: this.streamSid,
-                    media: {
-                        payload: chunk.toString("base64"),
-                    },
-                };
-                this.ws.send(JSON.stringify(message));
+                    media: { payload: chunk.toString("base64") },
+                }));
             }
         });
 
-        this.audioOut.on('end', () => {
-            console.log(`[${this.callSid}] ElevenLabs audio stream ended.`);
-        });
-
-        // 2. Create a writable stream for Deepgram transcripts
+        // 2. Set up the pipeline from Deepgram to ChatGPT
         const dgToGpt = new Writable({
             write: (chunk: Buffer, _encoding, callback) => {
                 const transcript = chunk.toString();
-                console.log(`[${this.callSid}] [Deepgram] Transcript:`, transcript);
-
-                // 3. Send transcript to ChatGPT
-                this.chatGptClient.start(
-                    Readable.from([transcript]),
-                    (sentence: string) => {
-                        console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
-                        // 4. Send ChatGPT response to ElevenLabs for synthesis
-                        this.elevenLabsClient.speak(sentence);
-                    }
-                ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
-
+                if (transcript) {
+                    console.log(`[${this.callSid}] [Deepgram] Transcript:`, transcript);
+                    this.handleUserResponse(transcript);
+                }
                 callback();
             }
         });
 
         try {
-            // 5. Start Deepgram client
+            // 3. Start the clients
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            console.log(`[${this.callSid}] Deepgram pipeline started.`);
+            this.elevenLabsClient.connect(this.audioOut); // This just initializes the client now
+            console.log(`[${this.callSid}] All clients initialized.`);
 
-            // 6. Connect to ElevenLabs, piping its output to our audioOut stream
-            await this.elevenLabsClient.connect(this.audioOut);
-            console.log(`[${this.callSid}] ElevenLabs TTS connected.`);
-
-            // 7. Send a welcome message
-            this.elevenLabsClient.speak("Hello, how can I help you today?");
+            // 4. Send the welcome message
+            this.speak("Hello, how can I help you today?");
 
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
@@ -88,26 +71,45 @@ export class VoiceService {
         }
     }
 
-    /**
-     * Receives audio payload from the WebSocket and sends it to Deepgram.
-     */
+    private handleUserResponse(transcript: string) {
+        this.chatGptClient.start(
+            Readable.from([transcript]),
+            (sentence: string) => {
+                console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
+                this.speak(sentence);
+            }
+        ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
+    }
+
+    private speak(text: string) {
+        this.isAssistantSpeaking = true;
+        this.elevenLabsClient.speak(text);
+
+        // After sending the text to TTS, send a mark to Twilio to know when it's done playing.
+        const markName = `spoke-${this.markCount++}`;
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                event: "mark",
+                streamSid: this.streamSid,
+                mark: { name: markName },
+            }));
+            console.log(`[${this.callSid}] Sent mark: ${markName}`);
+        }
+    }
+
     public sendAudio(payload: string) {
-        if (this.audioIn) {
+        // Only process user audio if the assistant is not speaking.
+        if (this.audioIn && !this.isAssistantSpeaking) {
             this.audioIn.write(Buffer.from(payload, "base64"));
         }
     }
 
-    /**
-     * Handles a mark event from Twilio, indicating a reply has finished playing.
-     */
     public handleMark(name: string) {
-        console.log(`[${this.callSid}] Received mark: ${name}`);
-        // This can be used to trigger actions after a sentence is spoken.
+        console.log(`[${this.callSid}] Received mark: ${name}. User can now speak.`);
+        // The assistant has finished speaking, so we set the flag to false.
+        this.isAssistantSpeaking = false;
     }
 
-    /**
-     * Stops the streaming session and cleans up resources.
-     */
     public stopStreaming() {
         if (!this.callSid) return;
         console.log(`[${this.callSid}] Stopping stream...`);
