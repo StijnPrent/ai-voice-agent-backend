@@ -37,7 +37,6 @@ export class ElevenLabsClient {
             ws.send(JSON.stringify({
                 text: text,
             }));
-            console.log(`[ElevenLabs] Sent text: ${text}`);
 
             ws.send(JSON.stringify({
                 text: ' ',
@@ -49,6 +48,7 @@ export class ElevenLabsClient {
 
         ws.on("message", data => {
             const res = JSON.parse(data.toString());
+            console.log("[ElevenLabs] Received message:", res);
             if (res.audio) {
                 if (!streamStarted) {
                     console.log("[ElevenLabs] Audio stream started.");
