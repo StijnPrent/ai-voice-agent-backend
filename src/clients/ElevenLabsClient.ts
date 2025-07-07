@@ -28,11 +28,13 @@ export class ElevenLabsClient {
         ws.on("message", (data) => {
             const res = JSON.parse(data.toString());
             if (res.audio) {
+                console.log(`[ElevenLabs] Audio chunk received, length: ${res.audio.length}`);
+                console.log(`[ElevenLabs] First 20 chars: ${res.audio.substring(0, 20)}`);
+
                 if (!streamStarted) {
                     onStreamStart();
                     streamStarted = true;
                 }
-                // Pass the raw base64 string directly
                 onAudio(res.audio);
             }
         });
