@@ -33,6 +33,16 @@ export class VoiceService {
 
         console.log(`[${this.callSid}] Starting stream with corrected turn-taking logic...`);
 
+        // 1. Clear any pending audio in Twilio's buffer
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                event: "clear",
+                streamSid: this.streamSid,
+            }));
+            console.log(`[${this.callSid}] Sent clear message to Twilio.`);
+        }
+
+        // 2. Pipe audio from our output stream directly to the Twilio WebSocket
         this.audioOut.on('data', (chunk) => {
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -78,7 +88,6 @@ export class VoiceService {
     private speak(text: string) {
         this.isAssistantSpeaking = true;
 
-        // Define the callback that will be executed once audio starts streaming.
         const onStreamStart = () => {
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
@@ -91,7 +100,6 @@ export class VoiceService {
             }
         };
 
-        // Call speak and pass the callback.
         this.elevenLabsClient.speak(text, onStreamStart);
     }
 

@@ -25,11 +25,11 @@ export class ElevenLabsClient {
         ws.on("open", () => {
             console.log(`[ElevenLabs] On-demand connection opened. Sending combined auth and text message...`);
 
-            // Send a single message with authentication, settings, and the text.
-            // We no longer send an empty string afterwards, as that was prematurely closing the connection.
+            // Send a single message with authentication, settings, output format, and the text.
             ws.send(JSON.stringify({
                 xi_api_key: this.apiKey,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+                output_format: "ulaw_8000", // This is crucial for Twilio
                 text: text,
             }));
         });
@@ -48,9 +48,6 @@ export class ElevenLabsClient {
 
         ws.on("close", (code, reason) => {
             console.log(`[ElevenLabs] On-demand connection closed. Code: ${code}, Reason: ${reason.toString()}`);
-            if (!streamStarted && code !== 1000) {
-                 console.error("[ElevenLabs] CRITICAL: Connection closed unexpectedly without streaming audio. Please check server status or account settings.");
-            }
         });
 
         ws.on("error", err => {
