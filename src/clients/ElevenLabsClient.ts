@@ -9,7 +9,6 @@ export class ElevenLabsClient {
 
     public connect(outputStream: Writable) {
         this.mainOutputStream = outputStream;
-        console.log("[ElevenLabs] Client initialized. Will connect on-demand.");
     }
 
     public speak(text: string, onStreamStart?: () => void) {
@@ -23,55 +22,41 @@ export class ElevenLabsClient {
         let streamStarted = false;
 
         ws.on("open", () => {
-            console.log(`[ElevenLabs] Connection opened. Sending messages in sequence...`);
-
-            // 1. Send authentication and configuration message.
             ws.send(JSON.stringify({
                 xi_api_key: this.apiKey,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                 output_format: "ulaw_8000",
-                text: ' '
+                text: " "
             }));
 
-            // 2. Send the text message.
-            ws.send(JSON.stringify({
-                text: text,
-            }));
+            ws.send(JSON.stringify({ text }));
 
-            ws.send(JSON.stringify({
-                text: '',
-            }));
-
-            // We no longer send the end-of-stream message, as this was the cause of the premature close.
-            console.log("[ElevenLabs] Configuration and text sent.");
+            ws.send(JSON.stringify({ text: "" }));
         });
 
         ws.on("message", data => {
             const res = JSON.parse(data.toString());
-            console.log("[ElevenLabs] Received message:", res);
             if (res.audio) {
                 if (!streamStarted) {
-                    console.log("[ElevenLabs] Audio stream started.");
                     onStreamStart?.();
                     streamStarted = true;
                 }
                 this.mainOutputStream!.write(Buffer.from(res.audio, "base64"));
-            } else {
-                console.log("[ElevenLabs] Received non-audio message:", res);
             }
         });
 
-        ws.on("close", (code, reason) => {
-            console.log(`[ElevenLabs] On-demand connection closed. Code: ${code}, Reason: ${reason.toString()}`);
+        ws.on("close", (code) => {
+            if (code !== 1000) {
+                 console.error(`[ElevenLabs] Connection closed unexpectedly with code: ${code}`);
+            }
         });
 
         ws.on("error", err => {
-            console.error("[ElevenLabs] On-demand connection error:", err);
+            console.error("[ElevenLabs] Connection error:", err);
         });
     }
 
     public close() {
-        console.log("[ElevenLabs] Client shutting down.");
         this.mainOutputStream = null;
     }
 }

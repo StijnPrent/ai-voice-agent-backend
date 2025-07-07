@@ -1,11 +1,9 @@
-
 // src/clients/DeepgramClient.ts
 import {
     createClient,
     DeepgramClient as SDKClient,
     LiveTranscriptionEvents,
 } from "@deepgram/sdk";
-import WebSocket from "ws";
 import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
 import config from "../config/config";
@@ -19,14 +17,14 @@ export class DeepgramClient {
     }
 
     /**
-     * Start een real-time transcriptie-stream met Deepgram.
+     * Start a real-time transcriptie-stream met Deepgram.
      * Retourneert een Promise die oplost zodra de verbinding open is.
      */
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
         const transcription = this.deepgram.listen.live({
             language: "nl",
             model: "nova-2",
-            encoding: "linear16",
+            encoding: "mulaw", // Correct encoding for Twilio audio
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
@@ -41,7 +39,6 @@ export class DeepgramClient {
             });
 
             transcription.on(LiveTranscriptionEvents.Error, (err: any) => {
-                // Log the full error object for detailed diagnostics
                 console.error("[Deepgram] Connection error:", JSON.stringify(err, null, 2));
                 reject(err);
             });
