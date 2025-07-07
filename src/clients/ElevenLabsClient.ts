@@ -17,27 +17,36 @@ export class ElevenLabsClient {
             console.error("[ElevenLabs] Output stream is not set. Call connect() first.");
             return;
         }
-        console.log(`[ElevenLabs] Speak: ${text}`);
 
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
         const ws = new WebSocket(url);
         let streamStarted = false;
 
         ws.on("open", () => {
-            console.log(`[ElevenLabs] On-demand connection opened. Sending combined auth and text message...`);
+            console.log(`[ElevenLabs] Connection opened. Sending messages in sequence...`);
 
-            // Send a single message with authentication, settings, output format, and the text.
+            // 1. Send authentication and configuration message.
             ws.send(JSON.stringify({
                 xi_api_key: this.apiKey,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                output_format: "ulaw_8000", // This is crucial for Twilio
+                output_format: "ulaw_8000",
+            }));
+
+            // 2. Send the text message.
+            ws.send(JSON.stringify({
                 text: text,
             }));
+
+            // 3. Send the end-of-stream message.
+            ws.send(JSON.stringify({
+                text: "",
+            }));
+
+             console.log("[ElevenLabs] All initial messages sent.");
         });
 
         ws.on("message", data => {
             const res = JSON.parse(data.toString());
-            console.log(`[ElevenLabs] Received response:`, res);
             if (res.audio) {
                 if (!streamStarted) {
                     console.log("[ElevenLabs] Audio stream started.");
@@ -45,6 +54,9 @@ export class ElevenLabsClient {
                     streamStarted = true;
                 }
                 this.mainOutputStream!.write(Buffer.from(res.audio, "base64"));
+            } else {
+                // Log any non-audio messages for debugging.
+                console.log("[ElevenLabs] Received non-audio message:", res);
             }
         });
 
