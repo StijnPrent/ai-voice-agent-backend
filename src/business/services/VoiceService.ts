@@ -31,9 +31,8 @@ export class VoiceService {
         this.isAssistantSpeaking = false;
         this.markCount = 0;
 
-        console.log(`[${this.callSid}] Starting stream with turn-taking logic...`);
+        console.log(`[${this.callSid}] Starting stream with corrected turn-taking logic...`);
 
-        // 1. Pipe audio from our output stream directly to the Twilio WebSocket
         this.audioOut.on('data', (chunk) => {
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -44,7 +43,6 @@ export class VoiceService {
             }
         });
 
-        // 2. Set up the pipeline from Deepgram to ChatGPT
         const dgToGpt = new Writable({
             write: (chunk: Buffer, _encoding, callback) => {
                 const transcript = chunk.toString();
@@ -57,14 +55,10 @@ export class VoiceService {
         });
 
         try {
-            // 3. Start the clients
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.elevenLabsClient.connect(this.audioOut); // This just initializes the client now
+            this.elevenLabsClient.connect(this.audioOut);
             console.log(`[${this.callSid}] All clients initialized.`);
-
-            // 4. Send the welcome message
             this.speak("Hello, how can I help you today?");
-
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
@@ -83,22 +77,25 @@ export class VoiceService {
 
     private speak(text: string) {
         this.isAssistantSpeaking = true;
-        this.elevenLabsClient.speak(text);
 
-        // After sending the text to TTS, send a mark to Twilio to know when it's done playing.
-        const markName = `spoke-${this.markCount++}`;
-        if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                event: "mark",
-                streamSid: this.streamSid,
-                mark: { name: markName },
-            }));
-            console.log(`[${this.callSid}] Sent mark: ${markName}`);
-        }
+        // Define the callback that will be executed once audio starts streaming.
+        const onStreamStart = () => {
+            const markName = `spoke-${this.markCount++}`;
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "mark",
+                    streamSid: this.streamSid,
+                    mark: { name: markName },
+                }));
+                console.log(`[${this.callSid}] Sent mark: ${markName}`);
+            }
+        };
+
+        // Call speak and pass the callback.
+        this.elevenLabsClient.speak(text, onStreamStart);
     }
 
     public sendAudio(payload: string) {
-        // Only process user audio if the assistant is not speaking.
         if (this.audioIn && !this.isAssistantSpeaking) {
             this.audioIn.write(Buffer.from(payload, "base64"));
         }
@@ -106,17 +103,14 @@ export class VoiceService {
 
     public handleMark(name: string) {
         console.log(`[${this.callSid}] Received mark: ${name}. User can now speak.`);
-        // The assistant has finished speaking, so we set the flag to false.
         this.isAssistantSpeaking = false;
     }
 
     public stopStreaming() {
         if (!this.callSid) return;
         console.log(`[${this.callSid}] Stopping stream...`);
-
         this.audioIn?.end();
         this.elevenLabsClient.close();
-
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;
