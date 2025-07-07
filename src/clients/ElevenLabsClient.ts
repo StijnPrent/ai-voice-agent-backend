@@ -30,11 +30,16 @@ export class ElevenLabsClient {
                 xi_api_key: this.apiKey,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                 output_format: "ulaw_8000",
+                text: ' '
             }));
 
             // 2. Send the text message.
             ws.send(JSON.stringify({
                 text: text,
+            }));
+
+            ws.send(JSON.stringify({
+                text: ' ',
             }));
 
             // We no longer send the end-of-stream message, as this was the cause of the premature close.
