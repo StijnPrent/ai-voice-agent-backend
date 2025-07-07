@@ -14,12 +14,14 @@ export class VoiceController {
         const serverUrl = process.env.SERVER_URL!;
         const websocketUrl = serverUrl.replace(/^http/, "ws");
 
-        console.log(`📞 Initiating stream to: ${websocketUrl}/ws`);
+        const to = req.body.To;
+        const websocketUrlWithParams = `${websocketUrl}/ws?to=${encodeURIComponent(to)}`;
+        console.log(`📞 Initiating stream to: ${websocketUrlWithParams}`);
 
         // Start de stream
         const connect = twiml.connect();
         connect.stream({
-            url: `${websocketUrl}/ws`,
+            url: websocketUrlWithParams,
         });
 
         // Send the TwiML response

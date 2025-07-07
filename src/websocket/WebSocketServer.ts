@@ -27,12 +27,13 @@ export class WebSocketServer {
      * Handel een 'upgrade' request van de HTTP-server af.
      */
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
-        const { pathname } = parse(request.url!);
+        const { pathname, query } = parse(request.url!, true);
+        const to = query.to as string;
 
         if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {
                 this.wss.emit("connection", ws, request);
-                this.handleConnection(ws);
+                this.handleConnection(ws, to);
             });
         } else {
             // Belangrijk: vernietig de socket als het pad niet overeenkomt.
@@ -43,8 +44,8 @@ export class WebSocketServer {
     /**
      * Handel een nieuwe WebSocket-verbinding van Twilio af.
      */
-    private handleConnection(ws: WebSocket) {
-        console.log("🔌 New WebSocket connection");
+    private handleConnection(ws: WebSocket, to: string) {
+        console.log(`🔌 New WebSocket connection for ${to}`);
 
         ws.on("message", async (message: string) => {
             const data = JSON.parse(message);
@@ -52,8 +53,8 @@ export class WebSocketServer {
             switch (data.event) {
                 case "start":
                     console.log(`[${data.start.callSid}] Received start event`);
-                    // Pass the streamSid to the voice service
-                    await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid);
+                    // Pass the streamSid and the 'to' number to the voice service
+                    await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid, to);
                     break;
 
                 case "media":

@@ -5,6 +5,8 @@ import { PassThrough, Readable, Writable } from "stream";
 import { DeepgramClient } from "../../clients/DeepgramClient";
 import { ChatGPTClient } from "../../clients/ChatGPTClient";
 import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
+import {CompanyService} from "./CompanyService";
+import {GoogleCalendarClient} from "../../clients/GoogleCalenderClient";
 
 @injectable()
 export class VoiceService {
@@ -18,10 +20,12 @@ export class VoiceService {
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
         @inject(ChatGPTClient) private chatGptClient: ChatGPTClient,
-        @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient
+        @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient,
+        @inject(CompanyService) private companyService: CompanyService,
+        @inject(GoogleCalendarClient) private googleCalendarClient: GoogleCalendarClient
     ) {}
 
-    public async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
+    public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
         this.ws = ws;
         this.callSid = callSid;
         this.streamSid = streamSid;
@@ -29,7 +33,13 @@ export class VoiceService {
         this.isAssistantSpeaking = false;
         this.markCount = 0;
 
-        console.log(`[${this.callSid}] Starting stream with direct base64 forwarding...`);
+        console.log(`[${this.callSid}] Starting stream for ${to}...`);
+
+        // 1. Fetch company data
+        const company = await this.companyService.findByTwilioNumber(to);
+        const hasGoogleIntegration = company.isCalendarConnected;
+
+        console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
 
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
@@ -52,8 +62,9 @@ export class VoiceService {
 
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
+            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
-            this.speak("Goeiedag, waar kan ik u vandaag mee helpen?");
+            this.speak("Hello, how can I help you today?");
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
