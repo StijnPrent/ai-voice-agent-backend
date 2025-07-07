@@ -34,7 +34,7 @@ export class ElevenLabsClient {
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                     output_format:  "ulaw_8000"
                 }));
-                this.ws.send(JSON.stringify({ text: "" }));
+                this.ws.send(JSON.stringify({ text: " " }));
                 resolve();
             });
             this.ws.on("error", reject);

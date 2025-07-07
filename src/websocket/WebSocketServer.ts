@@ -52,14 +52,17 @@ export class WebSocketServer {
             switch (data.event) {
                 case "start":
                     console.log(`[${data.start.callSid}] Received start event`);
+                    // Pass the streamSid to the voice service
                     await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid);
                     break;
 
                 case "media":
+                    // Send the raw payload to the voice service
                     this.voiceService.sendAudio(data.media.payload);
                     break;
 
                 case "mark":
+                    // Handle playback completion events
                     this.voiceService.handleMark(data.mark.name);
                     break;
 

@@ -22,9 +22,7 @@ export class VoiceController {
             url: `${websocketUrl}/ws`,
         });
 
-        // Een korte pauze om de stream op te zetten
-        twiml.pause({ length: 20 });
-
+        // Send the TwiML response
         res.type("text/xml").send(twiml.toString());
     }
 }

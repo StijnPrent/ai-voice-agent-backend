@@ -1,81 +1,124 @@
-// src/services/VoiceService.ts
-
-import { injectable } from "tsyringe";
+// src/business/services/VoiceService.ts
+import { inject, injectable } from "tsyringe";
 import WebSocket from "ws";
 import { PassThrough, Readable, Writable } from "stream";
-
-import { DeepgramClient }   from "../../clients/DeepgramClient";
-import { ChatGPTClient }    from "../../clients/ChatGPTClient";
+import { DeepgramClient } from "../../clients/DeepgramClient";
+import { ChatGPTClient } from "../../clients/ChatGPTClient";
 import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
 
 @injectable()
 export class VoiceService {
+    private ws: WebSocket | null = null;
+    private callSid: string | null = null;
+    private streamSid: string | null = null;
+    private audioIn: PassThrough | null = null;
+    private audioOut: PassThrough | null = null;
+
     constructor(
-        private deepgramClient: DeepgramClient,
-        private chatGptClient:  ChatGPTClient,
-        private elevenClient:   ElevenLabsClient
+        @inject(DeepgramClient) private deepgramClient: DeepgramClient,
+        @inject(ChatGPTClient) private chatGptClient: ChatGPTClient,
+        @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient
     ) {}
 
     /**
-     * Entry point when Twilio upgrades to /ws for a call.
+     * Starts the voice streaming session for a new call.
      */
-    public async startStreaming(ws: WebSocket, callSid: string) {
-        console.log(`[${callSid}] Received start event`);
+    public async startStreaming(ws: WebSocket, callSid: string, streamSid: string) {
+        this.ws = ws;
+        this.callSid = callSid;
+        this.streamSid = streamSid;
+        this.audioIn = new PassThrough();
+        this.audioOut = new PassThrough();
 
-        // 1) Create a PassThrough to pipe Twilio’s audio into Deepgram
-        const audioIn = new PassThrough();
+        console.log(`[${this.callSid}] Starting stream...`);
 
-        // 2) Create a Writable that turns each transcript chunk into a ChatGPT call
+        // 1. Pipe audio from ElevenLabs back to the Twilio WebSocket
+        this.audioOut.on('data', (chunk) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                const message = {
+                    event: "media",
+                    streamSid: this.streamSid,
+                    media: {
+                        payload: chunk.toString("base64"),
+                    },
+                };
+                this.ws.send(JSON.stringify(message));
+            }
+        });
+
+        this.audioOut.on('end', () => {
+            console.log(`[${this.callSid}] ElevenLabs audio stream ended.`);
+        });
+
+        // 2. Create a writable stream for Deepgram transcripts
         const dgToGpt = new Writable({
             write: (chunk: Buffer, _encoding, callback) => {
                 const transcript = chunk.toString();
-                console.log(`[${callSid}] [Deepgram] Transcript:`, transcript);
+                console.log(`[${this.callSid}] [Deepgram] Transcript:`, transcript);
 
-                // Fire off ChatGPTClient with a one‐item Readable and a sentence callback
-                this.chatGptClient
-                    .start(
-                        Readable.from([transcript]),
-                        (sentence: string) => {
-                            console.log(`[${callSid}] [ChatGPT] Sentence:`, sentence);
-                            this.elevenClient.speak(sentence);
-                        }
-                    )
-                    .catch(err =>
-                        console.error(`[${callSid}] ChatGPT error:`, err)
-                    );
+                // 3. Send transcript to ChatGPT
+                this.chatGptClient.start(
+                    Readable.from([transcript]),
+                    (sentence: string) => {
+                        console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
+                        // 4. Send ChatGPT response to ElevenLabs for synthesis
+                        this.elevenLabsClient.speak(sentence);
+                    }
+                ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
 
-                callback(); // signal we handled the chunk
+                callback();
             }
         });
 
-        // 3) Kick off Deepgram (will write transcripts into dgToGpt)
-        await this.deepgramClient.start(audioIn, dgToGpt);
-        console.log(`[${callSid}] Deepgram pipeline started.`);
+        try {
+            // 5. Start Deepgram client
+            await this.deepgramClient.start(this.audioIn, dgToGpt);
+            console.log(`[${this.callSid}] Deepgram pipeline started.`);
 
-        // 4) Open a single ElevenLabs connection for this call
-        await this.elevenClient.connect();
-        console.log(`[${callSid}] ElevenLabs TTS connected.`);
+            // 6. Connect to ElevenLabs, piping its output to our audioOut stream
+            await this.elevenLabsClient.connect(this.audioOut);
+            console.log(`[${this.callSid}] ElevenLabs TTS connected.`);
 
-        // 5) Send a welcome prompt
-        this.elevenClient.speak("Hallo, hoe kan ik je helpen vandaag?");
+            // 7. Send a welcome message
+            this.elevenLabsClient.speak("Hello, how can I help you today?");
 
-        // 6) Feed Twilio media frames into Deepgram
-        ws.on("message", (msg: string) => {
-            const data = JSON.parse(msg);
-            if (data.event === "media") {
-                const audioBuf = Buffer.from(data.media.payload, "base64");
-                audioIn.write(audioBuf);
-            } else if (data.event === "stop") {
-                console.log(`[${callSid}] Received stop event`);
-                audioIn.end();
-                this.elevenClient.close();
-            }
-        });
+        } catch (error) {
+            console.error(`[${this.callSid}] Error during service initialization:`, error);
+            this.stopStreaming();
+        }
+    }
 
-        ws.on("close", () => {
-            console.log(`[${callSid}] WebSocket closed`);
-            audioIn.end();
-            this.elevenClient.close();
-        });
+    /**
+     * Receives audio payload from the WebSocket and sends it to Deepgram.
+     */
+    public sendAudio(payload: string) {
+        if (this.audioIn) {
+            this.audioIn.write(Buffer.from(payload, "base64"));
+        }
+    }
+
+    /**
+     * Handles a mark event from Twilio, indicating a reply has finished playing.
+     */
+    public handleMark(name: string) {
+        console.log(`[${this.callSid}] Received mark: ${name}`);
+        // This can be used to trigger actions after a sentence is spoken.
+    }
+
+    /**
+     * Stops the streaming session and cleans up resources.
+     */
+    public stopStreaming() {
+        if (!this.callSid) return;
+        console.log(`[${this.callSid}] Stopping stream...`);
+
+        this.audioIn?.end();
+        this.elevenLabsClient.close();
+
+        this.ws = null;
+        this.callSid = null;
+        this.streamSid = null;
+        this.audioIn = null;
+        this.audioOut = null;
     }
 }
