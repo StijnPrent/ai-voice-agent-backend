@@ -5,98 +5,112 @@ import { Writable } from "stream";
 export class ElevenLabsClient {
     private ws: WebSocket | null = null;
     private out: Writable | null = null;
+    private keepAliveInterval: NodeJS.Timeout | null = null;
     private readonly voiceId = process.env.ELEVENLABS_VOICE_ID!;
     private readonly apiKey  = process.env.ELEVENLABS_API_KEY!;
 
     /**
-     * Opens (or reopens) the ElevenLabs TTS socket.
+     * Establishes and maintains a WebSocket connection to ElevenLabs.
+     * @param outputStream The stream to write the received audio data to.
      */
     public async connect(outputStream: Writable) {
         this.out = outputStream;
 
-        // If already open, nothing to do
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            return;
+            return; // Connection is already open
         }
+
+        // Clean up any previous connection artifacts
+        this.close();
 
         const url = `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input?model_id=eleven_multilingual_v2`;
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
 
-        // 1️⃣ Register listeners immediately
         this.ws.on("message", data => {
             if (!this.out) return;
-            try {
-                const payload = JSON.parse(data.toString());
-                if (payload.audio) {
-                    // Write raw audio bytes
-                    this.out.write(Buffer.from(payload.audio, "base64"));
-                }
-            } catch (err) {
-                console.error("[ElevenLabs] Invalid JSON:", err);
+            const res = JSON.parse(data.toString());
+            if (res.audio) {
+                this.out.write(Buffer.from(res.audio, "base64"));
             }
+        });
+
+        this.ws.on("pong", () => {
+            // console.log("[ElevenLabs] Received pong from server."); // Optional: for debugging
         });
 
         this.ws.on("close", (code, reason) => {
-            console.log(`[ElevenLabs] WS closed. code=${code} reason=${reason.toString()}`);
-            this.ws = null;
-            if (this.out) this.out.end();
+            console.log(`[ElevenLabs] WS connection closed. Code: ${code}, Reason: ${reason.toString()}`);
+            this.close(); // Clean up resources
         });
 
         this.ws.on("error", err => {
-            console.error("[ElevenLabs] WS error:", err);
-            this.ws = null;
-            if (this.out) this.out.end();
+            console.error("[ElevenLabs] WS error", err);
+            this.close(); // Clean up resources
         });
 
-        // 2️⃣ Wait for the socket to open
         await new Promise<void>((resolve, reject) => {
             this.ws!.on("open", () => {
                 console.log("[ElevenLabs] Connection opened");
-                // 3️⃣ Send your voice settings
+
+                // Start sending pings to keep the connection alive
+                this.keepAliveInterval = setInterval(() => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.ping();
+                    }
+                }, 5000);
+
+                // Send initial configuration
                 this.ws!.send(JSON.stringify({
-                    voice_settings: {
-                        stability: 0.5,
-                        similarity_boost: 0.8,
-                    },
-                    output_format: "ulaw_8000",
+                    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+                    output_format:  "ulaw_8000"
                 }));
-                // 4️⃣ Prime with an empty text to keep the stream alive
-                this.ws!.send(JSON.stringify({ text: "" }));
+
+                // Prime the connection with a space to start the audio flow.
+                this.ws!.send(JSON.stringify({ text: " " }));
                 resolve();
             });
-            this.ws!.on("error", reject);
+
+            this.ws!.on("error", (err) => {
+                console.error("[ElevenLabs] Connection opening error:", err);
+                reject(err);
+            });
         });
     }
 
     /**
-     * Sends a chunk of text to be spoken.
+     * Sends text to be spoken.
+     * @param text The text to synthesize.
      */
     public async speak(text: string) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.warn("[ElevenLabs] Socket not open — reconnecting");
-            // Re-open using the same output stream
-            if (this.out) {
-                await this.connect(this.out);
-            } else {
-                console.error("[ElevenLabs] No output stream to reconnect with");
-                return;
-            }
+        if (!this.out) {
+            console.error("[ElevenLabs] Output stream is not set. Call connect() first.");
+            return;
         }
 
-        console.log("[ElevenLabs] Sending text:", JSON.stringify(text));
-        // Send the actual text
-        this.ws!.send(JSON.stringify({ text }));
-        // Immediately send an empty text to flush & keep alive
-        this.ws!.send(JSON.stringify({ text: "" }));
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+             console.log("[ElevenLabs] Connection is not open, attempting to reconnect...");
+             await this.connect(this.out);
+        }
+
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ text }));
+        } else {
+            console.warn("[ElevenLabs] Cannot speak, socket not ready after attempting to connect.");
+        }
     }
 
-    /**
-     * Closes the socket.
-     */
+    /** Cleans up the connection and stops the keep-alive pings. */
     public close() {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log("[ElevenLabs] Closing connection");
-            this.ws.close(1000, "Client requested close");  // use a code/reason
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+            this.keepAliveInterval = null;
+        }
+        if (this.ws) {
+            if (this.ws.readyState === WebSocket.OPEN) {
+                this.ws.close();
+            }
+            this.ws.removeAllListeners(); // Avoid memory leaks
+            this.ws = null;
         }
     }
 }
