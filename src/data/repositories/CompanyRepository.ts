@@ -8,15 +8,15 @@ import { BaseRepository } from "./BaseRepository";
 export class CompanyRepository extends BaseRepository implements ICompanyRepository {
     public async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
-            INSERT INTO company (id, name, website, twilio_number, created_at, updated_at)
-            VALUES (?, ?, ?, ?, NOW(), NOW())
+            INSERT INTO company (id, name, email, website, twilio_number, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
         `;
-        await this.execute(sql, [company.id, company.name, company.website, company.twilioNumber]);
+        await this.execute(sql, [company.id, company.name, company.email, company.website, company.twilioNumber]);
     }
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT id, name, website, twilio_number, is_calendar_connected, created_at, updated_at
+            SELECT id, name, email, website, twilio_number, is_calendar_connected, created_at, updated_at
             FROM company
             WHERE twilio_number = ?
             LIMIT 1
@@ -29,6 +29,31 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         return new CompanyModel(
             row.id,
             row.name,
+            row.email,
+            row.website,
+            row.twilio_number,
+            row.is_calendar_connected,
+            row.created_at,
+            row.updated_at
+        );
+    }
+
+    public async findByEmail(email: string): Promise<CompanyModel | null> {
+        const sql = `
+            SELECT id, name, email, website, twilio_number, is_calendar_connected, created_at, updated_at
+            FROM company
+            WHERE email = ?
+            LIMIT 1
+        `;
+        const results = await this.execute<RowDataPacket[]>(sql, [email]);
+        if (results.length === 0) {
+            return null;
+        }
+        const row = results[0];
+        return new CompanyModel(
+            row.id,
+            row.name,
+            row.email,
             row.website,
             row.twilio_number,
             row.is_calendar_connected,
@@ -48,8 +73,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async addInfo(companyId: bigint, value: string): Promise<void> {
         const sql = `
-            INSERT INTO company_info (company_id, info_value, created_at, updated_at)
-            VALUES (?, ?, NOW(), NOW())
+            INSERT INTO company_info (company_id, info_value, created_at)
+            VALUES (?, ?, NOW())
         `;
         await this.execute(sql, [companyId, value]);
     }
@@ -61,7 +86,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async fetchInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
         const sql = `
-            SELECT id, info_value, created_at, updated_at
+            SELECT id, info_value, created_at
             FROM company_info
             WHERE company_id = ?
             ORDER BY created_at
@@ -70,8 +95,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         return results.map(row => new CompanyInfoModel(
             row.id,
             row.info_value,
-            row.created_at,
-            row.updated_at
+            row.created_at
         ));
     }
 }

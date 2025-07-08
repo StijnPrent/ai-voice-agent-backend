@@ -2,8 +2,9 @@ import "reflect-metadata";
 import express from "express";
 import { createServer } from "http";
 import { container } from "tsyringe";
-import voiceRoutes from "./routes/voice";
-import companyRoutes from "./routes/company";
+import voiceRoutes from "./routes/VoiceRoute";
+import companyRoutes from "./routes/CompanyRoute";
+import voiceSettingsRoutes from "./routes/VoiceSettingsRoute";
 import { WebSocketServer } from "./websocket/WebSocketServer";
 import "./container";
 
@@ -12,6 +13,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/voice", voiceRoutes);
 app.use('/company', companyRoutes);
+app.use('/voice-settings', voiceSettingsRoutes);
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);

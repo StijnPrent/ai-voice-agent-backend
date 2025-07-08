@@ -1,5 +1,6 @@
 export class CompanyModel {
     private _id: bigint;
+    private _email: string;
     private _name: string;
     private _website: string;
     private _twilioNumber: string;
@@ -9,6 +10,7 @@ export class CompanyModel {
 
     constructor(
         id: bigint,
+        email: string,
         name: string,
         website: string,
         twilioNumber: string,
@@ -17,6 +19,7 @@ export class CompanyModel {
         updatedAt: Date
     ) {
         this._id = id;
+        this._email = email;
         this._name = name;
         this._website = website;
         this._twilioNumber = twilioNumber;
@@ -25,32 +28,48 @@ export class CompanyModel {
         this._updatedAt = updatedAt;
     }
 
-
-    get id(): bigint {
-        return this._id;
+    public toJSON(): Record<string, any> {
+        return {
+            id: this._id.toString(),
+            email: this._email,
+            name: this._name,
+            website: this._website,
+            twilioNumber: this._twilioNumber,
+            isCalendarConnected: this._isCalendarConnected,
+            createdAt: this._createdAt.toISOString(),
+            updatedAt: this._updatedAt.toISOString(),
+        };
     }
 
-    get name(): string {
+    public get id(): bigint {
+        return this._id;
+    }
+    
+    public get email(): string {
+        return this._email;
+    }
+
+    public get name(): string {
         return this._name;
     }
 
-    get website(): string {
+    public get website(): string {
         return this._website;
     }
 
-    get twilioNumber(): string {
+    public get twilioNumber(): string {
         return this._twilioNumber;
     }
 
-    get isCalendarConnected(): boolean {
+    public get isCalendarConnected(): boolean {
         return this._isCalendarConnected;
     }
 
-    get createdAt(): Date {
+    public get createdAt(): Date {
         return this._createdAt;
     }
 
-    get updatedAt(): Date {
+    public get updatedAt(): Date {
         return this._updatedAt;
     }
 }

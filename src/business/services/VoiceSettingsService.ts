@@ -1,14 +1,17 @@
+// src/business/services/VoiceSettingsService.ts
+import { injectable, inject } from "tsyringe";
+import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
+import { VoiceSettingModel } from "../models/VoiceSettingsModel";
+import { ReplyStyleModel } from "../models/ReplyStyleModel";
+
+@injectable()
 export class VoiceSettingsService {
     constructor(
-        @Inject('IVoiceRepository') private voiceRepository: IVoiceRepository
+        @inject("IVoiceRepository") private voiceRepository: IVoiceRepository
     ) {}
 
     public async getVoiceSettings(companyId: bigint): Promise<VoiceSettingModel> {
-        const settings = await this.voiceRepository.fetchVoiceSettings(companyId);
-        if (!settings) {
-            throw new Error(`No voice settings found for company ${companyId}`);
-        }
-        return settings;
+        return this.voiceRepository.fetchVoiceSettings(companyId);
     }
 
     public async updateVoiceSettings(companyId: bigint, settings: VoiceSettingModel): Promise<void> {
@@ -20,11 +23,7 @@ export class VoiceSettingsService {
     }
 
     public async getReplyStyle(companyId: bigint): Promise<ReplyStyleModel> {
-        const style = await this.voiceRepository.fetchReplyStyle(companyId);
-        if (!style) {
-            throw new Error(`No reply style found for company ${companyId}`);
-        }
-        return style;
+        return this.voiceRepository.fetchReplyStyle(companyId);
     }
 
     public async updateReplyStyle(companyId: bigint, style: ReplyStyleModel): Promise<void> {

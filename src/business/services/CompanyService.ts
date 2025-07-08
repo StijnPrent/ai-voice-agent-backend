@@ -1,70 +1,83 @@
+// src/business/services/CompanyService.ts
 import { injectable, inject } from "tsyringe";
-import { calendar_v3 } from "googleapis";
 import { ICompanyRepository } from "../../data/interfaces/ICompanyRepository";
+import { IPasswordRepository } from "../../data/interfaces/IPasswordRepository";
 import { CompanyModel } from "../models/CompanyModel";
 import { CompanyInfoModel } from "../models/CompanyInfoModel";
 import crypto from "crypto";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 
 @injectable()
 export class CompanyService {
     constructor(
-        @inject("ICompanyRepository") private repo: ICompanyRepository
+        @inject("ICompanyRepository") private companyRepo: ICompanyRepository,
+        @inject("IPasswordRepository") private passwordRepo: IPasswordRepository
     ) {}
 
-    // Company CRUD
-    async create(name: string, twilioNumber: string, website: string): Promise<void> {
-        const bytes = crypto.randomBytes(8); // 8 bytes = 64-bit
+    public async create(name: string, email: string, twilioNumber: string, website: string, password: string): Promise<void> {
+        const bytes = crypto.randomBytes(8);
         const sanitizedTwilioNumber = twilioNumber.replace(/\s+/g, "");
         const id = BigInt("0x" + bytes.toString("hex"));
         const company = new CompanyModel(
             id,
             name,
+            email,
             sanitizedTwilioNumber,
             website,
             false,
             new Date(),
             new Date()
-        )
-        await this.repo.createCompany(company);
+        );
+        await this.companyRepo.createCompany(company);
+
+        const passwordHash = await bcrypt.hash(password, 10);
+        await this.passwordRepo.createPassword(id, passwordHash);
     }
 
-    async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel> {
+    public async login(email: string, password: string): Promise<string | null> {
+        const company = await this.companyRepo.findByEmail(email);
+        if (!company) {
+            return null;
+        }
+
+        const passwordHash = await this.passwordRepo.findCurrentPasswordByCompanyId(company.id);
+        if (!passwordHash) {
+            return null;
+        }
+
+        const isValid = await bcrypt.compare(password, passwordHash);
+        if (!isValid) {
+            return null;
+        }
+
+        return jwt.sign({ companyId: company.id }, process.env.JWT_SECRET as string, {
+            expiresIn: process.env.JWT_EXPIRATION,
+        });
+    }
+
+    public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel> {
         const sanitizedTwilioNumber = twilioNumber.replace(/\s+/g, "");
-        const company = await this.repo.findByTwilioNumber(sanitizedTwilioNumber);
+        const company = await this.companyRepo.findByTwilioNumber(sanitizedTwilioNumber);
         if (!company) {
             throw new Error("Unknown company");
         }
         return company;
     }
 
-    async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
-        await this.repo.setCalendarConnected(companyId, connected);
+    public async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
+        await this.companyRepo.setCalendarConnected(companyId, connected);
     }
 
-    // Info list operations
-    async addInfo(companyId: bigint, value: string): Promise<void> {
-        await this.repo.addInfo(companyId, value);
+    public async addInfo(companyId: bigint, value: string): Promise<void> {
+        await this.companyRepo.addInfo(companyId, value);
     }
 
-    async removeInfo(infoId: number): Promise<void> {
-        await this.repo.removeInfo(infoId);
+    public async removeInfo(infoId: number): Promise<void> {
+        await this.companyRepo.removeInfo(infoId);
     }
 
-    async getCompanyInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
-        return this.repo.fetchInfo(companyId);
-    }
-
-    // Appointment parsing
-    async parseAppointment(text: string): Promise<calendar_v3.Schema$Event> {
-        const match = /([0-9]{4}-[0-9]{2}-[0-9]{2})\\s+([0-9]{2}:[0-9]{2})/.exec(text);
-        if (!match) throw new Error("Could not parse date/time");
-        const [_, date, time] = match;
-        const start = new Date(`${date}T${time}:00`);
-        const end   = new Date(start.getTime() + 60*60*1000);
-        return {
-            summary: "Appointment",
-            start: { dateTime: start.toISOString() },
-            end:   { dateTime: end.toISOString() }
-        };
+    public async getCompanyInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
+        return this.companyRepo.fetchInfo(companyId);
     }
 }
