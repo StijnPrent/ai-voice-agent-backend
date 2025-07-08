@@ -5,6 +5,8 @@ import { inject, injectable } from "tsyringe";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat";
 import { CompanyModel } from "../business/models/CompanyModel";
 import { GoogleService } from "../business/services/GoogleService";
+import { ReplyStyleModel } from "../business/models/ReplyStyleModel";
+import { CompanyInfoModel } from "../business/models/CompanyInfoModel";
 
 @injectable()
 export class ChatGPTClient {
@@ -13,14 +15,23 @@ export class ChatGPTClient {
     });
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
+    private replyStyle: ReplyStyleModel | null = null;
+    private companyInfo: CompanyInfoModel[] = [];
 
     constructor(
         @inject(GoogleService) private googleService: GoogleService
     ) {}
 
-    public setCompanyInfo(company: CompanyModel, hasGoogleIntegration: boolean) {
+    public setCompanyInfo(
+        company: CompanyModel, 
+        hasGoogleIntegration: boolean, 
+        replyStyle: ReplyStyleModel, 
+        companyInfo: CompanyInfoModel[]
+    ) {
         this.company = company;
         this.hasGoogleIntegration = hasGoogleIntegration;
+        this.replyStyle = replyStyle;
+        this.companyInfo = companyInfo;
     }
 
     async start(inputStream: Readable, onTextGenerated: (text: string) => void): Promise<void> {
@@ -95,9 +106,22 @@ export class ChatGPTClient {
     }
 
     private getSystemPrompt(): string {
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company?.name}'. Antwoord kort en direct, alsof je praat. Gebruik geen volzinnen maar spreektaal.`;
+        if (!this.company || !this.replyStyle) {
+            throw new Error("Company info and reply style must be set before generating a system prompt.");
+        }
+        
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n`;
+
+        if (this.companyInfo.length > 0) {
+            prompt += "Hier is wat informatie over het bedrijf:\n";
+            this.companyInfo.forEach(info => {
+                prompt += `- ${info.infoValue}\n`;
+            });
+            prompt += "\n";
+        }
+        
         if (this.hasGoogleIntegration) {
-            prompt += " Je hebt de mogelijkheid om afspraken in de Google Agenda van het bedrijf te plannen. Vraag altijd om een expliciete bevestiging van de gebruiker voordat je een afspraak definitief inplant.";
+            prompt += "Je hebt de mogelijkheid om afspraken in de Google Agenda van het bedrijf te plannen. Vraag altijd om een expliciete bevestiging van de gebruiker voordat je een afspraak definitief inplant.";
         }
         return prompt;
     }

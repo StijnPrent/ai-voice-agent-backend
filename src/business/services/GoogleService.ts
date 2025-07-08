@@ -3,7 +3,8 @@
 import { injectable, inject } from "tsyringe";
 import { calendar_v3 } from "googleapis";
 import { IGoogleRepository } from "../../data/interfaces/IGoogleRepository";
-import { GoogleCalendarClient, GoogleTokens } from "../../clients/GoogleCalenderClient";
+import { GoogleCalendarClient, GoogleAppCredentials } from "../../clients/GoogleCalenderClient";
+import config from "../../config/config";
 
 @injectable()
 export class GoogleService {
@@ -12,17 +13,31 @@ export class GoogleService {
         @inject(GoogleCalendarClient) private gcalClient: GoogleCalendarClient
     ) {}
 
+    private getAppCredentials(): GoogleAppCredentials {
+        const { googleClientId, googleClientSecret, googleRedirectUri } = config;
+        if (!googleClientId || !googleClientSecret || !googleRedirectUri) {
+            throw new Error("Google application credentials are not configured.");
+        }
+        return {
+            clientId: googleClientId,
+            clientSecret: googleClientSecret,
+            redirectUri: googleRedirectUri,
+        };
+    }
+
     getAuthUrl(companyId: string): string {
-        return this.gcalClient.getAuthUrl(companyId);
+        const credentials = this.getAppCredentials();
+        return this.gcalClient.getAuthUrl(credentials, companyId);
     }
 
     async connect(companyId: bigint, code: string): Promise<void> {
-        const tokens = await this.gcalClient.exchangeCode(code);
+        const credentials = this.getAppCredentials();
+        const tokens = await this.gcalClient.exchangeCode(credentials, code);
 
         await this.repo.insertGoogleTokens(
             companyId,
-            process.env.GOOGLE_CLIENT_ID!,
-            process.env.GOOGLE_CLIENT_SECRET!,
+            credentials.clientId,
+            credentials.clientSecret,
             tokens.access_token,
             tokens.refresh_token
         );
@@ -37,27 +52,30 @@ export class GoogleService {
             throw new Error(`No Google Calendar integration for company ${companyId}`);
         }
 
-        let tokens: GoogleTokens = {
-            access_token:  model.accessToken,
-            refresh_token: model.refreshToken,
-            expiry_date: model.expiryDate,
-            token_type: model.tokenType,
-            scope: model.scope
-        };
+        const redirectUri = this.getAppCredentials().redirectUri;
 
+        // Refresh token if it's expired
         if (model.expiryDate && model.expiryDate < Date.now()) {
-            const newTokens = await this.gcalClient.refreshTokens(tokens);
-            await this.repo.insertGoogleTokens(
-                companyId,
-                model.clientId,
-                process.env.GOOGLE_CLIENT_SECRET!,
+            const newTokens = await this.gcalClient.refreshTokens(model, redirectUri);
+            
+            // Update the database with the new tokens
+            await this.repo.updateGoogleTokens(
+                model.id,
                 newTokens.access_token,
-                newTokens.refresh_token
+                newTokens.refresh_token,
+                newTokens.expiry_date
             );
-            tokens = newTokens;
+            
+            // Refetch the model to get the updated tokens for the createEvent call
+            const updatedModel = await this.repo.fetchGoogleTokens(companyId);
+            if (!updatedModel) {
+                throw new Error(`Failed to refetch Google integration for company ${companyId} after token refresh.`);
+            }
+            const res = await this.gcalClient.createEvent(updatedModel, redirectUri, event);
+            return res.data;
         }
 
-        const res = await this.gcalClient.createEvent(tokens, event);
+        const res = await this.gcalClient.createEvent(model, redirectUri, event);
         return res.data;
     }
 }

@@ -1,81 +1,77 @@
-import pool from "../../config/database";
-import crypto from "crypto";
+// src/data/repositories/CompanyRepository.ts
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { CompanyModel } from "../../business/models/CompanyModel";
-import { CompanyInfoModel} from "../../business/models/CompanyInfoModel";
+import { CompanyInfoModel } from "../../business/models/CompanyInfoModel";
 import { ICompanyRepository } from "../interfaces/ICompanyRepository";
+import { BaseRepository } from "./BaseRepository";
 
-export class CompanyRepository implements ICompanyRepository {
-    // Create a new company
-    async createCompany(company: CompanyModel): Promise<void> {
+export class CompanyRepository extends BaseRepository implements ICompanyRepository {
+    public async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
-            INSERT INTO company (id, name, website, twilio_number)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO company (id, name, website, twilio_number, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NOW(), NOW())
         `;
-        await pool.query<ResultSetHeader>(sql, [company.id, company.name, company.website, company.twilioNumber]);
+        await this.execute(sql, [company.id, company.name, company.website, company.twilioNumber]);
     }
 
-    // Fetch company by Twilio number
-    async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
-        console.log(twilioNumber);
+    public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT id, name, website, twilio_number, calendar_connected, created_at, updated_at
+            SELECT id, name, website, twilio_number, is_calendar_connected, created_at, updated_at
             FROM company
             WHERE twilio_number = ?
-                LIMIT 1
+            LIMIT 1
         `;
-        const [rows] = await pool.query<RowDataPacket[]>(sql, [twilioNumber]);
-        if (rows.length === 0) return null;
-        const row = rows[0];
+        const results = await this.execute<RowDataPacket[]>(sql, [twilioNumber]);
+        if (results.length === 0) {
+            return null;
+        }
+        const row = results[0];
         return new CompanyModel(
             row.id,
             row.name,
             row.website,
             row.twilio_number,
-            row.calendar_connected ? true : false,
-            new Date(row.created_at),
-            new Date(row.updated_at)
-        )
+            row.is_calendar_connected,
+            row.created_at,
+            row.updated_at
+        );
     }
 
-    // Toggle calendar_connected flag
-    async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
+    public async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
         const sql = `
-      UPDATE companies
-      SET calendar_connected = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `;
-        await pool.query(sql, [connected ? 1 : 0, companyId]);
+            UPDATE company
+            SET is_calendar_connected = ?, updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute(sql, [connected, companyId]);
     }
 
-    // Add a company_info record
-    async addInfo(companyId: bigint, value: string): Promise<void> {
+    public async addInfo(companyId: bigint, value: string): Promise<void> {
         const sql = `
-      INSERT INTO company_info (company_id, info_value)
-      VALUES (?, ?)
-    `;
-        await pool.query<ResultSetHeader>(sql, [companyId, value]);
+            INSERT INTO company_info (company_id, info_value, created_at, updated_at)
+            VALUES (?, ?, NOW(), NOW())
+        `;
+        await this.execute(sql, [companyId, value]);
     }
 
-    // Remove a company_info record by ID
-    async removeInfo(infoId: number): Promise<void> {
-        const sql = `DELETE FROM company_info WHERE id = ?`;
-        await pool.query(sql, [infoId]);
+    public async removeInfo(infoId: number): Promise<void> {
+        const sql = "DELETE FROM company_info WHERE id = ?";
+        await this.execute(sql, [infoId]);
     }
 
-    // Fetch all info entries for a company
-    async fetchInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
+    public async fetchInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
         const sql = `
-      SELECT id, info_value
-      FROM company_info
-      WHERE company_id = ?
-      ORDER BY created_at
-    `;
-        const [rows] = await pool.query<RowDataPacket[]>(sql, [companyId]);
-        return rows.map(r => new CompanyInfoModel(
-            r.id,
-            r.info_value,
-            new Date(r.created_at)
+            SELECT id, info_value, created_at, updated_at
+            FROM company_info
+            WHERE company_id = ?
+            ORDER BY created_at
+        `;
+        const results = await this.execute<RowDataPacket[]>(sql, [companyId]);
+        return results.map(row => new CompanyInfoModel(
+            row.id,
+            row.info_value,
+            row.created_at,
+            row.updated_at
         ));
     }
 }

@@ -5,8 +5,9 @@ import { PassThrough, Readable, Writable } from "stream";
 import { DeepgramClient } from "../../clients/DeepgramClient";
 import { ChatGPTClient } from "../../clients/ChatGPTClient";
 import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
-import {CompanyService} from "./CompanyService";
-import {GoogleCalendarClient} from "../../clients/GoogleCalenderClient";
+import { CompanyService } from "./CompanyService";
+import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
+import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 
 @injectable()
 export class VoiceService {
@@ -16,13 +17,14 @@ export class VoiceService {
     private audioIn: PassThrough | null = null;
     private isAssistantSpeaking: boolean = false;
     private markCount: number = 0;
+    private voiceSettings: VoiceSettingModel | null = null;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
         @inject(ChatGPTClient) private chatGptClient: ChatGPTClient,
         @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient,
         @inject(CompanyService) private companyService: CompanyService,
-        @inject(GoogleCalendarClient) private googleCalendarClient: GoogleCalendarClient
+        @inject("IVoiceRepository") private voiceRepository: IVoiceRepository
     ) {}
 
     public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
@@ -35,8 +37,11 @@ export class VoiceService {
 
         console.log(`[${this.callSid}] Starting stream for ${to}...`);
 
-        // 1. Fetch company data
+        // 1. Fetch all company-related data
         const company = await this.companyService.findByTwilioNumber(to);
+        this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
+        const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
+        const companyInfo = await this.companyService.getCompanyInfo(company.id);
         const hasGoogleIntegration = company.isCalendarConnected;
 
         console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
@@ -62,9 +67,9 @@ export class VoiceService {
 
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration);
+            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyInfo);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
-            this.speak("Hello, how can I help you today?");
+            this.speak(this.voiceSettings.welcomePhrase);
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
@@ -82,6 +87,10 @@ export class VoiceService {
     }
 
     private speak(text: string) {
+        if (!this.voiceSettings) {
+            console.error(`[${this.callSid}] Attempted to speak without voice settings.`);
+            return;
+        }
         this.isAssistantSpeaking = true;
 
         const onStreamStart = () => {
@@ -96,12 +105,11 @@ export class VoiceService {
             }
         };
 
-        const onAudio = (audioPayload: string) => { // Changed to string
+        const onAudio = (audioPayload: string) => {
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     event: "media",
                     streamSid: this.streamSid,
-                    // Send the raw base64 payload directly
                     media: { payload: audioPayload },
                 }));
             }
@@ -111,7 +119,7 @@ export class VoiceService {
             // Nothing specific to do on close
         };
 
-        this.elevenLabsClient.speak(text, onStreamStart, onAudio, onClose);
+        this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
     }
 
     public sendAudio(payload: string) {
@@ -133,5 +141,6 @@ export class VoiceService {
         this.callSid = null;
         this.streamSid = null;
         this.audioIn = null;
+        this.voiceSettings = null;
     }
 }
