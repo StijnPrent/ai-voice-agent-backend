@@ -4,7 +4,7 @@ import { Readable } from "stream";
 import { inject, injectable } from "tsyringe";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat";
 import { CompanyModel } from "../business/models/CompanyModel";
-import { GoogleCalendarClient } from "./GoogleCalendarClient";
+import { GoogleService } from "../business/services/GoogleService";
 
 @injectable()
 export class ChatGPTClient {
@@ -15,7 +15,7 @@ export class ChatGPTClient {
     private hasGoogleIntegration = false;
 
     constructor(
-        @inject(GoogleCalendarClient) private googleCalendarClient: GoogleCalendarClient
+        @inject(GoogleService) private googleService: GoogleService
     ) {}
 
     public setCompanyInfo(company: CompanyModel, hasGoogleIntegration: boolean) {
@@ -61,7 +61,7 @@ export class ChatGPTClient {
                             const { summary, location, description, start, end } = functionArgs;
                             const event = { summary, location, description, start: { dateTime: start }, end: { dateTime: end } };
                             
-                            await this.googleCalendarClient.createEvent(this.company!.id, event);
+                            await this.googleService.scheduleEvent(this.company!.id, event);
                             
                             const confirmation = `Oké, de afspraak voor '${summary}' is ingepland. Kan ik nog iets anders voor je doen?`;
                             onTextGenerated(confirmation);
@@ -69,7 +69,6 @@ export class ChatGPTClient {
                             messages.push({
                                 tool_call_id: toolCall.id,
                                 role: "tool",
-                                name: functionName,
                                 content: JSON.stringify({ success: true, event_summary: summary }),
                             });
                         }
@@ -96,7 +95,7 @@ export class ChatGPTClient {
     }
 
     private getSystemPrompt(): string {
-        let prompt = "Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '{this.company?.name}'. Antwoord kort en direct, alsof je praat. Gebruik geen volzinnen maar spreektaal.";
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company?.name}'. Antwoord kort en direct, alsof je praat. Gebruik geen volzinnen maar spreektaal.`;
         if (this.hasGoogleIntegration) {
             prompt += " Je hebt de mogelijkheid om afspraken in de Google Agenda van het bedrijf te plannen. Vraag altijd om een expliciete bevestiging van de gebruiker voordat je een afspraak definitief inplant.";
         }
