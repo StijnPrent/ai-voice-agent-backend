@@ -28,15 +28,11 @@ export class WebSocketServer {
      */
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         console.log("🔍 Upgrade request.url:", request.url);
-        if (!request.url) {
-            socket.destroy();
-            return;
-        }
-        const match = request.url.match(/to=([^&]+)/);
-        const to = match ? match[1] : null;
-        const pathname = request.url.split('?')[0];
+        const { pathname, query } = parse(request.url!, true);
+        const to = query.to as string;
+        console.log(to)
 
-        if (pathname === "/ws" && to) {
+        if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {
                 this.wss.emit("connection", ws, request);
                 this.handleConnection(ws, to);
