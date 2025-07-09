@@ -40,6 +40,7 @@ export class VoiceService {
         console.log(`[${this.callSid}] Starting stream for ${to}...`);
 
         // 1. Fetch all company-related data
+        console.log(to);
         const company = await this.companyService.findByTwilioNumber(to);
         this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
         const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
