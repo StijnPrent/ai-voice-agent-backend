@@ -1,6 +1,7 @@
 // src/clients/ElevenLabsClient.ts
 import WebSocket from "ws";
 import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
+import {ReplyStyleModel} from "../business/models/ReplyStyleModel";
 
 export class ElevenLabsClient {
     private readonly apiKey  = process.env.ELEVENLABS_API_KEY!;
@@ -19,8 +20,9 @@ export class ElevenLabsClient {
         ws.on("open", () => {
             ws.send(JSON.stringify({
                 voice_settings: { 
-                    stability: settings.stability, 
-                    similarity_boost: settings.similarityBoost 
+                    stability: 0.5,
+                    similarity_boost: 0.8,
+                    speed: settings.talkingSpeed
                 },
                 text: " "
             }));
