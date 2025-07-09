@@ -20,7 +20,7 @@ export const authenticateToken = (req: AuthenticatedRequest, res: Response, next
             res.sendStatus(403); // Forbidden - No return needed
             return;
         }
-        req.companyId = user.companyId;
+        req.companyId = BigInt(user.companyId);
         next();
     });
 };

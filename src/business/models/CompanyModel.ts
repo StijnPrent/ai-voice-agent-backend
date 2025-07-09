@@ -4,7 +4,6 @@ export class CompanyModel {
     private _name: string;
     private _website: string;
     private _twilioNumber: string;
-    private _isCalendarConnected: boolean = false;
     private _createdAt: Date;
     private _updatedAt: Date;
 
@@ -14,7 +13,6 @@ export class CompanyModel {
         name: string,
         website: string,
         twilioNumber: string,
-        isCalendarConnected: boolean = false,
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -23,7 +21,6 @@ export class CompanyModel {
         this._name = name;
         this._website = website;
         this._twilioNumber = twilioNumber;
-        this._isCalendarConnected = isCalendarConnected;
         this._createdAt = createdAt;
         this._updatedAt = updatedAt;
     }
@@ -35,7 +32,6 @@ export class CompanyModel {
             name: this._name,
             website: this._website,
             twilioNumber: this._twilioNumber,
-            isCalendarConnected: this._isCalendarConnected,
             createdAt: this._createdAt.toISOString(),
             updatedAt: this._updatedAt.toISOString(),
         };
@@ -59,10 +55,6 @@ export class CompanyModel {
 
     public get twilioNumber(): string {
         return this._twilioNumber;
-    }
-
-    public get isCalendarConnected(): boolean {
-        return this._isCalendarConnected;
     }
 
     public get createdAt(): Date {

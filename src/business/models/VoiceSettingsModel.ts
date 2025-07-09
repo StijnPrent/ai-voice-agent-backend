@@ -3,6 +3,7 @@ export class VoiceSettingModel {
     private _companyId: number;
     private _welcomePhrase: string;
     private _talkingSpeed: number;
+    private _voiceId: string;
     private _createdAt: Date = new Date();
     private _updatedAt: Date = new Date();
     
@@ -11,6 +12,7 @@ export class VoiceSettingModel {
         companyId: number,
         welcomePhrase: string,
         talkingSpeed: number,
+        voiceId: string,
         createdAt: Date = new Date(),
         updatedAt: Date = new Date(),
     ) {
@@ -18,6 +20,7 @@ export class VoiceSettingModel {
         this._companyId = companyId;
         this._welcomePhrase = welcomePhrase;
         this._talkingSpeed = talkingSpeed;
+        this._voiceId = voiceId;
         this._createdAt = createdAt;
         this._updatedAt = updatedAt;
     }
@@ -28,6 +31,7 @@ export class VoiceSettingModel {
             companyId: this._companyId,
             welcomePhrase: this._welcomePhrase,
             talkingSpeed: this._talkingSpeed,
+            voiceId: this._voiceId,
             createdAt: this._createdAt.toISOString(),
             updatedAt: this._updatedAt.toISOString(),
         };
@@ -47,6 +51,10 @@ export class VoiceSettingModel {
 
     public get talkingSpeed(): number {
         return this._talkingSpeed;
+    }
+
+    public get voiceId(): string {
+        return this._voiceId;
     }
 
     public get createdAt(): Date {

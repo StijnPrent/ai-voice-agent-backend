@@ -110,12 +110,12 @@ export class ChatGPTClient {
             throw new Error("Company info and reply style must be set before generating a system prompt.");
         }
         
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n`;
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n je praat zo menselijk mogelijk en de output is voor een tts dus gebruik ook uh en ah en andere menselijke geluiden. \n\n`;
 
         if (this.companyInfo.length > 0) {
             prompt += "Hier is wat informatie over het bedrijf:\n";
             this.companyInfo.forEach(info => {
-                prompt += `- ${info.infoValue}\n`;
+                prompt += `- ${info.value}\n`;
             });
             prompt += "\n";
         }

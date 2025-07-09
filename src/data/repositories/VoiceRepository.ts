@@ -18,6 +18,7 @@ export class VoiceRepository extends BaseRepository implements IVoiceRepository 
             row.company_id,
             row.welcome_phrase,
             row.talking_speed,
+            row.voice_id,
             row.created_at,
             row.updated_at
         );

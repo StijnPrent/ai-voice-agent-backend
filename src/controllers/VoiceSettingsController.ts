@@ -38,6 +38,7 @@ export class VoiceSettingsController {
                 Number(companyId),
                 req.body.welcomePhrase,
                 req.body.talkingSpeed,
+                req.body.voiceId,
                 new Date(), // createdAt is not used for update
                 new Date() // updatedAt is not used for update
             );
@@ -61,6 +62,7 @@ export class VoiceSettingsController {
                 Number(companyId),
                 req.body.welcomePhrase,
                 req.body.talkingSpeed,
+                req.body.voiceId,
                 new Date(), // createdAt is not used for insert
                 new Date() // updatedAt is not used for insert
             );

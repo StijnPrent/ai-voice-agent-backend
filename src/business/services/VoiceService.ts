@@ -8,6 +8,7 @@ import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
 import { CompanyService } from "./CompanyService";
 import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
+import {IntegrationService} from "./IntegrationService";
 
 @injectable()
 export class VoiceService {
@@ -24,7 +25,8 @@ export class VoiceService {
         @inject(ChatGPTClient) private chatGptClient: ChatGPTClient,
         @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient,
         @inject(CompanyService) private companyService: CompanyService,
-        @inject("IVoiceRepository") private voiceRepository: IVoiceRepository
+        @inject("IVoiceRepository") private voiceRepository: IVoiceRepository,
+        @inject(IntegrationService) private integrationService: IntegrationService
     ) {}
 
     public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
@@ -42,7 +44,7 @@ export class VoiceService {
         this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
         const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
         const companyInfo = await this.companyService.getCompanyInfo(company.id);
-        const hasGoogleIntegration = company.isCalendarConnected;
+        const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
 
         console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
 

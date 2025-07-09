@@ -25,6 +25,8 @@ interface Config {
 
     // Google OAuth callback URI (shared)
     googleRedirectUri: string;
+    googleClientId?: string;
+    googleClientSecret?: string;
 
     // Database
     dbHost: string;
@@ -65,6 +67,8 @@ const config: Config = {
 
     //redirect URI for Google OAuth
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000",
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
 
     dbHost: process.env.DB_HOST || "localhost",
     dbUser: process.env.DB_USER || "root",

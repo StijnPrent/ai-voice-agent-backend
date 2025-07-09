@@ -8,22 +8,53 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
     public async insertGoogleTokens(
         companyId: bigint,
         clientId: string,
-        clientSecret: string,
-        accessToken: string,
-        refreshToken: string
+        encryptedSecret: string,
+        secretIv: string,
+        secretTag: string,
+        encryptedAccess: string,
+        accessIv: string,
+        accessTag: string,
+        encryptedRefresh: string,
+        refreshIv: string,
+        refreshTag: string,
+        scope?: string,
+        tokenType?: string,
+        expiryDate?: number
     ): Promise<void> {
         const sql = `
             INSERT INTO google_calendar_integrations (
-                company_id, client_id, client_secret, access_token, refresh_token, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-            ON DUPLICATE KEY UPDATE
-                client_id = VALUES(client_id),
-                client_secret = VALUES(client_secret),
-                access_token = VALUES(access_token),
-                refresh_token = VALUES(refresh_token),
-                updated_at = NOW()
+                company_id,
+                client_id,
+                encrypted_secret, secret_iv, secret_tag,
+                encrypted_access, access_iv, access_tag,
+                encrypted_refresh, refresh_iv, refresh_tag,
+                scope, token_type, expiry_date,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                                     client_id        = VALUES(client_id),
+                                     encrypted_secret= VALUES(encrypted_secret),
+                                     secret_iv        = VALUES(secret_iv),
+                                     secret_tag       = VALUES(secret_tag),
+                                     encrypted_access = VALUES(encrypted_access),
+                                     access_iv        = VALUES(access_iv),
+                                     access_tag       = VALUES(access_tag),
+                                     encrypted_refresh= VALUES(encrypted_refresh),
+                                     refresh_iv       = VALUES(refresh_iv),
+                                     refresh_tag      = VALUES(refresh_tag),
+                                     scope            = VALUES(scope),
+                                     token_type       = VALUES(token_type),
+                                     expiry_date      = VALUES(expiry_date),
+                                     updated_at       = NOW()
         `;
-        await this.execute(sql, [companyId, clientId, clientSecret, accessToken, refreshToken]);
+        await this.execute(sql, [
+            companyId,
+            clientId,
+            encryptedSecret, secretIv, secretTag,
+            encryptedAccess, accessIv, accessTag,
+            encryptedRefresh, refreshIv, refreshTag,
+            scope, tokenType, expiryDate
+        ]);
     }
 
     public async fetchGoogleTokens(companyId: bigint): Promise<GoogleIntegrationModel | null> {
@@ -37,9 +68,19 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
             row.id,
             row.company_id,
             row.client_id,
-            row.client_secret,
-            row.access_token,
-            row.refresh_token,
+            // Encrypted client secret fields
+            row.encrypted_client_secret,
+            row.client_secret_iv,
+            row.client_secret_tag,
+            // Encrypted access token fields
+            row.encrypted_access_token,
+            row.access_token_iv,
+            row.access_token_tag,
+            // Encrypted refresh token fields
+            row.encrypted_refresh_token,
+            row.refresh_token_iv,
+            row.refresh_token_tag,
+            // OAuth metadata
             row.scope,
             row.token_type,
             row.expiry_date,

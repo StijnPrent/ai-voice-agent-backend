@@ -25,7 +25,6 @@ export class CompanyService {
             email,
             sanitizedTwilioNumber,
             website,
-            false,
             new Date(),
             new Date()
         );
@@ -51,9 +50,9 @@ export class CompanyService {
             return null;
         }
 
-        return jwt.sign({ companyId: company.id }, process.env.JWT_SECRET as string, {
-            expiresIn: process.env.JWT_EXPIRATION,
-        });
+        const payload = { companyId: company.id.toString() };
+
+        return jwt.sign(payload, process.env.JWT_SECRET!, {expiresIn: "8h"});
     }
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel> {
