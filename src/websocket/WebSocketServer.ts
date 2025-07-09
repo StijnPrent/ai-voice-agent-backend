@@ -27,6 +27,7 @@ export class WebSocketServer {
      * Handel een 'upgrade' request van de HTTP-server af.
      */
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
+        console.log("🔍 Upgrade request.url:", request.url);
         if (!request.url) {
             socket.destroy();
             return;
