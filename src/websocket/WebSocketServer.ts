@@ -29,8 +29,7 @@ export class WebSocketServer {
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         console.log("🔍 Upgrade request.url:", request.url);
         const { pathname, query } = parse(request.url!, true);
-        const to = query.to as string;
-        console.log(to)
+        const to = '+18565020784'
 
         if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {
