@@ -36,14 +36,17 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
         ));
     }
 
-    public async hasCalendarConnected(companyId: bigint): Promise<boolean> {
-        const sql = `
-      SELECT COUNT(1)      AS cnt
-        FROM google_calendar_integrations
-       WHERE company_id = ?
-    `;
-        const [rows] = await this.execute<RowDataPacket[]>(sql, [companyId]);
-        const cnt = rows[0]?.cnt as number;
+    public async hasCalendarConnected(companyId: bigint): Promise<boolean> {const sql = `
+            SELECT COUNT(1) AS cnt
+            FROM google_calendar_integrations
+            WHERE company_id = ?
+        `;
+        const idParam = companyId.toString();
+
+        const [rows] = await this.execute<RowDataPacket[]>(sql, [idParam]);
+
+        const cnt = rows?.cnt as number;
         return cnt > 0;
     }
+
 }
