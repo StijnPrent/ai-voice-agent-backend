@@ -65,6 +65,13 @@ export class VoiceService {
                 const transcript = chunk.toString();
                 if (transcript) {
                     console.log(`[${this.callSid}] [Deepgram] Transcript chunk:`, transcript);
+                    
+                    // If we get a transcript while the assistant is speaking, it's a confirmed interruption.
+                    if (this.isAssistantSpeaking) {
+                        console.log(`[${this.callSid}] User interruption detected.`);
+                        this.elevenLabsClient.stop();
+                    }
+                    
                     this.handleUserSpeech(transcript);
                 }
                 callback();
@@ -119,11 +126,11 @@ export class VoiceService {
             return;
         }
         
-        // Stop listening for user speech while we are preparing to speak
         if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
-        this.transcriptBuffer = ""; // Clear buffer to prevent responding to old input
+        this.transcriptBuffer = "";
 
         const onStreamStart = () => {
+            this.isAssistantSpeaking = true; // Set flag only when audio starts
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -132,7 +139,6 @@ export class VoiceService {
                     mark: { name: markName },
                 }));
                 console.log(`[${this.callSid}] Sent mark: ${markName}`);
-                this.isAssistantSpeaking = true;
             }
         };
 
@@ -147,7 +153,6 @@ export class VoiceService {
         };
 
         const onClose = () => {
-            // This will be called when the stream ends naturally or is stopped.
             this.isAssistantSpeaking = false;
         };
 
@@ -155,12 +160,8 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
-        if (this.isAssistantSpeaking) {
-            console.log(`[${this.callSid}] User interruption detected.`);
-            this.elevenLabsClient.stop(); // Stop the AI from speaking
-            this.isAssistantSpeaking = false; // Allow user to speak
-        }
-
+        // Simply forward the audio to the input stream for Deepgram.
+        // The interruption logic is now handled when a transcript is received.
         if (this.audioIn) {
             this.audioIn.write(Buffer.from(payload, "base64"));
         }
@@ -168,8 +169,6 @@ export class VoiceService {
 
     public handleMark(name: string) {
         console.log(`[${this.callSid}] Received mark: ${name}. Assistant finished a sentence.`);
-        // This confirms a segment of speech has been fully sent to Twilio.
-        // The isAssistantSpeaking flag is now primarily managed by onClose of the ElevenLabs stream.
     }
 
     public stopStreaming() {
@@ -186,4 +185,3 @@ export class VoiceService {
         this.transcriptBuffer = "";
     }
 }
-
