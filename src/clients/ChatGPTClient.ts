@@ -114,8 +114,8 @@ export class ChatGPTClient {
         if (!this.company || !this.replyStyle) {
             throw new Error("Company info and reply style must be set before generating a system prompt.");
         }
-        
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n je praat zo menselijk mogelijk. \n\n`;
+
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\nJe praat zo menselijk mogelijk.\n\n`;
 
         if (this.companyInfo.length > 0) {
             prompt += "Hier is wat informatie over het bedrijf:\n";
@@ -124,10 +124,13 @@ export class ChatGPTClient {
             });
             prompt += "\n";
         }
-        
+
         if (this.hasGoogleIntegration) {
-            prompt += "Je hebt de mogelijkheid om afspraken in de Google Agenda van het bedrijf te plannen. Vraag altijd om een expliciete bevestiging van de gebruiker voordat je een afspraak definitief inplant.";
+            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik ALTIJD de 'create_calendar_event' tool om afspraken in te plannen wanneer een gebruiker hierom vraagt. Vraag altijd om de benodigde informatie zoals datum en tijd, en vraag om een expliciete bevestiging voordat je de afspraak definitief inplant.";
+        } else {
+            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt GEEN toegang tot de agenda. Als een gebruiker een afspraak wil maken, informeer hen dan dat je dit niet automatisch kunt doen. Bied aan om een notitie achter te laten voor het team of om de gebruiker door te verbinden met een medewerker.";
         }
+        
         return prompt;
     }
 

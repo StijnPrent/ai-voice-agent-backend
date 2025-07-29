@@ -47,6 +47,7 @@ export class GoogleCalendarClient {
     }
 
     async createEvent(model: GoogleIntegrationModel, redirectUri: string, event: calendar_v3.Schema$Event) {
+        console.log('Afspraak toevoegen');
         const credentials = {
             clientId: model.clientId,
             clientSecret: model.clientSecret,
