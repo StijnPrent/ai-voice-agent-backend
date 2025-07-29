@@ -66,25 +66,41 @@
 
             const redirectUri = this.getAppCredentials().redirectUri;
 
-            // Refresh token if it's expired
-            if (model.expiryDate && model.expiryDate < Date.now()) {
-                const newTokens = await this.gcalClient.refreshTokens(model, redirectUri);
+            // Refresh token if it's expired or nearing expiry
+            if (!model.expiryDate || model.expiryDate < (Date.now() + 60000)) { // 60-second buffer
+                try {
+                    console.log(`[GoogleService] Token for company ${companyId} requires refresh. Refreshing...`);
+                    const newTokens = await this.gcalClient.refreshTokens(model, redirectUri);
 
-                // Update the database with the new tokens
-                await this.repo.updateGoogleTokens(
-                    model.id,
-                    newTokens.access_token,
-                    newTokens.refresh_token,
-                    newTokens.expiry_date
-                );
+                    // Encrypt the new tokens before updating the database
+                    const accessEnc = encrypt(newTokens.access_token);
+                    const refreshEnc = newTokens.refresh_token ? encrypt(newTokens.refresh_token) : null;
 
-                // Refetch the model to get the updated tokens for the createEvent call
-                const updatedModel = await this.repo.fetchGoogleTokens(companyId);
-                if (!updatedModel) {
-                    throw new Error(`Failed to refetch Google integration for company ${companyId} after token refresh.`);
+                    await this.repo.updateGoogleTokens(
+                        model.id,
+                        accessEnc.data, accessEnc.iv, accessEnc.tag,
+                        refreshEnc ? refreshEnc.data : null,
+                        refreshEnc ? refreshEnc.iv : null,
+                        refreshEnc ? refreshEnc.tag : null,
+                        newTokens.expiry_date
+                    );
+
+                    // Use the refreshed model for the createEvent call
+                    const refreshedModel = await this.repo.fetchGoogleTokens(companyId);
+                    if (!refreshedModel) {
+                        throw new Error(`Failed to refetch Google integration for company ${companyId} after token refresh.`);
+                    }
+                    const res = await this.gcalClient.createEvent(refreshedModel, redirectUri, event);
+                    return res.data;
+
+                } catch (error: any) {
+                    if (error.response?.data?.error === 'invalid_grant') {
+                        console.error(`[GoogleService] 'invalid_grant' error for company ${companyId}. The refresh token is likely revoked or invalid. Please re-authenticate.`);
+                        throw new Error(`Google API 'invalid_grant': Re-authentication required for company ${companyId}.`);
+                    }
+                    // Re-throw other errors
+                    throw error;
                 }
-                const res = await this.gcalClient.createEvent(updatedModel, redirectUri, event);
-                return res.data;
             }
 
             const res = await this.gcalClient.createEvent(model, redirectUri, event);

@@ -28,9 +28,9 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
                 encrypted_secret, secret_iv, secret_tag,
                 encrypted_access, access_iv, access_tag,
                 encrypted_refresh, refresh_iv, refresh_tag,
-                scope, token_type, expiry_date,
+                scope, token_type, expiry_date, integration_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,NOW(), NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,NOW(), NOW())
                 ON DUPLICATE KEY UPDATE
                                      client_id        = VALUES(client_id),
                                      encrypted_secret= VALUES(encrypted_secret),
@@ -53,7 +53,7 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
             encryptedSecret, secretIv, secretTag,
             encryptedAccess, accessIv, accessTag,
             encryptedRefresh, refreshIv, refreshTag,
-            scope, tokenType, expiryDate
+            scope, tokenType, expiryDate, 1
         ]);
     }
 

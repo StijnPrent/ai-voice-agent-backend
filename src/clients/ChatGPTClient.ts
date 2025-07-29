@@ -75,7 +75,7 @@ export class ChatGPTClient {
                         if (functionName === 'create_calendar_event') {
                             console.log(`[ChatGPT] Tool call: create_calendar_event with args:`, functionArgs);
                             const { summary, location, description, start, end } = functionArgs;
-                            const event = { summary, location, description, start: { dateTime: start }, end: { dateTime: end } };
+                            const event = { summary, location, description, start: { dateTime: start, timeZone: 'Europe/Amsterdam' }, end: { dateTime: end, timeZone: 'Europe/Amsterdam' } };
                             
                             await this.googleService.scheduleEvent(this.company!.id, event);
                             
