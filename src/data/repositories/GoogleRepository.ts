@@ -89,17 +89,38 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
         );
     }
 
+    // src/data/repositories/IntegrationRepository.ts (or wherever this lives)
     public async updateGoogleTokens(
         id: number,
-        accessToken: string,
-        refreshToken: string,
-        expiryDate: number | undefined
+        encryptedAccess: string,
+        accessIv: string,
+        accessTag: string,
+        encryptedRefresh: string | null,
+        refreshIv: string | null,
+        refreshTag: string | null,
+        expiryDate?: number
     ): Promise<void> {
         const sql = `
             UPDATE google_calendar_integrations
-            SET access_token = ?, refresh_token = ?, expiry_date = ?, updated_at = NOW()
-            WHERE id = ?
+            SET encrypted_access  = ?,
+                access_iv         = ?,
+                access_tag        = ?,
+                encrypted_refresh = ?,
+                refresh_iv        = ?,
+                refresh_tag       = ?,
+                expiry_date       = ?,
+                updated_at        = NOW()
+            WHERE integration_id   = ?
         `;
-        await this.execute(sql, [accessToken, refreshToken, expiryDate, id]);
+        await this.execute(sql, [
+            encryptedAccess,
+            accessIv,
+            accessTag,
+            encryptedRefresh,
+            refreshIv,
+            refreshTag,
+            expiryDate ?? null,
+            id,
+        ]);
     }
 }

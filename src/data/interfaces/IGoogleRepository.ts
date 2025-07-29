@@ -18,8 +18,14 @@ export interface IGoogleRepository {
         expiryDate?: number,
     ): Promise<void>;
     fetchGoogleTokens(companyId: bigint): Promise<GoogleIntegrationModel | null>;
-    updateGoogleTokens(id: number,
-                       accessToken: string,
-                       refreshToken: string,
-                       expiryDate: number | undefined): Promise<void>
+    updateGoogleTokens(
+        id: number,
+        encryptedAccess: string,
+        accessIv: string,
+        accessTag: string,
+        encryptedRefresh: string | null,
+        refreshIv: string | null,
+        refreshTag: string | null,
+        expiryDate?: number
+    ): Promise<void>;
 }
