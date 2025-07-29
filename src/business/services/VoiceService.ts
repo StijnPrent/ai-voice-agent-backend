@@ -123,8 +123,6 @@ export class VoiceService {
         if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
         this.transcriptBuffer = ""; // Clear buffer to prevent responding to old input
 
-        this.isAssistantSpeaking = true;
-
         const onStreamStart = () => {
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
@@ -134,6 +132,7 @@ export class VoiceService {
                     mark: { name: markName },
                 }));
                 console.log(`[${this.callSid}] Sent mark: ${markName}`);
+                this.isAssistantSpeaking = true;
             }
         };
 
