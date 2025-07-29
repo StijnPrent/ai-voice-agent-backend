@@ -69,17 +69,17 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
             row.company_id,
             row.client_id,
             // Encrypted client secret fields
-            row.encrypted_client_secret,
-            row.client_secret_iv,
-            row.client_secret_tag,
+            row.encrypted_secret, // Corrected name
+            row.secret_iv,        // Corrected name
+            row.secret_tag,       // Corrected name
             // Encrypted access token fields
-            row.encrypted_access_token,
-            row.access_token_iv,
-            row.access_token_tag,
+            row.encrypted_access, // Corrected name
+            row.access_iv,        // Corrected name
+            row.access_tag,       // Corrected name
             // Encrypted refresh token fields
-            row.encrypted_refresh_token,
-            row.refresh_token_iv,
-            row.refresh_token_tag,
+            row.encrypted_refresh, // Corrected name
+            row.refresh_iv,        // Corrected name
+            row.refresh_tag,       // Corrected name
             // OAuth metadata
             row.scope,
             row.token_type,
