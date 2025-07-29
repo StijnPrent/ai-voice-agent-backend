@@ -10,7 +10,7 @@ import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 
-const USER_SILENCE_TIMEOUT_MS = 800; // Time in ms of silence before processing transcript
+const USER_SILENCE_TIMEOUT_MS = 1200; // Time in ms of silence before processing transcript
 
 @injectable()
 export class VoiceService {
