@@ -21,15 +21,17 @@ export class ElevenLabsClient {
 
         this.ws.on("open", () => {
             if (this.ws?.readyState === WebSocket.OPEN) {
+                // Send the initial configuration with voice settings.
                 this.ws.send(JSON.stringify({
                     voice_settings: {
                         stability: 0.5,
                         similarity_boost: 0.8,
                         speed: settings.talkingSpeed
                     },
-                    text: " "
+                    text: text // Send the text directly in the first message.
                 }));
-                this.ws.send(JSON.stringify({ text }));
+
+                // Send an empty string to signal the end of the text stream.
                 this.ws.send(JSON.stringify({ text: "" }));
             }
         });
@@ -46,8 +48,8 @@ export class ElevenLabsClient {
         });
 
         this.ws.on("close", (code, reason) => {
-            if (code !== 1000 && code !== 1005) { // 1005 is normal closure
-                console.error(`[ElevenLabs] WS closed unexpectedly. code=${code}, reason=${reason}`);
+            if (code !== 1000 && code !== 1005) {
+                console.error(`[ElevenLabs] WS closed unexpectedly. code=${code}, reason=${reason.toString()}`);
             }
             this.ws = null;
             onClose();
