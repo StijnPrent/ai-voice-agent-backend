@@ -177,6 +177,7 @@ export class VoiceService {
         this.elevenLabsClient.stop();
         if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
         this.audioIn?.end();
+        this.chatGptClient.clearHistory(); // Clear the conversation history
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;

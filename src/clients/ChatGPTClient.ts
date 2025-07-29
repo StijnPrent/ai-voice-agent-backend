@@ -17,6 +17,7 @@ export class ChatGPTClient {
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
     private companyInfo: CompanyInfoModel[] = [];
+    private messages: ChatCompletionMessageParam[] = [];
 
     constructor(
         @inject(GoogleService) private googleService: GoogleService
@@ -32,27 +33,31 @@ export class ChatGPTClient {
         this.hasGoogleIntegration = hasGoogleIntegration;
         this.replyStyle = replyStyle;
         this.companyInfo = companyInfo;
-    }
-
-    async start(inputStream: Readable, onTextGenerated: (text: string) => void): Promise<void> {
-        const messages: ChatCompletionMessageParam[] = [
+        // Initialize the conversation history with the system prompt
+        this.messages = [
             {
                 role: "system",
                 content: this.getSystemPrompt(),
             },
         ];
+    }
 
+    public clearHistory() {
+        this.messages = [];
+    }
+
+    async start(inputStream: Readable, onTextGenerated: (text: string) => void): Promise<void> {
         inputStream.on("data", async (chunk) => {
             const transcript = chunk.toString();
             if (!transcript.trim()) return;
 
             console.log(`[ChatGPT] Received transcript: ${transcript}`);
-            messages.push({ role: "user", content: transcript });
+            this.messages.push({ role: "user", content: transcript });
 
             try {
                 const response = await this.openai.chat.completions.create({
                     model: "gpt-4o",
-                    messages,
+                    messages: this.messages, // Use the persistent history
                     max_tokens: 150,
                     temperature: 0.7,
                     tools: this.getTools(),
@@ -62,7 +67,7 @@ export class ChatGPTClient {
                 const responseMessage = response.choices[0].message;
 
                 if (responseMessage.tool_calls) {
-                    messages.push(responseMessage);
+                    this.messages.push(responseMessage);
                     for (const toolCall of responseMessage.tool_calls) {
                         const functionName = toolCall.function.name;
                         const functionArgs = JSON.parse(toolCall.function.arguments);
@@ -77,7 +82,7 @@ export class ChatGPTClient {
                             const confirmation = `Oké, de afspraak voor '${summary}' is ingepland. Kan ik nog iets anders voor je doen?`;
                             onTextGenerated(confirmation);
                             
-                            messages.push({
+                            this.messages.push({
                                 tool_call_id: toolCall.id,
                                 role: "tool",
                                 content: JSON.stringify({ success: true, event_summary: summary }),
@@ -89,7 +94,7 @@ export class ChatGPTClient {
                     if (fullResponse) {
                         onTextGenerated(fullResponse);
                     }
-                    messages.push({ role: "assistant", content: fullResponse });
+                    this.messages.push({ role: "assistant", content: fullResponse });
                 }
 
             } catch (err) {
@@ -110,7 +115,7 @@ export class ChatGPTClient {
             throw new Error("Company info and reply style must be set before generating a system prompt.");
         }
         
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n je praat zo menselijk mogelijk en de output is voor een tts dus gebruik ook uh en ah en andere menselijke geluiden. \n\n`;
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n je praat zo menselijk mogelijk. \n\n`;
 
         if (this.companyInfo.length > 0) {
             prompt += "Hier is wat informatie over het bedrijf:\n";
