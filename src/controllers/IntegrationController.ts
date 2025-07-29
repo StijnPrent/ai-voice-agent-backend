@@ -20,4 +20,19 @@ export class IntegrationController {
             res.status(500).send("Error fetching integrations");
         }
     }
+
+    public async hasCalendarConnected(req: any, res: any): Promise<void> {
+        try {
+            const companyId = req.params.id;
+            if (!companyId) {
+                res.status(400).send("Company ID is missing from token.");
+                return;
+            }
+            const hasConnected = await this.service.hasCalendarConnected(companyId);
+            res.json({ hasConnected });
+        } catch (err) {
+            console.error(err);
+            res.status(500).send("Error checking calendar connection");
+        }
+    }
 }

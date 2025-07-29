@@ -8,7 +8,9 @@ import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
 import { CompanyService } from "./CompanyService";
 import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
-import {IntegrationService} from "./IntegrationService";
+import { IntegrationService } from "./IntegrationService";
+
+const USER_SILENCE_TIMEOUT_MS = 800; // Time in ms of silence before processing transcript
 
 @injectable()
 export class VoiceService {
@@ -19,6 +21,10 @@ export class VoiceService {
     private isAssistantSpeaking: boolean = false;
     private markCount: number = 0;
     private voiceSettings: VoiceSettingModel | null = null;
+
+    // Interruption and buffering logic
+    private transcriptBuffer: string = "";
+    private userSpeakingTimer: NodeJS.Timeout | null = null;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -36,11 +42,11 @@ export class VoiceService {
         this.audioIn = new PassThrough();
         this.isAssistantSpeaking = false;
         this.markCount = 0;
+        this.transcriptBuffer = "";
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
 
         console.log(`[${this.callSid}] Starting stream for ${to}...`);
 
-        // 1. Fetch all company-related data
-        console.log(to);
         const company = await this.companyService.findByTwilioNumber(to);
         this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
         const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
@@ -50,10 +56,7 @@ export class VoiceService {
         console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
 
         if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                event: "clear",
-                streamSid: this.streamSid,
-            }));
+            this.ws.send(JSON.stringify({ event: "clear", streamSid: this.streamSid }));
             console.log(`[${this.callSid}] Sent clear message to Twilio.`);
         }
 
@@ -61,8 +64,8 @@ export class VoiceService {
             write: (chunk: Buffer, _encoding, callback) => {
                 const transcript = chunk.toString();
                 if (transcript) {
-                    console.log(`[${this.callSid}] [Deepgram] Transcript:`, transcript);
-                    this.handleUserResponse(transcript);
+                    console.log(`[${this.callSid}] [Deepgram] Transcript chunk:`, transcript);
+                    this.handleUserSpeech(transcript);
                 }
                 callback();
             }
@@ -79,9 +82,30 @@ export class VoiceService {
         }
     }
 
-    private handleUserResponse(transcript: string) {
+    private handleUserSpeech(transcript: string) {
+        this.transcriptBuffer += transcript + " ";
+
+        if (this.userSpeakingTimer) {
+            clearTimeout(this.userSpeakingTimer);
+        }
+
+        this.userSpeakingTimer = setTimeout(() => {
+            this.processBufferedTranscript();
+        }, USER_SILENCE_TIMEOUT_MS);
+    }
+
+    private processBufferedTranscript() {
+        if (!this.transcriptBuffer.trim()) {
+            this.transcriptBuffer = "";
+            return;
+        }
+
+        const finalTranscript = this.transcriptBuffer.trim();
+        this.transcriptBuffer = "";
+        console.log(`[${this.callSid}] Processing final transcript:`, finalTranscript);
+
         this.chatGptClient.start(
-            Readable.from([transcript]),
+            Readable.from([finalTranscript]),
             (sentence: string) => {
                 console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
                 this.speak(sentence);
@@ -94,6 +118,11 @@ export class VoiceService {
             console.error(`[${this.callSid}] Attempted to speak without voice settings.`);
             return;
         }
+        
+        // Stop listening for user speech while we are preparing to speak
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
+        this.transcriptBuffer = ""; // Clear buffer to prevent responding to old input
+
         this.isAssistantSpeaking = true;
 
         const onStreamStart = () => {
@@ -119,31 +148,43 @@ export class VoiceService {
         };
 
         const onClose = () => {
-            // Nothing specific to do on close
+            // This will be called when the stream ends naturally or is stopped.
+            this.isAssistantSpeaking = false;
         };
 
         this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
     }
 
     public sendAudio(payload: string) {
-        if (this.audioIn && !this.isAssistantSpeaking) {
+        if (this.isAssistantSpeaking) {
+            console.log(`[${this.callSid}] User interruption detected.`);
+            this.elevenLabsClient.stop(); // Stop the AI from speaking
+            this.isAssistantSpeaking = false; // Allow user to speak
+        }
+
+        if (this.audioIn) {
             this.audioIn.write(Buffer.from(payload, "base64"));
         }
     }
 
     public handleMark(name: string) {
-        console.log(`[${this.callSid}] Received mark: ${name}. User can now speak.`);
-        this.isAssistantSpeaking = false;
+        console.log(`[${this.callSid}] Received mark: ${name}. Assistant finished a sentence.`);
+        // This confirms a segment of speech has been fully sent to Twilio.
+        // The isAssistantSpeaking flag is now primarily managed by onClose of the ElevenLabs stream.
     }
 
     public stopStreaming() {
         if (!this.callSid) return;
         console.log(`[${this.callSid}] Stopping stream...`);
+        this.elevenLabsClient.stop();
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
         this.audioIn?.end();
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;
         this.audioIn = null;
         this.voiceSettings = null;
+        this.transcriptBuffer = "";
     }
 }
+

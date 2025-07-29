@@ -6,5 +6,6 @@ const router = Router();
 const controller = new IntegrationController();
 
 router.get("/get", authenticateToken, controller.getAllIntegrations.bind(controller));
+router.get("/has-calendar-connected/:id", controller.hasCalendarConnected.bind(controller));
 
 export default router;
