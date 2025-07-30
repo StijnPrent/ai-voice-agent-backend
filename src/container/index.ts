@@ -16,6 +16,9 @@ import {VoiceRepository} from "../data/repositories/VoiceRepository";
 import {VoiceSettingModel} from "../business/models/VoiceSettingsModel";
 import {IntegrationRepository} from "../data/repositories/IntegrationRepository";
 import {IntegrationService} from "../business/services/IntegrationService";
+import {UpdateService} from "../business/services/UpdateService";
+import {IUpdateRepository} from "../data/interfaces/IUpdateRepository";
+import {UpdateRepository} from "../data/repositories/UpdateRepository";
 
 // Register all clients in the container
 container.register("DeepgramClient", { useClass: DeepgramClient });
@@ -33,6 +36,7 @@ container.register("GoogleService", { useClass: GoogleService });
 container.register("CompanyService", { useClass: CompanyService });
 container.register("VoiceSettingsService", { useClass: VoiceSettingModel });
 container.register("IntegrationService", { useClass: IntegrationService });
+container.register("UpdateService", { useClass: UpdateService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -49,4 +53,7 @@ container.register("IVoiceRepository", {
 })
 container.register("IIntegrationRepository", {
     useClass: IntegrationRepository,
+})
+container.register<IUpdateRepository>("IUpdateRepository", {
+    useClass: UpdateRepository,
 })

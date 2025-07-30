@@ -10,6 +10,7 @@ import { WebSocketServer } from "./websocket/WebSocketServer";
 import "./container";
 import googleRoute from "./routes/GoogleRoute";
 import integrationRoute from "./routes/IntegrationRoute";
+import updateRoute from "./routes/UpdateRoute";
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute)
 app.use("/integrations", integrationRoute)
+app.use("/updates", updateRoute)
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
