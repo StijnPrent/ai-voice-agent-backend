@@ -19,6 +19,10 @@ import {IntegrationService} from "../business/services/IntegrationService";
 import {UpdateService} from "../business/services/UpdateService";
 import {IUpdateRepository} from "../data/interfaces/IUpdateRepository";
 import {UpdateRepository} from "../data/repositories/UpdateRepository";
+import {OutlookCalendarClient} from "../clients/OutlookCalendarClient";
+import {OutlookService} from "../business/services/OutlookService";
+import {IOutlookRepository} from "../data/interfaces/IOutlookRepository";
+import {OutlookRepository} from "../data/repositories/OutlookRepository";
 
 // Register all clients in the container
 container.register("DeepgramClient", { useClass: DeepgramClient });
@@ -29,10 +33,15 @@ container.register("GoogleCalendarClient", {
     useFactory: () =>
         new GoogleCalendarClient()
 });
+container.register("OutlookCalendarClient", {
+    useFactory: () =>
+        new OutlookCalendarClient()
+});
 
 // Register business services
 container.register("VoiceService", { useClass: VoiceService });
 container.register("GoogleService", { useClass: GoogleService });
+container.register("OutlookService", { useClass: OutlookService });
 container.register("CompanyService", { useClass: CompanyService });
 container.register("VoiceSettingsService", { useClass: VoiceSettingModel });
 container.register("IntegrationService", { useClass: IntegrationService });
@@ -44,6 +53,9 @@ container.register<ICompanyRepository>("ICompanyRepository", {
 });
 container.register<IGoogleRepository>("IGoogleRepository", {
     useClass: GoogleRepository,
+});
+container.register<IOutlookRepository>("IOutlookRepository", {
+    useClass: OutlookRepository,
 });
 container.register("IPasswordRepository", {
     useClass: PasswordRepository,

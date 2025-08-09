@@ -9,13 +9,14 @@ import voiceSettingsRoutes from "./routes/VoiceSettingsRoute";
 import { WebSocketServer } from "./websocket/WebSocketServer";
 import "./container";
 import googleRoute from "./routes/GoogleRoute";
+import outlookRoute from "./routes/OutlookRoute";
 import integrationRoute from "./routes/IntegrationRoute";
 import updateRoute from "./routes/UpdateRoute";
 
 const app = express();
 
 app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: process.env.FRONTEND_URL,
     methods: ["GET","POST","PUT","DELETE","OPTIONS"],
     allowedHeaders: ["Content-Type","Authorization"]
 }));
@@ -26,6 +27,7 @@ app.use("/voice", voiceRoutes);
 app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute)
+app.use("/outlook", outlookRoute)
 app.use("/integrations", integrationRoute)
 app.use("/updates", updateRoute)
 

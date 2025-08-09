@@ -1,6 +1,7 @@
 // src/routes/GoogleCalendarRoute.ts
 import { Router } from "express";
 import { GoogleController } from "../controllers/GoogleController";
+import {authenticateToken} from "../middleware/auth";
 
 const router = Router();
 const controller = new GoogleController();
@@ -18,6 +19,12 @@ router.get(
 router.post(
     "/schedule",
     controller.scheduleEvent.bind(controller)
+);
+
+router.delete(
+    "/disconnect",
+    authenticateToken,
+    controller.disconnect.bind(controller)
 );
 
 export default router;

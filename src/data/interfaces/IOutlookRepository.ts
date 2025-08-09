@@ -1,7 +1,10 @@
-import {GoogleIntegrationModel} from "../../business/models/GoogleIntegrationModel";
 
-export interface IGoogleRepository {
-    insertGoogleTokens(
+// src/data/interfaces/IOutlookRepository.ts
+
+import { OutlookIntegrationModel } from "../../business/models/OutlookIntegrationModel";
+
+export interface IOutlookRepository {
+    insertOutlookTokens(
         companyId: bigint,
         clientId: string,
         encryptedSecret: string,
@@ -15,10 +18,12 @@ export interface IGoogleRepository {
         refreshTag: string,
         scope?: string,
         tokenType?: string,
-        expiryDate?: number,
+        expiryDate?: number
     ): Promise<void>;
-    fetchGoogleTokens(companyId: bigint): Promise<GoogleIntegrationModel | null>;
-    updateGoogleTokens(
+
+    fetchOutlookTokens(companyId: bigint): Promise<OutlookIntegrationModel | null>;
+
+    updateOutlookTokens(
         id: number,
         encryptedAccess: string,
         accessIv: string,
@@ -28,5 +33,4 @@ export interface IGoogleRepository {
         refreshTag: string | null,
         expiryDate?: number
     ): Promise<void>;
-    deleteGoogleTokens(companyId: bigint): Promise<void>;
 }

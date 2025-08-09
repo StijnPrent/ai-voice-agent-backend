@@ -1,11 +1,12 @@
-// src/data/repositories/GoogleRepository.ts
+
+// src/data/repositories/OutlookRepository.ts
 import { ResultSetHeader, RowDataPacket } from "mysql2";
-import { GoogleIntegrationModel } from "../../business/models/GoogleIntegrationModel";
-import { IGoogleRepository } from "../interfaces/IGoogleRepository";
+import { OutlookIntegrationModel } from "../../business/models/OutlookIntegrationModel";
+import { IOutlookRepository } from "../interfaces/IOutlookRepository";
 import { BaseRepository } from "./BaseRepository";
 
-export class GoogleRepository extends BaseRepository implements IGoogleRepository {
-    public async insertGoogleTokens(
+export class OutlookRepository extends BaseRepository implements IOutlookRepository {
+    public async insertOutlookTokens(
         companyId: bigint,
         clientId: string,
         encryptedSecret: string,
@@ -22,7 +23,7 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
         expiryDate?: number
     ): Promise<void> {
         const sql = `
-            INSERT INTO google_calendar_integrations (
+            INSERT INTO outlook_calendar_integrations (
                 company_id,
                 client_id,
                 encrypted_secret, secret_iv, secret_tag,
@@ -53,33 +54,33 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
             encryptedSecret, secretIv, secretTag,
             encryptedAccess, accessIv, accessTag,
             encryptedRefresh, refreshIv, refreshTag,
-            scope, tokenType, expiryDate, 1
+            scope, tokenType, expiryDate, 2
         ]);
     }
 
-    public async fetchGoogleTokens(companyId: bigint): Promise<GoogleIntegrationModel | null> {
-        const sql = "SELECT * FROM google_calendar_integrations WHERE company_id = ? LIMIT 1";
+    public async fetchOutlookTokens(companyId: bigint): Promise<OutlookIntegrationModel | null> {
+        const sql = "SELECT * FROM outlook_calendar_integrations WHERE company_id = ? LIMIT 1";
         const results = await this.execute<RowDataPacket[]>(sql, [companyId]);
         if (results.length === 0) {
             return null;
         }
         const row = results[0];
-        return new GoogleIntegrationModel(
+        return new OutlookIntegrationModel(
             row.id,
             row.company_id,
             row.client_id,
             // Encrypted client secret fields
-            row.encrypted_secret, // Corrected name
-            row.secret_iv,        // Corrected name
-            row.secret_tag,       // Corrected name
+            row.encrypted_secret,
+            row.secret_iv,
+            row.secret_tag,
             // Encrypted access token fields
-            row.encrypted_access, // Corrected name
-            row.access_iv,        // Corrected name
-            row.access_tag,       // Corrected name
+            row.encrypted_access,
+            row.access_iv,
+            row.access_tag,
             // Encrypted refresh token fields
-            row.encrypted_refresh, // Corrected name
-            row.refresh_iv,        // Corrected name
-            row.refresh_tag,       // Corrected name
+            row.encrypted_refresh,
+            row.refresh_iv,
+            row.refresh_tag,
             // OAuth metadata
             row.scope,
             row.token_type,
@@ -89,8 +90,7 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
         );
     }
 
-    // src/data/repositories/IntegrationRepository.ts (or wherever this lives)
-    public async updateGoogleTokens(
+    public async updateOutlookTokens(
         id: number,
         encryptedAccess: string,
         accessIv: string,
@@ -101,7 +101,7 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
         expiryDate?: number
     ): Promise<void> {
         const sql = `
-            UPDATE google_calendar_integrations
+            UPDATE outlook_calendar_integrations
             SET encrypted_access  = ?,
                 access_iv         = ?,
                 access_tag        = ?,
@@ -122,10 +122,5 @@ export class GoogleRepository extends BaseRepository implements IGoogleRepositor
             expiryDate ?? null,
             id,
         ]);
-    }
-
-    public async deleteGoogleTokens(companyId: bigint): Promise<void> {
-        const sql = "DELETE FROM google_calendar_integrations WHERE company_id = ?";
-        await this.execute(sql, [companyId]);
     }
 }

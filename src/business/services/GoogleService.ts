@@ -106,4 +106,8 @@
             const res = await this.gcalClient.createEvent(model, redirectUri, event);
             return res.data;
         }
+
+        async disconnect(companyId: bigint): Promise<void> {
+            await this.repo.deleteGoogleTokens(companyId);
+        }
     }

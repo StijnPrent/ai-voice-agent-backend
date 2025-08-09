@@ -8,7 +8,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
         const sql = `
             SELECT
                 created_at AS createdAt,
-                CONCAT('Company created: ', name) AS \`update\`,
+                CONCAT('Bedrijf aangemaakt') AS \`update\`,
                 'created' AS status
             FROM company
             WHERE id = ?
@@ -17,7 +17,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 updated_at AS createdAt,
-                CONCAT('Company updated: ', name) AS \`update\`,
+                CONCAT('Bedrijf aangepast') AS \`update\`,
                 'updated' AS status
             FROM company
             WHERE id = ?
@@ -26,7 +26,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 ci.created_at AS createdAt,
-                CONCAT('Company info added: "', ci.info_value) AS \`update\`,
+                CONCAT('Bedrijfs informatie toegevoegd: "', ci.info_value, '"') AS \`update\`,
                 'created' AS status
             FROM company_info AS ci
             WHERE ci.company_id = ?
@@ -35,7 +35,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 gci.created_at AS createdAt,
-                CONCAT('Google Calendar integration created') AS \`update\`,
+                CONCAT('Google calander integratie gekoppeld') AS \`update\`,
                 'created' AS status
             FROM google_calendar_integrations AS gci
             WHERE gci.company_id = ?
@@ -44,7 +44,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 gci.updated_at AS createdAt,
-                CONCAT('Google Calendar integration updated') AS \`update\`,
+                CONCAT('Google Calendar integratie aangepast') AS \`update\`,
                 'updated' AS status
             FROM google_calendar_integrations AS gci
             WHERE gci.company_id = ?
@@ -53,7 +53,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 i.created_at AS createdAt,
-                CONCAT('Integration created: ', i.name) AS \`update\`,
+                CONCAT('Integratie toegevoegd: ', i.name) AS \`update\`,
                 'created' AS status
             FROM integrations AS i
             WHERE i.id IN (
@@ -64,7 +64,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 i.updated_at AS createdAt,
-                CONCAT('Integration updated: ', i.name) AS \`update\`,
+                CONCAT('Integratie aangepast: ', i.name) AS \`update\`,
                 'updated' AS status
             FROM integrations AS i
             WHERE i.id IN (
@@ -75,7 +75,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 p.created_at AS createdAt,
-                CONCAT('Password record created') AS \`update\`,
+                CONCAT('Wachtwoord aangemaakt') AS \`update\`,
                 'created' AS status
             FROM passwords AS p
             WHERE p.company_id = ?
@@ -84,7 +84,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 rs.updated_at AS createdAt,
-                CONCAT('Reply style updated: ', rs.name) AS \`update\`,
+                CONCAT('Reactie stijl aangepast: ', rs.name) AS \`update\`,
                 'updated' AS status
             FROM reply_styles AS rs
             WHERE rs.company_id = ?
@@ -93,7 +93,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 vs.created_at AS createdAt,
-                CONCAT('Voice settings created') AS \`update\`,
+                CONCAT('Stem instellingen aangemaakt') AS \`update\`,
                 'created' AS status
             FROM voice_settings AS vs
             WHERE vs.company_id = ?
@@ -102,7 +102,7 @@ export class UpdateRepository extends BaseRepository implements IUpdateRepositor
 
             SELECT
                 vs.updated_at AS createdAt,
-                CONCAT('Voice settings updated') AS \`update\`,
+                CONCAT('Stem instellingen aangepast') AS \`update\`,
                 'updated' AS status
             FROM voice_settings AS vs
             WHERE vs.company_id = ?

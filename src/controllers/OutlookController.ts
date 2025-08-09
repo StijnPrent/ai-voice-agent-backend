@@ -1,25 +1,26 @@
-// src/controllers/GoogleCalendarController.ts
+
+// src/controllers/OutlookController.ts
 
 import { Request, Response } from "express";
 import {injectable, inject, container} from "tsyringe";
-import { GoogleService } from "../business/services/GoogleService";
-import { calendar_v3 } from "googleapis";
+import { OutlookService } from "../business/services/OutlookService";
 
 @injectable()
-export class GoogleController {
+export class OutlookController {
 
     /**
-     * Step 1: Redirect user to Google OAuth consent screen
-     * GET /api/oauth2/google/url?companyId=<64-char-id>
+     * Step 1: Redirect user to Outlook OAuth consent screen
+     * GET /api/oauth2/outlook/url?companyId=<64-char-id>
      */
     async getAuthUrl(req: Request, res: Response): Promise<void> {
-        const service = container.resolve(GoogleService);
+        const service = container.resolve(OutlookService);
         const companyId = req.query.companyId as string;
         if (!companyId) {
             res.status(400).send("Missing companyId");
         }
+
         try {
-            const url = service.getAuthUrl(companyId);
+            const url = await service.getAuthUrl(companyId);
             res.json({ url });
         } catch (err) {
             console.error("❌ getAuthUrl failed:", err);
@@ -28,24 +29,21 @@ export class GoogleController {
     }
 
     /**
-     * Step 2: Handle Google OAuth callback
-     * GET /api/oauth2/google/callback?code=...&state=<companyId>
+     * Step 2: Handle Outlook OAuth callback
+     * GET /api/oauth2/outlook/callback?code=...&state=<companyId>
      */
     async handleCallback(req: Request, res: Response): Promise<void> {
-        const service = container.resolve(GoogleService);
+        const service = container.resolve(OutlookService);
         const code = req.query.code as string;
         const companyId = req.query.state as string;
-        const frontendUrl = process.env.FRONTEND_URL;
-
+        const frontendurl = process.env.FRONTEND_URL;
         if (!code || !companyId) {
             res.status(400).send("Missing code or state");
-            return;
         }
 
         try {
             await service.connect(BigInt(companyId), code);
-            // Redirect to frontend
-            res.redirect(`${frontendUrl}/?tab=integrations`);
+            res.send(`${frontendurl}/integrations?success=true&provider=outlook`);
         } catch (err) {
             console.error("❌ handleCallback failed:", err);
             res.status(500).send("Error handling OAuth callback");
@@ -54,12 +52,12 @@ export class GoogleController {
 
     /**
      * Step 3: Schedule a new event
-     * POST /api/schedule/google
-     * Body: { companyId: string; event: calendar_v3.Schema$Event }
+     * POST /api/schedule/outlook
+     * Body: { companyId: string; event: any }
      */
     async scheduleEvent(req: Request, res: Response): Promise<void> {
-        const service = container.resolve(GoogleService);
-        const { companyId, event } = req.body as { companyId: bigint; event: calendar_v3.Schema$Event };
+        const service = container.resolve(OutlookService);
+        const { companyId, event } = req.body as { companyId: bigint; event: any };
         if (!companyId || !event) {
             res.status(400).send("Missing companyId or event");
         }
@@ -70,22 +68,6 @@ export class GoogleController {
         } catch (err) {
             console.error("❌ scheduleEvent failed:", err);
             res.status(500).send("Error scheduling event");
-        }
-    }
-
-    async disconnect(req: Request, res: Response): Promise<void> {
-        const service = container.resolve(GoogleService);
-        const companyId = (req as any).companyId;
-        if (!companyId) {
-            res.status(400).send("Missing companyId");
-        }
-
-        try {
-            await service.disconnect(companyId);
-            res.status(200).send("Google integration disconnected");
-        } catch (err) {
-            console.error("❌ disconnect failed:", err);
-            res.status(500).send("Error disconnecting Google integration");
         }
     }
 }

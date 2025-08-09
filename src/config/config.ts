@@ -28,6 +28,12 @@ interface Config {
     googleClientId?: string;
     googleClientSecret?: string;
 
+    // Outlook OAuth
+    outlookRedirectUri: string;
+    outlookClientId?: string;
+    outlookClientSecret?: string;
+    outlookTenantId?: string;
+
     // Database
     dbHost: string;
     dbUser: string;
@@ -70,6 +76,12 @@ const config: Config = {
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
 
+    //redirect URI for Outlook OAuth
+    outlookRedirectUri: process.env.OUTLOOK_REDIRECT_URI || "http://localhost:3000",
+    outlookClientId: process.env.OUTLOOK_CLIENT_ID,
+    outlookClientSecret: process.env.OUTLOOK_CLIENT_SECRET,
+    outlookTenantId: process.env.OUTLOOK_TENANT_ID,
+
     dbHost: process.env.DB_HOST || "localhost",
     dbUser: process.env.DB_USER || "root",
     dbPassword: process.env.DB_PASSWORD || "",
@@ -92,6 +104,7 @@ if (!config.elevenLabsKey) throw new Error("❌ Missing ELEVENLABS_API_KEY in .e
 if (!config.elevenLabsVoiceId) throw new Error("❌ Missing ELEVENLABS_VOICE_ID in .env");
 if (!config.twilioSid || !config.twilioAuth) throw new Error("❌ Missing Twilio credentials in .env");
 if (!config.googleRedirectUri) throw new Error("❌ Missing GOOGLE_REDIRECT_URI in .env");
+if (!config.outlookRedirectUri) throw new Error("❌ Missing OUTLOOK_REDIRECT_URI in .env");
 if (!config.jwtSecret) throw new Error("❌ Missing JWT_SECRET in .env");
 if (!config.masterKey) throw new Error("❌ Missing MASTER_KEY in .env");
 

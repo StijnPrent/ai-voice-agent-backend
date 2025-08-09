@@ -1,12 +1,18 @@
 export class CompanyInfoModel {
-    private _id: number;
-    private _value: string;
-    private _createdAt: Date;
 
-    constructor(id: number, value: string, createdAt: Date) {
-        this._id = id;
-        this._value = value;
-        this._createdAt = createdAt;
+    constructor(
+        private _id: number,
+        private _value: string,
+        private _createdAt: Date
+    ) {
+    }
+
+    public toJSON(): Record<string, any> {
+        return {
+            id: this.id,
+            value: this.value,
+            createdAt: this.createdAt.toISOString(),
+        };
     }
 
     get id(): number {
