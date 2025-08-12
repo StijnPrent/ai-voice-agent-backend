@@ -101,7 +101,7 @@ export class VoiceService {
         }, USER_SILENCE_TIMEOUT_MS);
     }
 
-    private processBufferedTranscript() {
+    private async processBufferedTranscript() {
         if (!this.transcriptBuffer.trim()) {
             this.transcriptBuffer = "";
             return;
@@ -111,11 +111,11 @@ export class VoiceService {
         this.transcriptBuffer = "";
         console.log(`[${this.callSid}] Processing final transcript:`, finalTranscript);
 
-        this.chatGptClient.start(
+        await this.chatGptClient.start(
             Readable.from([finalTranscript]),
-            (sentence: string) => {
+            async (sentence: string) => {
                 console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
-                this.speak(sentence);
+                await this.speak(sentence);
             }
         ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
     }
