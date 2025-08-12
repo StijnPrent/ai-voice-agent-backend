@@ -28,7 +28,7 @@ export class DeepgramClient {
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
-            endpointing: 300,
+            endpointing: 800,
         });
 
         // Wacht tot de verbinding daadwerkelijk open is
