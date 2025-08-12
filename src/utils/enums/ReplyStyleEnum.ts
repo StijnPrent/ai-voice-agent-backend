@@ -1,6 +1,6 @@
 export enum ReplyStyleEnum {
-    Professional = "professional",
-    Casual       = "casual",
+    Professional = "professioneel",
+    Casual       = "informeel",
     Empathetic   = "empathetic",
-    Humorous     = "humorous",
+    Humorous     = "humoristisch",
 }
