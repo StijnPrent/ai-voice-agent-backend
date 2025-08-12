@@ -138,8 +138,7 @@ export class ChatGPTClient {
         prompt += `
         PRAATSTIJL:
         - Klink menselijk en ontspannen. Gebruik af en toe korte fillers zoals "hmm", "even kijken", "goed om te weten" (spaarzaam).
-        - Gebruik korte zinnen, wissel ritme, vermijd lange opsommingen.
-        - Markeer pauzes met [[pause:300]] of [[pause:600]] (max 1–2 per alinea).
+        - Gebruik korte zinnen, wissel ritme, vermijd lange opsommingen. maak zinnen zo kort mogelijk.
         - Geen overdaad aan toneelbeschrijvingen; houd het subtiel.\n
         `;
 
