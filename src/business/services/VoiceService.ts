@@ -50,7 +50,7 @@ export class VoiceService {
         const company = await this.companyService.findByTwilioNumber(to);
         this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
         const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
-        const companyInfo = await this.companyService.getCompanyInfo(company.id);
+        const companyContext = await this.companyService.getCompanyContext(company.id);
         const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
 
         console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
@@ -80,9 +80,9 @@ export class VoiceService {
 
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyInfo);
+            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
-            this.speak(this.voiceSettings.welcomePhrase);
+            await this.speak(this.voiceSettings.welcomePhrase);
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();
@@ -120,7 +120,7 @@ export class VoiceService {
         ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
     }
 
-    private speak(text: string) {
+    private async speak(text: string) {
         if (!this.voiceSettings) {
             console.error(`[${this.callSid}] Attempted to speak without voice settings.`);
             return;
@@ -156,7 +156,7 @@ export class VoiceService {
             this.isAssistantSpeaking = false;
         };
 
-        this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
+        await this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
     }
 
     public sendAudio(payload: string) {

@@ -201,4 +201,20 @@ export class CompanyService {
     public async deleteCompanyHour(hourId: number): Promise<void> {
         await this.companyRepo.deleteCompanyHour(hourId);
     }
+
+    public async getCompanyContext(companyId: bigint) {
+        const [details, contact, hours, info] = await Promise.all([
+            this.getCompanyDetails(companyId),
+            this.getCompanyContact(companyId),
+            this.getCompanyHours(companyId),
+            this.getCompanyInfo(companyId),
+        ]);
+
+        return {
+            details,
+            contact,
+            hours,
+            info,
+        };
+    }
 }

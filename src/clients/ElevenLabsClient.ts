@@ -1,6 +1,7 @@
 // src/clients/ElevenLabsClient.ts
 import WebSocket from "ws";
 import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
+import { SpeechFormatter } from "../utils/tts/SpeechFormatter";
 
 export class ElevenLabsClient {
     private readonly apiKey = process.env.ELEVENLABS_API_KEY!;
@@ -19,20 +20,35 @@ export class ElevenLabsClient {
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
         let streamStarted = false;
 
-        this.ws.on("open", () => {
+        this.ws.on("open", async () => {
             if (this.ws?.readyState === WebSocket.OPEN) {
-                // Send the initial configuration with voice settings.
                 this.ws.send(JSON.stringify({
                     voice_settings: {
-                        stability: 0.5,
+                        stability: 0.35,
                         similarity_boost: 0.8,
                         speed: settings.talkingSpeed
-                    },
-                    text: text // Send the text directly in the first message.
+                    }
                 }));
 
-                // Send an empty string to signal the end of the text stream.
-                this.ws.send(JSON.stringify({ text: "" }));
+                const textChunks = SpeechFormatter.format(text);
+
+                for (const chunk of textChunks) {
+                    if (this.ws?.readyState !== WebSocket.OPEN) break;
+
+                    if (chunk.startsWith('<silence_m_s_')) {
+                        const duration = parseInt(chunk.split('_')[3].replace('>', ''));
+                        await new Promise(resolve => setTimeout(resolve, duration));
+                    } else {
+                        this.ws.send(JSON.stringify({
+                            text: chunk + " ",
+                            try_trigger_generation: true
+                        }));
+                    }
+                }
+
+                if (this.ws?.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ text: "" }));
+                }
             }
         });
 
