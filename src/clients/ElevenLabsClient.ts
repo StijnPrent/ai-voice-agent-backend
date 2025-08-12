@@ -1,92 +1,67 @@
 // src/clients/ElevenLabsClient.ts
 import WebSocket from "ws";
 import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
-import { SpeechFormatter } from "../utils/tts/SpeechFormatter";
 
 export class ElevenLabsClient {
     private readonly apiKey = process.env.ELEVENLABS_API_KEY!;
     private ws: WebSocket | null = null;
 
-    public async speak(
+    public speak(
         text: string,
         settings: VoiceSettingModel,
         onStreamStart: () => void,
         onAudio: (audio: string) => void,
         onClose: () => void
-    ): Promise<void> {
-        return new Promise((resolve, reject) => {
-            this.stop(); // Stop any previous stream
+    ) {
+        this.stop(); // Stop any previous stream
 
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${settings.voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
-            this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
-            let streamStarted = false;
+        const url = `wss://api.elevenlabs.io/v1/text-to-speech/${settings.voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
+        this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
+        let streamStarted = false;
 
-            this.ws.on("open", async () => {
-                try {
-                    if (this.ws?.readyState !== WebSocket.OPEN) return;
+        this.ws.on("open", () => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                // Send the initial configuration with voice settings.
+                this.ws.send(JSON.stringify({
+                    voice_settings: {
+                        stability: 0.35,
+                        similarity_boost: 0.8,
+                        speed: settings.talkingSpeed
+                    },
+                    text: text // Send the text directly in the first message.
+                }));
 
-                    this.ws.send(JSON.stringify({
-                        voice_settings: {
-                            stability: 0.35,
-                            similarity_boost: 0.8,
-                            speed: settings.talkingSpeed
-                        }
-                    }));
+                // Send an empty string to signal the end of the text stream.
+                this.ws.send(JSON.stringify({ text: "" }));
+            }
+        });
 
-                    const textChunks = SpeechFormatter.format(text);
-
-                    for (const chunk of textChunks) {
-                        if (this.ws?.readyState !== WebSocket.OPEN) break;
-
-                        if (chunk.startsWith('<silence_m_s_')) {
-                            const duration = parseInt(chunk.split('_')[3].replace('>', ''));
-                            await new Promise(resolve => setTimeout(resolve, duration));
-                        } else {
-                            this.ws.send(JSON.stringify({
-                                text: chunk + " ",
-                                try_trigger_generation: true
-                            }));
-                        }
-                    }
-
-                    if (this.ws?.readyState === WebSocket.OPEN) {
-                        this.ws.send(JSON.stringify({ text: "" }));
-                    }
-                } catch (error) {
-                    console.error("[ElevenLabs] Error during open handler:", error);
-                    reject(error);
+        this.ws.on("message", (data) => {
+            const res = JSON.parse(data.toString());
+            if (res.audio) {
+                if (!streamStarted) {
+                    onStreamStart();
+                    streamStarted = true;
                 }
-            });
+                onAudio(res.audio);
+            }
+        });
 
-            this.ws.on("message", (data) => {
-                const res = JSON.parse(data.toString());
-                if (res.audio) {
-                    if (!streamStarted) {
-                        onStreamStart();
-                        streamStarted = true;
-                    }
-                    onAudio(res.audio);
-                }
-            });
+        this.ws.on("close", (code, reason) => {
+            if (code !== 1000 && code !== 1005) {
+                console.error(`[ElevenLabs] WS closed unexpectedly. code=${code}, reason=${reason.toString()}`);
+            }
+            this.ws = null;
+            onClose();
+        });
 
-            this.ws.on("close", (code, reason) => {
-                if (code !== 1000 && code !== 1005) {
-                    console.error(`[ElevenLabs] WS closed unexpectedly. code=${code}, reason=${reason.toString()}`);
-                }
-                this.ws = null;
-                onClose();
-                resolve();
-            });
-
-            this.ws.on("error", (err) => {
-                console.error("[ElevenLabs] Connection error:", err);
-                if (this.ws) {
-                    this.ws.close(1011);
-                }
-                this.ws = null;
-                onClose();
-                reject(err);
-            });
+        this.ws.on("error", (err) => {
+            console.error("[ElevenLabs] Connection error:", err);
+            if (this.ws) {
+                this.ws.close(1011); // Internal error
+            }
+            this.ws = null;
+            onClose();
         });
     }
 
