@@ -70,7 +70,6 @@ export class ChatGPTClient {
                 const response = await this.openai.chat.completions.create({
                     model: "gpt-5-mini",
                     messages: this.messages,
-                    max_tokens: 150,
                     temperature: 0.7,
                     tools: this.getTools(),
                     tool_choice: "auto",
