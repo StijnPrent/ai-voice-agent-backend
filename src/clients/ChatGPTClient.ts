@@ -11,6 +11,7 @@ import {CompanyInfoModel} from "../business/models/CompanyInfoModel";
 import {CompanyDetailsModel} from "../business/models/CompanyDetailsModel";
 import {CompanyHourModel} from "../business/models/CompanyHourModel";
 import {CompanyContactModel} from "../business/models/CompanyContactModel";
+import {summarizeSlots} from "../utils/tts/SummerizeSlots";
 
 type CompanyContext = {
     details: CompanyDetailsModel | null;

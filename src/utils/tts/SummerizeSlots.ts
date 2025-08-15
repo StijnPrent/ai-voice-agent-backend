@@ -1,4 +1,4 @@
-function summarizeSlots(slots: string[], openHour: number, closeHour: number): string {
+export function summarizeSlots(slots: string[], openHour: number, closeHour: number): string {
     const totalSlots = ((closeHour - openHour) * 60) / 30; // totaal aantal 30-min slots
     const openSlots = slots.length;
 
