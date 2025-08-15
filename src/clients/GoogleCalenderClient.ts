@@ -48,19 +48,7 @@ export class GoogleCalendarClient {
 
     async createEvent(model: GoogleIntegrationModel, redirectUri: string, event: calendar_v3.Schema$Event) {
         console.log('Afspraak toevoegen');
-        const credentials = {
-            clientId: model.clientId,
-            clientSecret: model.clientSecret,
-            redirectUri: redirectUri,
-        };
-        const oauth2Client = this.getOauth2Client(credentials);
-        oauth2Client.setCredentials({
-            access_token: model.accessToken,
-            refresh_token: model.refreshToken,
-            scope: model.scope,
-            token_type: model.tokenType,
-            expiry_date: model.expiryDate,
-        });
+        const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({
             version: "v3",
             auth: oauth2Client,
@@ -68,6 +56,39 @@ export class GoogleCalendarClient {
         return calendar.events.insert({
             calendarId: "primary",
             requestBody: event,
+        });
+    }
+
+    async getFreeBusy(model: GoogleIntegrationModel, redirectUri: string, timeMin: string, timeMax: string) {
+        const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
+        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        return calendar.freebusy.query({
+            requestBody: {
+                timeMin,
+                timeMax,
+                items: [{ id: "primary" }],
+            },
+        });
+    }
+
+    async listEvents(model: GoogleIntegrationModel, redirectUri: string, timeMin: string, q: string) {
+        const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
+        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        return calendar.events.list({
+            calendarId: "primary",
+            timeMin,
+            q,
+            singleEvents: true,
+            orderBy: "startTime",
+        });
+    }
+
+    async deleteEvent(model: GoogleIntegrationModel, redirectUri: string, eventId: string) {
+        const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
+        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        return calendar.events.delete({
+            calendarId: "primary",
+            eventId,
         });
     }
 
@@ -88,5 +109,22 @@ export class GoogleCalendarClient {
         const res = await oauth2Client.refreshAccessToken();
         const newTokens = res.credentials as GoogleTokens;
         return newTokens;
+    }
+
+    private getAuthenticatedClient(model: GoogleIntegrationModel, redirectUri: string): OAuth2Client {
+        const credentials = {
+            clientId: model.clientId,
+            clientSecret: model.clientSecret,
+            redirectUri: redirectUri,
+        };
+        const oauth2Client = this.getOauth2Client(credentials);
+        oauth2Client.setCredentials({
+            access_token: model.accessToken,
+            refresh_token: model.refreshToken,
+            scope: model.scope,
+            token_type: model.tokenType,
+            expiry_date: model.expiryDate,
+        });
+        return oauth2Client;
     }
 }

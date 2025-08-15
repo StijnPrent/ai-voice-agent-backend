@@ -68,7 +68,7 @@ export class ChatGPTClient {
 
             try {
                 const response = await this.openai.chat.completions.create({
-                    model: "gpt-5-mini",
+                    model: "gpt-4o",
                     messages: this.messages,
                     temperature: 1,
                     tools: this.getTools(),
@@ -82,29 +82,51 @@ export class ChatGPTClient {
                     for (const toolCall of responseMessage.tool_calls) {
                         const functionName = toolCall.function.name;
                         const functionArgs = JSON.parse(toolCall.function.arguments);
+                        let toolResponse;
 
                         if (functionName === 'create_calendar_event') {
                             console.log(`[ChatGPT] Tool call: create_calendar_event with args:`, functionArgs);
-                            const {summary, location, description, start, end} = functionArgs;
+                            const {summary, location, description, start, end, name, dateOfBirth} = functionArgs;
                             const event = {
                                 summary,
                                 location,
-                                description,
+                                description: `Appointment for ${name} (DOB: ${dateOfBirth}). ${description}`,
                                 start: {dateTime: start, timeZone: 'Europe/Amsterdam'},
                                 end: {dateTime: end, timeZone: 'Europe/Amsterdam'}
                             };
 
                             await this.googleService.scheduleEvent(this.company!.id, event);
+                            toolResponse = {success: true, event_summary: summary};
+                            onTextGenerated(`Oké, de afspraak voor '${summary}' is ingepland. Kan ik nog iets anders voor je doen?`);
 
-                            const confirmation = `Oké, de afspraak voor '${summary}' is ingepland. Kan ik nog iets anders voor je doen?`;
-                            onTextGenerated(confirmation);
+                        } else if (functionName === 'check_calendar_availability') {
+                            console.log(`[ChatGPT] Tool call: check_calendar_availability with args:`, functionArgs);
+                            const {date} = functionArgs;
+                            const availableSlots = await this.googleService.getAvailableSlots(this.company!.id, date);
+                            toolResponse = {availableSlots};
+                            if (availableSlots.length > 0) {
+                                onTextGenerated(`Ik heb de volgende tijden beschikbaar op ${date}: ${availableSlots.join(', ')}. Welke tijd schikt u?`);
+                            } else {
+                                onTextGenerated(`Sorry, er zijn geen beschikbare tijden op ${date}. Wilt u een andere datum proberen?`);
+                            }
 
-                            this.messages.push({
-                                tool_call_id: toolCall.id,
-                                role: "tool",
-                                content: JSON.stringify({success: true, event_summary: summary}),
-                            });
+                        } else if (functionName === 'cancel_calendar_event') {
+                            console.log(`[ChatGPT] Tool call: cancel_calendar_event with args:`, functionArgs);
+                            const {name, dateOfBirth, date} = functionArgs;
+                            const success = await this.googleService.cancelEvent(this.company!.id, name, dateOfBirth, date);
+                            toolResponse = {success};
+                            if (success) {
+                                onTextGenerated(`Oké, ik heb de afspraak voor ${name} op ${date} geannuleerd. Is er nog iets anders dat ik voor u kan doen?`);
+                            } else {
+                                onTextGenerated(`Sorry, ik kon geen afspraak vinden voor ${name} met de geboortedatum ${dateOfBirth} op ${date}. Controleer de gegevens en probeer het opnieuw.`);
+                            }
                         }
+
+                        this.messages.push({
+                            tool_call_id: toolCall.id,
+                            role: "tool",
+                            content: JSON.stringify(toolResponse),
+                        });
                     }
                 } else {
                     const fullResponse = responseMessage.content || "";
@@ -134,13 +156,7 @@ export class ChatGPTClient {
 
         const {details, contact, hours, info} = this.companyContext;
 
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n\n`;
-        prompt += `
-        PRAATSTIJL:
-        - Klink menselijk en ontspannen. Gebruik af en toe korte fillers zoals "hmm", "even kijken", "goed om te weten" (spaarzaam).
-        - Gebruik korte zinnen, wissel ritme, vermijd lange opsommingen. maak zinnen zo kort mogelijk.
-        - Geen overdaad aan toneelbeschrijvingen; houd het subtiel.\n
-        `;
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n je praat zo mensenlijk mogelijk\n`;
 
 
         prompt += "Hier is wat informatie over het bedrijf:\n";
@@ -182,7 +198,7 @@ export class ChatGPTClient {
         prompt += "\n";
 
         if (this.hasGoogleIntegration) {
-            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik ALTIJD de 'create_calendar_event' tool om afspraken in te plannen wanneer een gebruiker hierom vraagt. Vraag altijd om de benodigde informatie zoals datum en tijd, en vraag om een expliciete bevestiging voordat je de afspraak definitief inplant.";
+            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik ALTIJD de 'check_calendar_availability' tool om te controleren op beschikbare tijden voordat je een afspraak voorstelt. Vraag de gebruiker om hun volledige naam en geboortedatum voor je de afspraak inplant met 'create_calendar_event'. Deze gegevens zijn nodig om de afspraak later te kunnen annuleren met 'cancel_calendar_event'. Vraag altijd om een expliciete bevestiging voordat je de afspraak definitief inplant.";
         } else {
             prompt += "BELANGRIJKE INSTRUCTIE: Je hebt GEEN toegang tot de agenda. Als een gebruiker een afspraak wil maken, informeer hen dan dat je dit niet automatisch kunt doen. Bied aan om een notitie achter te laten voor het team of om de gebruiker door te verbinden met een medewerker.";
         }
@@ -200,7 +216,7 @@ export class ChatGPTClient {
                 type: "function",
                 function: {
                     name: "create_calendar_event",
-                    description: "Maak een nieuw evenement aan in de Google Agenda van het bedrijf. Vraag altijd om de datum en tijd.",
+                    description: "Maak een nieuw evenement aan in de Google Agenda. Vraag altijd eerst naar de naam en geboortedatum van de klant.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -209,14 +225,49 @@ export class ChatGPTClient {
                             description: {type: "string", description: "Een beschrijving van de afspraak"},
                             start: {
                                 type: "string",
-                                description: "De starttijd van de afspraak in ISO 8601 formaat (e.g., 2025-07-21T10:00:00)"
+                                description: "De starttijd in ISO 8601 formaat (e.g., 2025-07-21T10:00:00)"
                             },
                             end: {
                                 type: "string",
-                                description: "De eindtijd van de afspraak in ISO 8601 formaat (e.g., 2025-07-21T11:00:00)"
+                                description: "De eindtijd in ISO 8601 formaat (e.g., 2025-07-21T11:00:00)"
+                            },
+                            name: {type: "string", description: "De volledige naam van de klant"},
+                            dateOfBirth: {type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)"}
+                        },
+                        required: ["summary", "start", "end", "name", "dateOfBirth"],
+                    },
+                },
+            },
+            {
+                type: "function",
+                function: {
+                    name: "check_calendar_availability",
+                    description: "Controleer de beschikbaarheid in de agenda voor een specifieke datum.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            date: {
+                                type: "string",
+                                description: "De datum om te controleren in YYYY-MM-DD formaat"
                             },
                         },
-                        required: ["summary", "start", "end"],
+                        required: ["date"],
+                    },
+                },
+            },
+            {
+                type: "function",
+                function: {
+                    name: "cancel_calendar_event",
+                    description: "Annuleer een afspraak op basis van naam, geboortedatum en de datum van de afspraak.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            name: {type: "string", description: "De volledige naam van de klant"},
+                            dateOfBirth: {type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)"},
+                            date: {type: "string", description: "De datum van de afspraak in YYYY-MM-DD formaat"}
+                        },
+                        required: ["name", "dateOfBirth", "date"],
                     },
                 },
             },
