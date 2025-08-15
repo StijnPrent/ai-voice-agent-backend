@@ -34,7 +34,7 @@ export class GoogleCalendarClient {
     getAuthUrl(credentials: GoogleAppCredentials, companyId: string): string {
         return this.getOauth2Client(credentials).generateAuthUrl({
             access_type: "offline",
-            scope: ["https://www.googleapis.com/auth/calendar.events"],
+            scope: ["https://www.googleapis.com/auth/calendar"],
             prompt: "consent",
             state: companyId.toString(),
         });

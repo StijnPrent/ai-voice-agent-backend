@@ -156,7 +156,12 @@ export class ChatGPTClient {
 
         const {details, contact, hours, info} = this.companyContext;
 
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n je praat zo mensenlijk mogelijk\n`;
+        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}\n je praat zo mensenlijk mogelijk\n het is vandaag ${new Date().toLocaleDateString('nl-NL', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        })}\n\n`;
 
 
         prompt += "Hier is wat informatie over het bedrijf:\n";
