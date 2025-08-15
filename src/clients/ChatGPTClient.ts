@@ -93,7 +93,9 @@ export class ChatGPTClient {
                                 location,
                                 description: `Appointment for ${name} (DOB: ${dateOfBirth}). ${description}`,
                                 start: {dateTime: start, timeZone: 'Europe/Amsterdam'},
-                                end: {dateTime: end, timeZone: 'Europe/Amsterdam'}
+                                end: {dateTime: end, timeZone: 'Europe/Amsterdam'},
+                                transparency: "opaque",
+                                status: "confirmed",
                             };
 
                             await this.googleService.scheduleEvent(this.company!.id, event);
@@ -238,7 +240,7 @@ export class ChatGPTClient {
                 type: "function",
                 function: {
                     name: "create_calendar_event",
-                    description: "Maak een nieuw evenement aan in de Google Agenda. Vraag altijd eerst naar de naam en geboortedatum van de klant.",
+                    description: "Maak een nieuw evenement aan in de Google Agenda. Vraag eerst naar de datum en tijd en als er een datum en tijd en vastgesteld vraag dan naar de naam en geboortedatum van de klant.",
                     parameters: {
                         type: "object",
                         properties: {

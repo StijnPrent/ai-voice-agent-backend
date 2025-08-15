@@ -28,7 +28,7 @@ export class DeepgramClient {
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
-            endpointing: 500,          // iets langer wachten op stilte
+            endpointing: 800,          // iets langer wachten op stilte
             // vad_events: true,        // zet aan als je UtteranceEnd events wilt (afhankelijk van SDK-versie)
         });
 
