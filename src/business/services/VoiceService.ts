@@ -101,7 +101,9 @@ export class VoiceService {
             console.log(`[${this.callSid}] Deepgram client initialized.`);
 
             // One-shot welcome phrase (kept as before)
+            console.log("[VoiceService] speak() starting welcome");
             await this.speak(this.voiceSettings.welcomePhrase);
+            console.log("[VoiceService] speak() finished welcome");
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
             this.stopStreaming();

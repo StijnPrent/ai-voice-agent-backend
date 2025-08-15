@@ -63,49 +63,56 @@ export class ChatGPTClient {
         this.messages = [sys, ...rest.slice(-MAX_TURNS * 2)];
     }
 
-    async start(inputStream: Readable, onTextGenerated: (text: string) => void): Promise<void> {
+    // src/clients/ChatGPTClient.ts
+    async start(
+        inputStream: Readable,
+        onTextGenerated: (text: string) => void,
+        onDone?: () => void // <— NEW: fires when the model finishes (success or error)
+    ): Promise<void> {
         inputStream.on("data", async (chunk) => {
             const transcript = chunk.toString();
             if (!transcript.trim()) return;
 
             console.log(`[ChatGPT] Received transcript: ${transcript}`);
             this.messages.push({ role: "user", content: transcript });
-            this.trimHistory(); // keep convo small for latency
+            this.trimHistory?.(); // if you added the helper; else remove this line
 
             try {
-                // ---- Gate tools behind a lightweight intent check ----
-                // Only include tools when the user likely wants calendar actions
+                // Gate tools (keeps latency low on non-calendar turns)
                 const intentRegex = /\b(afspraak|plannen|reserveren|inplannen|agenda|kalender|verzetten|annuleren|afzeggen)\b/i;
                 const useTools = this.hasGoogleIntegration && intentRegex.test(transcript);
 
-                // IMPORTANT: stream tokens
                 const stream = await this.openai.chat.completions.create({
                     model: "gpt-4o-mini",
                     messages: this.messages,
-                    temperature: 0.6, // a tad lower: faster, more decisive answers
+                    temperature: 0.6,
                     stream: true,
                     ...(useTools ? { tools: this.getTools(), tool_choice: "auto" } : {}),
                 });
 
                 let fullText = "";
-                let toolCallsBuffer: any[] = []; // collect streamed tool call deltas
+                let toolCallsBuffer: Array<{ id?: string; function: { name?: string; arguments?: string } }> = [];
                 let sawToolCalls = false;
+                let loggedFirstToken = false;
 
-                for await (const chunk of stream) {
-                    const choice = chunk.choices?.[0];
+                for await (const s of stream) {
+                    const choice = s.choices?.[0];
 
-                    // 1) Stream normal text deltas ASAP
+                    // stream content
                     const deltaText = choice?.delta?.content;
                     if (deltaText) {
+                        if (!loggedFirstToken) {
+                            console.log("[ChatGPT] streaming started…");
+                            loggedFirstToken = true;
+                        }
                         fullText += deltaText;
-                        onTextGenerated(deltaText); // low-latency: speak as it arrives
+                        onTextGenerated(deltaText);
                     }
 
-                    // 2) Collect streamed tool calls, if any
+                    // stream tool calls
                     const deltaTools = choice?.delta?.tool_calls;
                     if (deltaTools && deltaTools.length > 0) {
                         sawToolCalls = true;
-                        // merge tool deltas into a buffer (by index) so we reconstruct JSON args
                         deltaTools.forEach((dt: any) => {
                             const idx = dt.index;
                             if (!toolCallsBuffer[idx]) {
@@ -119,27 +126,27 @@ export class ChatGPTClient {
                         });
                     }
 
-                    // 3) When finish_reason is "tool_calls" or "stop", the first stream is done
                     const finish = choice?.finish_reason;
                     if (finish === "tool_calls" || finish === "stop") break;
                 }
 
                 if (sawToolCalls) {
-                    // We streamed up to tool invocation. Execute tools, then follow up.
-                    const toolMessage = {
-                        role: "assistant" as const,
-                        content: fullText || "",
+                    // Build a typed assistant message with tool_calls
+                    const toolMessage: ChatCompletionMessageParam = {
+                        role: "assistant",
+                        content: fullText || null,
                         tool_calls: toolCallsBuffer.map((t, i) => ({
                             id: t.id || `call_${i}`,
                             type: "function",
                             function: {
-                                name: t.function.name,
-                                arguments: t.function.arguments,
+                                name: (t.function.name || "").toString(),
+                                arguments: (t.function.arguments || "").toString(),
                             },
                         })),
                     };
-                    this.messages.push(toolMessage as any);
+                    this.messages.push(toolMessage);
 
+                    // Execute tools
                     for (const tc of toolMessage.tool_calls!) {
                         const fn = tc.function.name;
                         const args = JSON.parse(tc.function.arguments || "{}");
@@ -214,7 +221,7 @@ export class ChatGPTClient {
                         });
                     }
 
-                    // Follow-up completion after tools (non-streamed to keep code simple)
+                    // Follow-up completion to produce the final message
                     const final = await this.openai.chat.completions.create({
                         model: "gpt-4o-mini",
                         messages: this.messages,
@@ -223,14 +230,20 @@ export class ChatGPTClient {
                     const finalMsg = final.choices[0].message.content || "";
                     if (finalMsg) onTextGenerated(finalMsg);
                     this.messages.push({ role: "assistant", content: finalMsg });
+                    console.log("[ChatGPT] finished (after tools)");
+
+                    onDone?.(); // <— signal VoiceService to end the TTS turn
 
                 } else {
-                    // No tool calls — we already streamed full text
+                    // No tools — we already streamed the whole text
                     this.messages.push({ role: "assistant", content: fullText });
+                    console.log("[ChatGPT] finished (stream only)");
+                    onDone?.(); // <— signal VoiceService
                 }
             } catch (err) {
                 console.error("[ChatGPT] Error:", err);
                 onTextGenerated("Sorry, er is iets misgegaan. Kunt u dat herhalen?");
+                onDone?.(); // <— make sure TTS closes even on error
             }
         });
 
