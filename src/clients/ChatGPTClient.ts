@@ -68,7 +68,7 @@ export class ChatGPTClient {
 
             try {
                 const response = await this.openai.chat.completions.create({
-                    model: "gpt-4o",
+                    model: "gpt-5-mini",
                     messages: this.messages,
                     temperature: 1,
                     tools: this.getTools(),
