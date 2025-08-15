@@ -138,7 +138,7 @@ export class ChatGPTClient {
                             },
                         })),
                     };
-                    this.messages.push(toolMessage);
+                    this.messages.push(toolMessage as any);
 
                     for (const tc of toolMessage.tool_calls!) {
                         const fn = tc.function.name;
