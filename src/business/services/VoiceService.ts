@@ -336,6 +336,7 @@ export class VoiceService {
         };
 
         const onAudio = (audioPayload: string) => {
+            console.log("[TW] write", { bytes: audioPayload.length });
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     event: "media",

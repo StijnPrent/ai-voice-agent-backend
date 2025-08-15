@@ -170,6 +170,8 @@ export class ElevenLabsClient {
 
     /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
+        console.log("[EL] sendText", JSON.stringify(text).slice(0,80));
+
         if (!text || !text.trim()) return;
 
         // Coalesce micro-chunks (LLM token dribble)
