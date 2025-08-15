@@ -7,6 +7,7 @@ export class ElevenLabsClient {
     private ws: WebSocket | null = null;
     private streamStarted = false;
     private pendingText: string[] = [];
+    private hasTriggered = false;
 
     // Build URL once; Twilio expects 8k u-law
     private urlFor(voiceId: string) {
@@ -104,6 +105,7 @@ export class ElevenLabsClient {
         // Close any previous stream first
         this.stop();
         this.pendingText = []; // reset
+        this.hasTriggered = false;
 
         const url = this.urlFor(settings.voiceId);
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
@@ -134,18 +136,17 @@ export class ElevenLabsClient {
 
         this.ws.on("message", (data) => {
             try {
-                const res = JSON.parse(data.toString());
-                if (res.audio) {
-                    if (!this.streamStarted) {
-                        onStreamStart();
-                        this.streamStarted = true;
-                    }
-                    onAudio(res.audio);
-                } else if (res?.error) {
-                    console.error("[ElevenLabs] beginStream(): server error:", res.error);
+                const j = JSON.parse(data.toString());
+                if (j.audio) {
+                    console.log("[EL] first audio frame"); // ← should appear once
+                    onAudio(j.audio);
+                } else if (j.error) {
+                    console.error("[EL] server error:", j.error);
+                } else {
+                    console.log("[EL] non-audio:", j);
                 }
-            } catch (e) {
-                console.error("[ElevenLabs] beginStream(): JSON parse error:", e);
+            } catch {
+                console.log("[EL] binary frame len", (data as Buffer).length);
             }
         });
 
@@ -169,21 +170,26 @@ export class ElevenLabsClient {
 
     /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
-        console.log("[EL] sendText", JSON.stringify(text).slice(0,80));
-        if (!text) return;
+        if (!text || !text.trim()) return;
+
+        // Coalesce micro-chunks (LLM token dribble)
+        const MAX_CHUNK = 400;           // smaller than before to reduce latency
+        const MIN_BATCH_TO_TRIGGER = 40; // ~one short word/syllable threshold
+
+        // queue if not open yet
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            this.pendingText.push(text); // queue until OPEN
+            this.pendingText.push(text);
             return;
         }
+
         try {
-            const MAX_CHUNK = 800;
-            if (text.length > MAX_CHUNK) {
-                for (let i = 0; i < text.length; i += MAX_CHUNK) {
-                    const slice = text.slice(i, i + MAX_CHUNK);
-                    this.ws.send(JSON.stringify({ text: slice }));
-                }
-            } else {
-                this.ws.send(JSON.stringify({ text }));
+            // Send the text chunk
+            this.ws.send(JSON.stringify({ text }));
+
+            // First real text? Nudge the server to start generating
+            if (!this.hasTriggered && text.trim().length >= MIN_BATCH_TO_TRIGGER) {
+                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
+                this.hasTriggered = true;
             }
         } catch (e) {
             console.error("[ElevenLabs] sendText() failed:", e);
@@ -194,7 +200,12 @@ export class ElevenLabsClient {
     public endStream() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         try {
-            // Empty text ends the stream per ElevenLabs docs
+            // Ensure a trigger before ending if we never hit it (very short replies)
+            if (!this.hasTriggered) {
+                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
+                this.hasTriggered = true;
+            }
+            // Empty text signals end
             this.ws.send(JSON.stringify({ text: "" }));
         } catch (e) {
             console.error("[ElevenLabs] endStream() failed:", e);
