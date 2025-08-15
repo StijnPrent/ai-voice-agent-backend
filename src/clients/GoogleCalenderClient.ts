@@ -61,6 +61,10 @@ export class GoogleCalendarClient {
 
     async getFreeBusy(model: GoogleIntegrationModel, redirectUri: string, timeMin: string, timeMax: string) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
+        const info = await oauth2Client.getTokenInfo(
+            (oauth2Client.credentials.access_token as string)
+        );
+        console.log("[GCal] token scopes =>", info.scopes);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
         return calendar.freebusy.query({
             requestBody: {
