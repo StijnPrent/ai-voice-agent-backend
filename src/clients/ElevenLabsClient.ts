@@ -169,6 +169,7 @@ export class ElevenLabsClient {
 
     /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
+        console.log("[EL] sendText", JSON.stringify(text).slice(0,80));
         if (!text) return;
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             this.pendingText.push(text); // queue until OPEN

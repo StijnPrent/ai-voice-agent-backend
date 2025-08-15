@@ -278,7 +278,7 @@ export class VoiceService {
         }
 
         // state === "open"
-        this.phraseStreamer.push(delta);
+        this.elevenLabsClient.sendText(delta);
         this.scheduleTTSEnd();
     }
 
