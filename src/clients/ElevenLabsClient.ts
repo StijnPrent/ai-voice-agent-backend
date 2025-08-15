@@ -8,6 +8,7 @@ export class ElevenLabsClient {
     private streamStarted = false;
     private pendingText: string[] = [];
     private hasTriggered = false;
+    private idleFlushTimer: NodeJS.Timeout | null = null;
 
     // Build URL once; Twilio expects 8k u-law
     private urlFor(voiceId: string) {
@@ -44,7 +45,9 @@ export class ElevenLabsClient {
                             similarity_boost: 0.8,
                             speed: settings.talkingSpeed,
                         },
-                        text, // <- send actual content in first message
+                        text,
+                        try_trigger_generation: true,
+                        flush: true
                     })
                 );
                 // End immediately for one-shot
@@ -120,14 +123,10 @@ export class ElevenLabsClient {
                         similarity_boost: 0.8,
                         speed: settings.talkingSpeed,
                     },
+                    generation_config: { optimize_streaming_latency: 2 }
                 }));
                 // flush any queued text
-                if (this.pendingText.length) {
-                    for (const t of this.pendingText) {
-                        this.ws.send(JSON.stringify({ text: t }));
-                    }
-                    this.pendingText = [];
-                }
+                if (this.pendingText.length) this.flushPending(true);
                 onReady && onReady();
             } catch (e) {
                 console.error("[ElevenLabs] beginStream(): initial config send failed:", e);
@@ -193,6 +192,7 @@ export class ElevenLabsClient {
                 this.ws.send(JSON.stringify({ try_trigger_generation: true }));
                 this.hasTriggered = true;
             }
+            this.armIdleFlush();
         } catch (e) {
             console.error("[ElevenLabs] sendText() failed:", e);
         }
@@ -202,26 +202,103 @@ export class ElevenLabsClient {
     public endStream() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         try {
-            // Ensure a trigger before ending if we never hit it (very short replies)
+            // ensure any remaining buffer is synthesized
             if (!this.hasTriggered) {
                 this.ws.send(JSON.stringify({ try_trigger_generation: true }));
                 this.hasTriggered = true;
             }
-            // Empty text signals end
+            this.ws.send(JSON.stringify({ flush: true }));
             this.ws.send(JSON.stringify({ text: "" }));
         } catch (e) {
             console.error("[ElevenLabs] endStream() failed:", e);
+        } finally {
+            this.clearIdleFlush();
         }
     }
 
     /** Force close (e.g., user interruption / call ended). */
     public stop() {
+        this.clearIdleFlush();
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-            console.log("[ElevenLabs] Stopping current speech stream.");
             try { this.ws.close(1000); } catch {}
         }
         this.ws = null;
         this.streamStarted = false;
         this.pendingText = [];
+        this.hasTriggered = false;
+    }
+
+    private flushPending(trigger = false) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        for (const t of this.pendingText) this.ws.send(JSON.stringify({ text: t }));
+        this.pendingText = [];
+        if (trigger && !this.hasTriggered) {
+            this.ws.send(JSON.stringify({ try_trigger_generation: true }));
+            this.hasTriggered = true;
+        }
+        this.armIdleFlush();
+    }
+
+    private armIdleFlush() {
+        this.clearIdleFlush();
+        // if no new text for 250ms, force synthesis of what we have
+        this.idleFlushTimer = setTimeout(() => {
+            try {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ flush: true }));
+                    if (!this.hasTriggered) {
+                        this.ws.send(JSON.stringify({ try_trigger_generation: true }));
+                        this.hasTriggered = true;
+                    }
+                }
+            } catch {}
+        }, 250);
+    }
+
+    private clearIdleFlush() {
+        if (this.idleFlushTimer) { clearTimeout(this.idleFlushTimer); this.idleFlushTimer = null; }
+    }
+
+    private attachCommonHandlers(
+        onStreamStart: () => void,
+        onAudio: (audioB64Ulaw: string) => void,
+        onClose: () => void
+    ) {
+        this.ws!.on("message", (data) => {
+            try {
+                const j = JSON.parse(data.toString());
+                if (j.audio) {
+                    if (!this.streamStarted) onStreamStart();
+                    this.streamStarted = true;
+                    onAudio(j.audio);
+                } else if (j?.error) {
+                    console.error("[ElevenLabs] server error:", j.error);
+                } else {
+                    // useful during debugging; harmless otherwise
+                    // console.log("[EL] non-audio:", j);
+                }
+            } catch {
+                // binary frames are already base64 in 'audio'; ignore
+            }
+        });
+
+        this.ws!.on("close", (code, reason) => {
+            if (code !== 1000 && code !== 1005) {
+                console.error("[ElevenLabs] WS closed", code, reason.toString());
+            }
+            this.clearIdleFlush();
+            this.ws = null;
+            this.streamStarted = false;
+            onClose();
+        });
+
+        this.ws!.on("error", (err) => {
+            console.error("[ElevenLabs] connection error:", err);
+            try { this.ws?.close(1011); } catch {}
+            this.clearIdleFlush();
+            this.ws = null;
+            this.streamStarted = false;
+            onClose();
+        });
     }
 }
