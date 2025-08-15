@@ -72,7 +72,7 @@ describe('WebSocketServer Call Flow', () => {
             start: { callSid: 'call123', streamSid: 'stream456' }
         };
         await messageCallback(JSON.stringify(startEvent));
-        expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(mockWs, 'call123', 'stream456', '+1234567890');
+        expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(mockWs, 'call123', 'stream456', '+18565020784');
 
         // 3. Simulate 'media' event from Twilio
         const mediaEvent = {

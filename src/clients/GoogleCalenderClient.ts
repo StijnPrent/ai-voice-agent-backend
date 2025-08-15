@@ -43,8 +43,20 @@ export class GoogleCalendarClient {
     async exchangeCode(credentials: GoogleAppCredentials, code: string): Promise<GoogleTokens> {
         const oauth2Client = this.getOauth2Client(credentials);
         const { tokens } = await oauth2Client.getToken(code);
+
+        const info = await oauth2Client.getTokenInfo(tokens.access_token!);
+        console.log("[OAuth] Granted scopes:", info.scopes);
+
+        const ok = info.scopes?.includes("https://www.googleapis.com/auth/calendar");
+        if (!ok) {
+            throw new Error(`Wrong scopes granted: ${info.scopes}. Expected calendar.`);
+        }
+        if (!tokens.refresh_token) {
+            throw new Error("No refresh_token returned. Revoke old grant & re-consent with prompt=consent, access_type=offline.");
+        }
         return tokens as GoogleTokens;
     }
+
 
     async createEvent(model: GoogleIntegrationModel, redirectUri: string, event: calendar_v3.Schema$Event) {
         console.log('Afspraak toevoegen');
