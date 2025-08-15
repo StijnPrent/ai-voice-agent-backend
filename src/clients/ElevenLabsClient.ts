@@ -1,3 +1,4 @@
+// src/clients/ElevenLabsClient.ts
 import WebSocket from "ws";
 import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
 
@@ -6,26 +7,91 @@ export class ElevenLabsClient {
     private ws: WebSocket | null = null;
     private streamStarted = false;
 
+    // Build URL once; Twilio expects 8k u-law
+    private urlFor(voiceId: string) {
+        return `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
+    }
+
     /**
-     * One-shot helper (kept for compatibility).
-     * For lowest latency, prefer beginStream/sendText/endStream.
+     * One-shot helper: sends the text *in the very first message*
+     * (voice_settings + text in the same payload), then a blank message to end.
+     * This mirrors your old behavior so the welcome line works reliably.
      */
     public speak(
         text: string,
         settings: VoiceSettingModel,
         onStreamStart: () => void,
-        onAudio: (audio: string) => void,
+        onAudio: (audioB64Ulaw: string) => void,
         onClose: () => void
     ) {
-        this.beginStream(settings, onStreamStart, onAudio, onClose, () => {
-            this.sendText(text);
-            this.endStream();
+        // Close any existing stream first
+        this.stop();
+
+        const url = this.urlFor(settings.voiceId);
+        this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
+        this.streamStarted = false;
+
+        this.ws.on("open", () => {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            // IMPORTANT: send voice_settings + initial text together
+            try {
+                this.ws.send(
+                    JSON.stringify({
+                        voice_settings: {
+                            stability: 0.35,
+                            similarity_boost: 0.8,
+                            speed: settings.talkingSpeed,
+                        },
+                        text, // <- send actual content in first message
+                    })
+                );
+                // End immediately for one-shot
+                this.ws.send(JSON.stringify({ text: "" }));
+            } catch (e) {
+                console.error("[ElevenLabs] speak(): initial send failed:", e);
+            }
+        });
+
+        this.ws.on("message", (data) => {
+            try {
+                const res = JSON.parse(data.toString());
+                // ElevenLabs may send non-audio events; we only forward audio
+                if (res.audio) {
+                    if (!this.streamStarted) {
+                        onStreamStart();
+                        this.streamStarted = true;
+                    }
+                    onAudio(res.audio); // base64 uLaw 8k audio
+                } else if (res?.error) {
+                    console.error("[ElevenLabs] speak(): server error:", res.error);
+                }
+            } catch (e) {
+                console.error("[ElevenLabs] speak(): JSON parse error:", e);
+            }
+        });
+
+        this.ws.on("close", (code, reason) => {
+            if (code !== 1000 && code !== 1005) {
+                console.error(`[ElevenLabs] speak(): WS closed unexpectedly code=${code} reason=${reason.toString()}`);
+            }
+            this.ws = null;
+            this.streamStarted = false;
+            onClose();
+        });
+
+        this.ws.on("error", (err) => {
+            console.error("[ElevenLabs] speak(): connection error:", err);
+            try { this.ws?.close(1011); } catch {}
+            this.ws = null;
+            this.streamStarted = false;
+            onClose();
         });
     }
 
     /**
-     * Open a stream-input session.
-     * When 'onReady' fires, you can call sendText() multiple times with partial text.
+     * Streaming session for LLM deltas.
+     * First message sends only voice_settings. Then call sendText() repeatedly.
+     * Finally call endStream() to signal completion.
      */
     public beginStream(
         settings: VoiceSettingModel,
@@ -34,27 +100,30 @@ export class ElevenLabsClient {
         onClose: () => void,
         onReady?: () => void
     ) {
-        this.stop(); // close any previous stream first
+        // Close any previous stream first
+        this.stop();
 
-        const url = `wss://api.elevenlabs.io/v1/text-to-speech/${settings.voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
+        const url = this.urlFor(settings.voiceId);
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
         this.streamStarted = false;
 
         this.ws.on("open", () => {
-            if (this.ws?.readyState !== WebSocket.OPEN) return;
-
-            // Initial config (no text yet). You can tweak settings here.
-            this.ws.send(
-                JSON.stringify({
-                    voice_settings: {
-                        stability: 0.35,
-                        similarity_boost: 0.8,
-                        speed: settings.talkingSpeed, // e.g. 1.0 = normal
-                    },
-                })
-            );
-
-            if (onReady) onReady();
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            try {
+                // Config only on open; text will come later via sendText()
+                this.ws.send(
+                    JSON.stringify({
+                        voice_settings: {
+                            stability: 0.35,
+                            similarity_boost: 0.8,
+                            speed: settings.talkingSpeed,
+                        },
+                    })
+                );
+                onReady && onReady();
+            } catch (e) {
+                console.error("[ElevenLabs] beginStream(): initial config send failed:", e);
+            }
         });
 
         this.ws.on("message", (data) => {
@@ -65,16 +134,18 @@ export class ElevenLabsClient {
                         onStreamStart();
                         this.streamStarted = true;
                     }
-                    onAudio(res.audio); // base64 uLaw 8k audio chunk
+                    onAudio(res.audio);
+                } else if (res?.error) {
+                    console.error("[ElevenLabs] beginStream(): server error:", res.error);
                 }
             } catch (e) {
-                console.error("[ElevenLabs] Failed to parse message:", e);
+                console.error("[ElevenLabs] beginStream(): JSON parse error:", e);
             }
         });
 
         this.ws.on("close", (code, reason) => {
             if (code !== 1000 && code !== 1005) {
-                console.error(`[ElevenLabs] WS closed unexpectedly. code=${code}, reason=${reason.toString()}`);
+                console.error(`[ElevenLabs] beginStream(): WS closed unexpectedly code=${code} reason=${reason.toString()}`);
             }
             this.ws = null;
             this.streamStarted = false;
@@ -82,7 +153,7 @@ export class ElevenLabsClient {
         });
 
         this.ws.on("error", (err) => {
-            console.error("[ElevenLabs] Connection error:", err);
+            console.error("[ElevenLabs] beginStream(): connection error:", err);
             try { this.ws?.close(1011); } catch {}
             this.ws = null;
             this.streamStarted = false;
@@ -90,40 +161,39 @@ export class ElevenLabsClient {
         });
     }
 
-    /**
-     * Send more text (can be called repeatedly as tokens arrive).
-     * ElevenLabs will start speaking as soon as possible.
-     */
+    /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         if (!text) return;
 
-        // (Optional) guard extremely long chunks; smaller chunks reduce latency
-        const MAX_CHUNK = 800; // chars
-        if (text.length > MAX_CHUNK) {
-            for (let i = 0; i < text.length; i += MAX_CHUNK) {
-                const slice = text.slice(i, i + MAX_CHUNK);
-                this.ws.send(JSON.stringify({ text: slice }));
+        try {
+            // Keep chunks modest; large messages can add latency
+            const MAX_CHUNK = 800;
+            if (text.length > MAX_CHUNK) {
+                for (let i = 0; i < text.length; i += MAX_CHUNK) {
+                    const slice = text.slice(i, i + MAX_CHUNK);
+                    this.ws.send(JSON.stringify({ text: slice }));
+                }
+            } else {
+                this.ws.send(JSON.stringify({ text }));
             }
-        } else {
-            this.ws.send(JSON.stringify({ text }));
+        } catch (e) {
+            console.error("[ElevenLabs] sendText() failed:", e);
         }
     }
 
-    /**
-     * Signal no more text—TTS will finish and then close by itself.
-     * (You can also keep the socket open if you want to append more later,
-     * but typically one assistant turn = one begin/end.)
-     */
+    /** Signal no more text — TTS will finish and then close. */
     public endStream() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        // Empty text ends the stream per ElevenLabs docs
-        this.ws.send(JSON.stringify({ text: "" }));
+        try {
+            // Empty text ends the stream per ElevenLabs docs
+            this.ws.send(JSON.stringify({ text: "" }));
+        } catch (e) {
+            console.error("[ElevenLabs] endStream() failed:", e);
+        }
     }
 
-    /**
-     * Force-close the current stream (e.g., call ended).
-     */
+    /** Force close (e.g., user interruption / call ended). */
     public stop() {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             console.log("[ElevenLabs] Stopping current speech stream.");
