@@ -143,7 +143,7 @@ export class GoogleService {
         }
 
         for (const event of events.data.items) {
-            if (event.description?.includes(`Date of Birth: ${dateOfBirth}`)) {
+            if (event.description?.includes(`DOB: ${dateOfBirth}`)) {
                 await this.gcalClient.deleteEvent(refreshedModel, redirectUri, event.id!);
                 return true;
             }

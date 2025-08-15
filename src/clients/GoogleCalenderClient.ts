@@ -61,7 +61,6 @@ export class GoogleCalendarClient {
 
 
     async createEvent(model: GoogleIntegrationModel, redirectUri: string, event: calendar_v3.Schema$Event) {
-        console.log('Afspraak toevoegen');
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({
             version: "v3",
@@ -78,7 +77,6 @@ export class GoogleCalendarClient {
         const info = await oauth2Client.getTokenInfo(
             (oauth2Client.credentials.access_token as string)
         );
-        console.log("[GCal] token scopes =>", info.scopes);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
         return calendar.freebusy.query({
             requestBody: {
@@ -126,8 +124,7 @@ export class GoogleCalendarClient {
             expiry_date: model.expiryDate,
         });
         const res = await oauth2Client.refreshAccessToken();
-        const newTokens = res.credentials as GoogleTokens;
-        return newTokens;
+        return res.credentials as GoogleTokens;
     }
 
     private getAuthenticatedClient(model: GoogleIntegrationModel, redirectUri: string): OAuth2Client {

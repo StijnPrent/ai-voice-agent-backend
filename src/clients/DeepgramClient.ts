@@ -8,6 +8,8 @@ import { Readable, Writable } from "stream";
 import { injectable } from "tsyringe";
 import config from "../config/config";
 
+type FlushReason = "utterance" | "failsafe";
+
 @injectable()
 export class DeepgramClient {
     private deepgram: SDKClient;
@@ -18,9 +20,12 @@ export class DeepgramClient {
 
     /**
      * Start a real-time transcriptie-stream met Deepgram.
-     * Retourneert een Promise die oplost zodra de verbinding open is.
+     * - Flusht ALLEEN bij UtteranceEnd (of na 2s failsafe-stilte)
+     * - VAD events ingeschakeld
+     * - Lagere endpointing voor snellere turn-taking
      */
     async start(inputStream: Readable, outputStream: Writable): Promise<void> {
+        // Set up a live connection
         const transcription = this.deepgram.listen.live({
             language: "nl",
             model: "nova-2",
@@ -28,10 +33,11 @@ export class DeepgramClient {
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
-            endpointing: 800,          // iets langer wachten op stilte
-            // vad_events: true,        // zet aan als je UtteranceEnd events wilt (afhankelijk van SDK-versie)
+            endpointing: 400, // was 800; sneller einde van een uiting detecteren
+            vad_events: true, // ontvang UtteranceEnd events
         });
 
+        // Wait until the socket is open or error out
         await new Promise<void>((resolve, reject) => {
             transcription.on(LiveTranscriptionEvents.Open, () => {
                 console.log("[Deepgram] Connection opened.");
@@ -43,53 +49,102 @@ export class DeepgramClient {
             });
         });
 
-        // audio naar Deepgram sturen
-        inputStream.on("data", (chunk) => transcription.send(chunk));
-        inputStream.on("end", () => transcription.finish());
-
-        // ---- BUFFER LOGICA ----
-        let buf = "";
-        let flushTimer: NodeJS.Timeout | null = null;
-
-        const scheduleFlush = (ms = 1000) => {
-            if (flushTimer) clearTimeout(flushTimer);
-            flushTimer = setTimeout(() => flushNow("debounce"), ms);
+        // Forward audio to Deepgram
+        const handleData = (chunk: Buffer) => {
+            try {
+                transcription.send(chunk);
+            } catch (e) {
+                console.error("[Deepgram] send() failed:", e);
+            }
+        };
+        const handleEnd = () => {
+            try {
+                transcription.finish();
+            } catch (e) {
+                console.error("[Deepgram] finish() failed:", e);
+            }
         };
 
-        const flushNow = (reason: "utterance" | "debounce" | "punct") => {
-            if (!buf.trim()) return;
+        inputStream.on("data", handleData);
+        inputStream.once("end", handleEnd);
+        inputStream.once("error", (e) => {
+            console.error("[Deepgram] input stream error:", e);
+            // Best-effort close
+            try { transcription.finish(); } catch {}
+        });
+
+        // ---- BUFFER LOGICA (utterance-based) ----
+        let buf = "";
+        let failsafeTimer: NodeJS.Timeout | null = null;
+        let closed = false;
+
+        const clearFailsafe = () => {
+            if (failsafeTimer) {
+                clearTimeout(failsafeTimer);
+                failsafeTimer = null;
+            }
+        };
+
+        const startFailsafe = () => {
+            clearFailsafe();
+            // Als 2s geen UtteranceEnd komt, toch flushen (lange pauze)
+            failsafeTimer = setTimeout(() => flushNow("failsafe"), 2000);
+        };
+
+        const flushNow = (reason: FlushReason) => {
+            if (!buf.trim()) {
+                clearFailsafe();
+                return;
+            }
             const text = buf.trim();
             console.log(`[Deepgram] Flush (${reason}):`, text);
-            outputStream.write(text);
+            try {
+                outputStream.write(text);
+            } catch (e) {
+                console.error("[Deepgram] outputStream.write error:", e);
+            }
             buf = "";
-            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+            clearFailsafe();
         };
 
-        const endsSentence = (s: string) => /[.!?…]\s*$/.test(s);
-
+        // Consume only FINAL transcript pieces; do NOT flush on punctuation
         transcription.on(LiveTranscriptionEvents.Transcript, (data: any) => {
             const transcript = data?.channel?.alternatives?.[0]?.transcript ?? "";
-            // We sturen alleen definitieve segmenten door naar de buffer
-            if (transcript && data.is_final) {
-                // voeg spatie als nodig
+            const isFinal = Boolean(data?.is_final);
+
+            if (transcript && isFinal) {
                 buf += (buf ? " " : "") + transcript;
-                // flush snel als het einde van een zin lijkt
-                if (endsSentence(buf)) {
-                    flushNow("punct");
-                } else {
-                    // anders debounce tot stilte
-                    scheduleFlush(1000); // 1s zonder nieuw final stukje => flush
-                }
+                // We wachten op UtteranceEnd; start failsafe mocht het lang stil zijn
+                startFailsafe();
             }
         });
 
-        // Krijg je UtteranceEnd events? Dan nog betrouwbaarder flushen:
-        // transcription.on(LiveTranscriptionEvents.UtteranceEnd, () => flushNow("utterance"));
+        // Flush when Deepgram detects end of utterance
+        transcription.on(LiveTranscriptionEvents.UtteranceEnd, () => {
+            flushNow("utterance");
+        });
 
+        // Handle remote close
         transcription.on(LiveTranscriptionEvents.Close, () => {
+            if (closed) return;
             console.log("[Deepgram] Connection closed.");
-            flushNow("utterance"); // flush resterende buffer
-            outputStream.end();
+            closed = true;
+            try {
+                flushNow("utterance"); // laatste restje
+                outputStream.end();
+            } catch (e) {
+                console.error("[Deepgram] outputStream.end error:", e);
+            }
+
+            // Clean up listeners
+            inputStream.off("data", handleData);
+        });
+
+        // Defensive: also end output if caller closes it first
+        outputStream.once("close", () => {
+            try {
+                transcription.finish();
+            } catch {}
         });
     }
 }

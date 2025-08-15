@@ -9,8 +9,15 @@ import { CompanyService } from "./CompanyService";
 import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
+import { ElevenPhraseStreamer } from "../../utils/tts/ElevenPhraseStreamer";
 
 const USER_SILENCE_TIMEOUT_MS = 1200; // Time in ms of silence before processing transcript
+const TTS_END_DEBOUNCE_MS = 260;      // End ElevenLabs stream shortly after last delta
+
+// "Uhm" pre-roll config
+const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
+const PREFILL_PROBABILITY = 0.15;     // 15% of turns get a filler
+const PREFILL_CHOICES = ["Ehm… ", "Even kijken… ", "Hmm… "];
 
 @injectable()
 export class VoiceService {
@@ -25,6 +32,16 @@ export class VoiceService {
     // Interruption and buffering logic
     private transcriptBuffer: string = "";
     private userSpeakingTimer: NodeJS.Timeout | null = null;
+
+    // TTS streaming helpers
+    private phraseStreamer: ElevenPhraseStreamer | null = null;
+    private ttsEndTimer: NodeJS.Timeout | null = null;
+    private ttsOpen = false;
+
+    // "Uhm" pre-roll state
+    private prefillTimer: NodeJS.Timeout | null = null;
+    private llmStarted = false;
+    private prefilled = false;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -65,13 +82,13 @@ export class VoiceService {
                 const transcript = chunk.toString();
                 if (transcript) {
                     console.log(`[${this.callSid}] [Deepgram] Transcript chunk:`, transcript);
-                    
+
                     // If we get a transcript while the assistant is speaking, it's a confirmed interruption.
                     if (this.isAssistantSpeaking) {
                         console.log(`[${this.callSid}] User interruption detected.`);
-                        this.elevenLabsClient.stop();
+                        this.stopTTSTurn(); // stop ElevenLabs immediately
                     }
-                    
+
                     this.handleUserSpeech(transcript);
                 }
                 callback();
@@ -82,6 +99,8 @@ export class VoiceService {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
             this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
+
+            // One-shot welcome phrase (kept as before)
             await this.speak(this.voiceSettings.welcomePhrase);
         } catch (error) {
             console.error(`[${this.callSid}] Error during service initialization:`, error);
@@ -111,26 +130,177 @@ export class VoiceService {
         this.transcriptBuffer = "";
         console.log(`[${this.callSid}] Processing final transcript:`, finalTranscript);
 
+        // Reset pre-roll state
+        this.clearPrefill();
+        this.llmStarted = false;
+        this.prefilled = false;
+
+        // ---- OPEN a TTS turn (persistent ElevenLabs stream) ----
+        this.beginTTSTurn();
+
+        // Optionally insert a short "uhm" if the model hasn't started quickly
+        this.schedulePrefillFiller(finalTranscript);
+
+        // Stream LLM tokens; deltas will go to phraseStreamer → ElevenLabs
         await this.chatGptClient.start(
             Readable.from([finalTranscript]),
-            async (sentence: string) => {
-                console.log(`[${this.callSid}] [ChatGPT] Sentence:`, sentence);
-                await this.speak(sentence);
+            async (delta: string) => {
+                // First delta cancels pre-roll timer
+                if (!this.llmStarted) {
+                    this.llmStarted = true;
+                    this.clearPrefill();
+                }
+                this.onLLMDelta(delta);
             }
         ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
+
+        // When ChatGPT stops sending deltas, close TTS shortly after
+        this.scheduleTTSEnd();
     }
 
+    // ---- "Uhm" pre-roll helpers ----
+    private schedulePrefillFiller(userText: string) {
+        if (!this.shouldPrefillFiller(userText)) return;
+        if (this.prefillTimer) clearTimeout(this.prefillTimer);
+
+        this.prefillTimer = setTimeout(() => {
+            // Only insert if model hasn't begun speaking
+            if (this.llmStarted) return;
+
+            // Ensure TTS stream is open
+            if (!this.ttsOpen) this.beginTTSTurn();
+
+            const filler = this.pickFiller();
+            // Send directly to ElevenLabs so it plays immediately (skip chunker debounce)
+            try {
+                this.elevenLabsClient.sendText(filler);
+                this.prefilled = true;
+            } catch (e) {
+                console.warn(`[${this.callSid}] Prefill send failed:`, e);
+            }
+        }, PREFILL_DELAY_MS);
+    }
+
+    private shouldPrefillFiller(userText: string): boolean {
+        // Keep it simple: random chance, avoid after simple yes/no starts
+        if (Math.random() >= PREFILL_PROBABILITY) return false;
+        if (/^\s*(ja|nee)\b/i.test(userText)) return false;
+        return true;
+    }
+
+    private pickFiller(): string {
+        const i = Math.floor(Math.random() * PREFILL_CHOICES.length);
+        return PREFILL_CHOICES[i];
+    }
+
+    private clearPrefill() {
+        if (this.prefillTimer) { clearTimeout(this.prefillTimer); this.prefillTimer = null; }
+    }
+    // ---- End pre-roll helpers ----
+
+    // ---- ElevenLabs streaming orchestration ----
+    private beginTTSTurn() {
+        if (!this.voiceSettings) {
+            console.error(`[${this.callSid}] Attempted to open TTS without voice settings.`);
+            return;
+        }
+        if (this.ttsOpen) return;
+
+        const onStreamStart = () => {
+            this.isAssistantSpeaking = true; // set only when audio actually starts
+            const markName = `spoke-${this.markCount++}`;
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "mark",
+                    streamSid: this.streamSid,
+                    mark: { name: markName },
+                }));
+                console.log(`[${this.callSid}] Sent mark: ${markName}`);
+            }
+        };
+
+        const onAudio = (audioPayload: string) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "media",
+                    streamSid: this.streamSid,
+                    media: { payload: audioPayload },
+                }));
+            }
+        };
+
+        const onClose = () => {
+            this.isAssistantSpeaking = false;
+            this.ttsOpen = false;
+            this.phraseStreamer = null;
+            if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+            this.clearPrefill();
+        };
+
+        this.elevenLabsClient.beginStream(
+            this.voiceSettings,
+            onStreamStart,
+            onAudio,
+            onClose,
+            () => {
+                // onReady: create the sentence chunker
+                this.phraseStreamer = new ElevenPhraseStreamer((text) => this.elevenLabsClient.sendText(text));
+                this.ttsOpen = true;
+            }
+        );
+    }
+
+    private onLLMDelta(delta: string) {
+        if (!delta) return;
+        if (!this.ttsOpen || !this.phraseStreamer) {
+            // If TTS wasn't open for some reason, open it now
+            this.beginTTSTurn();
+        }
+        this.phraseStreamer?.push(delta);
+        this.scheduleTTSEnd();
+    }
+
+    private scheduleTTSEnd() {
+        if (this.ttsEndTimer) clearTimeout(this.ttsEndTimer);
+        this.ttsEndTimer = setTimeout(() => this.endTTSTurn(), TTS_END_DEBOUNCE_MS);
+    }
+
+    private endTTSTurn() {
+        if (!this.ttsOpen) return;
+        try {
+            this.phraseStreamer?.end();
+            this.elevenLabsClient.endStream();
+        } finally {
+            this.ttsOpen = false;
+            this.phraseStreamer = null;
+            this.isAssistantSpeaking = false;
+            if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+            this.clearPrefill();
+        }
+    }
+
+    private stopTTSTurn() {
+        try { this.elevenLabsClient.stop(); } catch {}
+        this.ttsOpen = false;
+        this.phraseStreamer = null;
+        this.isAssistantSpeaking = false;
+        if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+        this.clearPrefill();
+    }
+    // ---- End ElevenLabs streaming orchestration ----
+
+    // Kept for one-shot phrases like the welcome line
     private async speak(text: string) {
         if (!this.voiceSettings) {
             console.error(`[${this.callSid}] Attempted to speak without voice settings.`);
             return;
         }
-        
+
         if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
         this.transcriptBuffer = "";
 
         const onStreamStart = () => {
-            this.isAssistantSpeaking = true; // Set flag only when audio starts
+            this.isAssistantSpeaking = true;
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -160,8 +330,6 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
-        // Simply forward the audio to the input stream for Deepgram.
-        // The interruption logic is now handled when a transcript is received.
         if (this.audioIn) {
             this.audioIn.write(Buffer.from(payload, "base64"));
         }
@@ -174,10 +342,10 @@ export class VoiceService {
     public stopStreaming() {
         if (!this.callSid) return;
         console.log(`[${this.callSid}] Stopping stream...`);
-        this.elevenLabsClient.stop();
+        this.stopTTSTurn();
         if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
         this.audioIn?.end();
-        this.chatGptClient.clearHistory(); // Clear the conversation history
+        this.chatGptClient.clearHistory();
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;
