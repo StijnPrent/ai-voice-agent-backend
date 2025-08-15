@@ -103,13 +103,29 @@ export class ChatGPTClient {
                             console.log(`[ChatGPT] Tool call: check_calendar_availability with args:`, functionArgs);
                             const {date} = functionArgs;
                             const availableSlots = await this.googleService.getAvailableSlots(this.company!.id, date);
+
+                            const dayOfWeek = new Date(date).getDay(); // 0 = zondag, 1 = maandag, ...
+                            const hoursForDay = this.companyContext?.hours.find(h => h.dayOfWeek === (dayOfWeek === 0 ? 7 : dayOfWeek));
+
+                            let openHour = 9;
+                            let closeHour = 17;
+
+                            if (hoursForDay?.isOpen && hoursForDay.openTime && hoursForDay.closeTime) {
+                                const [oH] = hoursForDay.openTime.split(':').map(Number);
+                                const [cH] = hoursForDay.closeTime.split(':').map(Number);
+                                openHour = oH;
+                                closeHour = cH;
+                            }
+
+                            const summary = summarizeSlots(availableSlots, openHour, closeHour);
+
                             toolResponse = {availableSlots};
+
                             if (availableSlots.length > 0) {
-                                onTextGenerated(`Ik heb de volgende tijden beschikbaar op ${date}: ${availableSlots.join(', ')}. Welke tijd schikt u?`);
+                                onTextGenerated(`Op ${date} ${summary} Welke tijd schikt u?`);
                             } else {
                                 onTextGenerated(`Sorry, er zijn geen beschikbare tijden op ${date}. Wilt u een andere datum proberen?`);
                             }
-
                         } else if (functionName === 'cancel_calendar_event') {
                             console.log(`[ChatGPT] Tool call: cancel_calendar_event with args:`, functionArgs);
                             const {name, dateOfBirth, date} = functionArgs;
