@@ -32,10 +32,14 @@ export class GoogleCalendarClient {
     }
 
     getAuthUrl(credentials: GoogleAppCredentials, companyId: string): string {
+        const SCOPES = ["https://www.googleapis.com/auth/calendar"];
+        console.log("[OAuth] Using clientId:", credentials.clientId);
+        console.log("[OAuth] Requesting scopes:", SCOPES);
         return this.getOauth2Client(credentials).generateAuthUrl({
             access_type: "offline",
-            scope: ["https://www.googleapis.com/auth/calendar"],
             prompt: "consent",
+            include_granted_scopes: false,
+            scope: SCOPES,
             state: companyId.toString(),
         });
     }
