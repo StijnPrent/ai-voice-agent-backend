@@ -6,6 +6,7 @@ export class ElevenLabsClient {
     private readonly apiKey = process.env.ELEVENLABS_API_KEY!;
     private ws: WebSocket | null = null;
     private streamStarted = false;
+    private pendingText: string[] = [];
 
     // Build URL once; Twilio expects 8k u-law
     private urlFor(voiceId: string) {
@@ -102,6 +103,7 @@ export class ElevenLabsClient {
     ) {
         // Close any previous stream first
         this.stop();
+        this.pendingText = []; // reset
 
         const url = this.urlFor(settings.voiceId);
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
@@ -110,16 +112,20 @@ export class ElevenLabsClient {
         this.ws.on("open", () => {
             if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
             try {
-                // Config only on open; text will come later via sendText()
-                this.ws.send(
-                    JSON.stringify({
-                        voice_settings: {
-                            stability: 0.35,
-                            similarity_boost: 0.8,
-                            speed: settings.talkingSpeed,
-                        },
-                    })
-                );
+                this.ws.send(JSON.stringify({
+                    voice_settings: {
+                        stability: 0.35,
+                        similarity_boost: 0.8,
+                        speed: settings.talkingSpeed,
+                    },
+                }));
+                // flush any queued text
+                if (this.pendingText.length) {
+                    for (const t of this.pendingText) {
+                        this.ws.send(JSON.stringify({ text: t }));
+                    }
+                    this.pendingText = [];
+                }
                 onReady && onReady();
             } catch (e) {
                 console.error("[ElevenLabs] beginStream(): initial config send failed:", e);
@@ -163,11 +169,12 @@ export class ElevenLabsClient {
 
     /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         if (!text) return;
-
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.pendingText.push(text); // queue until OPEN
+            return;
+        }
         try {
-            // Keep chunks modest; large messages can add latency
             const MAX_CHUNK = 800;
             if (text.length > MAX_CHUNK) {
                 for (let i = 0; i < text.length; i += MAX_CHUNK) {
@@ -195,11 +202,12 @@ export class ElevenLabsClient {
 
     /** Force close (e.g., user interruption / call ended). */
     public stop() {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             console.log("[ElevenLabs] Stopping current speech stream.");
             try { this.ws.close(1000); } catch {}
         }
         this.ws = null;
         this.streamStarted = false;
+        this.pendingText = [];
     }
 }

@@ -12,7 +12,7 @@ import { IntegrationService } from "./IntegrationService";
 import { ElevenPhraseStreamer } from "../../utils/tts/ElevenPhraseStreamer";
 
 const USER_SILENCE_TIMEOUT_MS = 1200; // Time in ms of silence before processing transcript
-const TTS_END_DEBOUNCE_MS = 260;      // End ElevenLabs stream shortly after last delta
+const TTS_END_DEBOUNCE_MS = 700;      // End ElevenLabs stream shortly after last delta
 
 // "Uhm" pre-roll config
 const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
@@ -42,6 +42,9 @@ export class VoiceService {
     private prefillTimer: NodeJS.Timeout | null = null;
     private llmStarted = false;
     private prefilled = false;
+
+    private ttsState: "idle" | "opening" | "open" = "idle";
+    private earlyLLMBuffer: string[] = [];
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -166,20 +169,19 @@ export class VoiceService {
         if (this.prefillTimer) clearTimeout(this.prefillTimer);
 
         this.prefillTimer = setTimeout(() => {
-            // Only insert if model hasn't begun speaking
-            if (this.llmStarted) return;
+            if (this.llmStarted) return; // model already talking
 
-            // Ensure TTS stream is open
-            if (!this.ttsOpen) this.beginTTSTurn();
-
+            if (this.ttsState === "idle") this.beginTTSTurn();
             const filler = this.pickFiller();
-            // Send directly to ElevenLabs so it plays immediately (skip chunker debounce)
-            try {
-                this.elevenLabsClient.sendText(filler);
-                this.prefilled = true;
-            } catch (e) {
-                console.warn(`[${this.callSid}] Prefill send failed:`, e);
+
+            // If not fully open yet, buffer the filler; otherwise push it immediately
+            if (this.ttsState !== "open" || !this.phraseStreamer) {
+                this.earlyLLMBuffer.push(filler);
+            } else {
+                this.phraseStreamer.push(filler);
+                this.scheduleTTSEnd();
             }
+            this.prefilled = true;
         }, PREFILL_DELAY_MS);
     }
 
@@ -206,10 +208,11 @@ export class VoiceService {
             console.error(`[${this.callSid}] Attempted to open TTS without voice settings.`);
             return;
         }
-        if (this.ttsOpen) return;
+        if (this.ttsState !== "idle") return; // ← prevent re-entrant opens
+        this.ttsState = "opening";
 
         const onStreamStart = () => {
-            this.isAssistantSpeaking = true; // set only when audio actually starts
+            this.isAssistantSpeaking = true;
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
@@ -233,10 +236,10 @@ export class VoiceService {
 
         const onClose = () => {
             this.isAssistantSpeaking = false;
-            this.ttsOpen = false;
             this.phraseStreamer = null;
             if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
             this.clearPrefill();
+            this.ttsState = "idle";
         };
 
         this.elevenLabsClient.beginStream(
@@ -245,22 +248,40 @@ export class VoiceService {
             onAudio,
             onClose,
             () => {
-                // onReady: create the sentence chunker
+                // onReady
+                // Create the chunker only once TTS is ready
                 this.phraseStreamer = new ElevenPhraseStreamer((text) => this.elevenLabsClient.sendText(text));
-                this.ttsOpen = true;
+                this.ttsState = "open";
+
+                // Drain anything that arrived while opening
+                if (this.earlyLLMBuffer.length) {
+                    const buffered = this.earlyLLMBuffer.join("");
+                    this.earlyLLMBuffer = [];
+                    this.phraseStreamer.push(buffered);
+                    this.scheduleTTSEnd();
+                }
             }
         );
     }
 
     private onLLMDelta(delta: string) {
         if (!delta) return;
-        if (!this.ttsOpen || !this.phraseStreamer) {
-            // If TTS wasn't open for some reason, open it now
-            this.beginTTSTurn();
+
+        if (this.ttsState === "idle") {
+            this.beginTTSTurn();              // start a new turn
+            this.earlyLLMBuffer.push(delta);  // buffer until open
+            return;
         }
-        this.phraseStreamer?.push(delta);
+        if (this.ttsState === "opening" || !this.phraseStreamer) {
+            this.earlyLLMBuffer.push(delta);  // still opening: buffer
+            return;
+        }
+
+        // state === "open"
+        this.phraseStreamer.push(delta);
         this.scheduleTTSEnd();
     }
+
 
     private scheduleTTSEnd() {
         if (this.ttsEndTimer) clearTimeout(this.ttsEndTimer);
@@ -268,14 +289,14 @@ export class VoiceService {
     }
 
     private endTTSTurn() {
-        if (!this.ttsOpen) return;
+        if (this.ttsState !== "open") return;
         try {
             this.phraseStreamer?.end();
             this.elevenLabsClient.endStream();
         } finally {
-            this.ttsOpen = false;
             this.phraseStreamer = null;
             this.isAssistantSpeaking = false;
+            this.ttsState = "idle";
             if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
             this.clearPrefill();
         }
@@ -283,9 +304,9 @@ export class VoiceService {
 
     private stopTTSTurn() {
         try { this.elevenLabsClient.stop(); } catch {}
-        this.ttsOpen = false;
         this.phraseStreamer = null;
         this.isAssistantSpeaking = false;
+        this.ttsState = "idle";
         if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
         this.clearPrefill();
     }
