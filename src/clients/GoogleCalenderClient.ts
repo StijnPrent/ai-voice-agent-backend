@@ -84,6 +84,7 @@ export class GoogleCalendarClient {
             requestBody: {
                 timeMin,
                 timeMax,
+                timeZone: "Europe/Amsterdam",
                 items: [{ id: "primary" }],
             },
         });

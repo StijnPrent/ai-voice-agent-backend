@@ -103,7 +103,6 @@ export class ChatGPTClient {
                         } else if (functionName === 'check_calendar_availability') {
                             console.log(`[ChatGPT] Tool call: check_calendar_availability with args:`, functionArgs);
                             const {date} = functionArgs;
-                            const availableSlots = await this.googleService.getAvailableSlots(this.company!.id, date);
 
                             const dayOfWeek = new Date(date).getDay(); // 0 = zondag, 1 = maandag, ...
                             const hoursForDay = this.companyContext?.hours.find(h => h.dayOfWeek === (dayOfWeek === 0 ? 7 : dayOfWeek));
@@ -117,6 +116,7 @@ export class ChatGPTClient {
                                 openHour = oH;
                                 closeHour = cH;
                             }
+                            const availableSlots = await this.googleService.getAvailableSlots(this.company!.id, date, openHour, closeHour);
 
                             const summary = summarizeSlots(availableSlots, openHour, closeHour);
 
@@ -178,7 +178,7 @@ export class ChatGPTClient {
             year: 'numeric',
             month: 'long',
             day: 'numeric'
-        })}\n\n`;
+        })}\n\n Vermijd het gebruik van numerieke datum- en tijdnotatie (zoals 'dd-mm-jj', '14-08-25' of '10:00'). Schrijf tijden en datums altijd voluit in natuurlijke taal, bijvoorbeeld 'tien uur' en '14 augustus 2025'`;
 
 
         prompt += "Hier is wat informatie over het bedrijf:\n";

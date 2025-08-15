@@ -77,7 +77,7 @@ export class GoogleService {
         return res.data;
     }
 
-    async getAvailableSlots(companyId: bigint, date: string): Promise<string[]> {
+    async getAvailableSlots(companyId: bigint, date: string, openHour: number, closeHour: number): Promise<string[]> {
         const model = await this.repo.fetchGoogleTokens(companyId);
         if (!model) {
             throw new Error(`No Google Calendar integration for company ${companyId}`);
@@ -91,12 +91,14 @@ export class GoogleService {
         }
 
         const timeMin = new Date(date);
-        timeMin.setHours(9, 0, 0, 0);
+        timeMin.setHours(openHour, 0, 0, 0);
         const timeMax = new Date(date);
-        timeMax.setHours(17, 0, 0, 0);
+        timeMax.setHours(closeHour, 0, 0, 0);
 
         const freeBusyResponse = await this.gcalClient.getFreeBusy(refreshedModel, redirectUri, timeMin.toISOString(), timeMax.toISOString());
         const busySlots = freeBusyResponse.data.calendars?.primary.busy ?? [];
+        console.log("[FB] window", timeMin.toISOString(), "->", timeMax.toISOString());
+        console.log("[FB] busy", busySlots);
 
         const availableSlots: string[] = [];
         let currentTime = timeMin;
