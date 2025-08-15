@@ -1,5 +1,5 @@
 // helper: maak tijden TTS-vriendelijk
-function toDutchSpeech(slot: string): string {
+export function toDutchSpeech(slot: string): string {
     const [hStr, mStr] = slot.split(":");
     const h = parseInt(hStr, 10);
     const m = parseInt(mStr, 10);
