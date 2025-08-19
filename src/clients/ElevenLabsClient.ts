@@ -9,6 +9,8 @@ export class ElevenLabsClient {
     private pendingText: string[] = [];
     private hasTriggered = false;
     private idleFlushTimer: NodeJS.Timeout | null = null;
+    private firstTextSent = false;    // ← new
+    private sessionCfg: any = null;
 
     // Build URL once; Twilio expects 8k u-law
     private urlFor(voiceId: string) {
@@ -165,21 +167,19 @@ export class ElevenLabsClient {
 
         // Close any previous stream first
         this.stop();
-        this.pendingText = []; // reset
-        this.hasTriggered = false;
+        this.pendingText = [];
+        this.firstTextSent = false;
+        this.streamStarted = false;
 
         const url = this.urlFor(settings.voiceId);
         this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
-        this.streamStarted = false;
 
         this.ws.on("open", () => {
             console.log("[ElevenLabs] beginStream() WebSocket opened");
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                console.error("[ElevenLabs] beginStream() WebSocket not open in open handler");
-                return;
-            }
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-            const payload = {
+            // store config for FIRST text
+            this.sessionCfg = {
                 voice_settings: {
                     stability: 0.5,
                     similarity_boost: 0.8,
@@ -188,23 +188,12 @@ export class ElevenLabsClient {
                 generation_config: { optimize_streaming_latency: 2 }
             };
 
-            console.log("[ElevenLabs] beginStream() sending initial config:", JSON.stringify(payload, null, 2));
-
-            try {
-                this.ws.send(JSON.stringify(payload));
-                console.log("[ElevenLabs] beginStream() sent initial config successfully");
-
-                // flush any queued text
-                if (this.pendingText.length) {
-                    console.log(`[ElevenLabs] beginStream() flushing ${this.pendingText.length} pending texts`);
-                    this.flushPending(false);
-                }
-
-                console.log("[ElevenLabs] beginStream() calling onReady");
-                onReady && onReady();
-            } catch (e) {
-                console.error("[ElevenLabs] beginStream() initial config send failed:", e);
+            // If text was queued before open, send the FIRST one with config + trigger
+            if (this.pendingText.length) {
+                this.flushPendingFirst(); // sends first with config, rest as {text}
             }
+
+            onReady && onReady(); // optional
         });
 
         this.ws.on("message", (data: Buffer, isBinary: boolean) => {
@@ -276,13 +265,12 @@ export class ElevenLabsClient {
     /** Send more text (can be called multiple times as tokens arrive). */
     public sendText(text: string) {
         console.log(`[ElevenLabs] sendText() called with: "${text.slice(0, 80)}..."`);
-
         if (!text || !text.trim()) {
             console.log("[ElevenLabs] sendText() ignoring empty text");
             return;
         }
 
-        // queue if not open yet
+        // queue if WS not open
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.log("[ElevenLabs] sendText() WebSocket not open, queuing text");
             this.pendingText.push(text);
@@ -290,17 +278,23 @@ export class ElevenLabsClient {
         }
 
         try {
-            const payload = { text };
-            console.log(`[ElevenLabs] sendText() sending: ${JSON.stringify(payload)}`);
-            this.ws.send(JSON.stringify(payload));
-
-            // First real text? Nudge the server to start generating
-            if (!this.hasTriggered) {
-                console.log("[ElevenLabs] sendText() triggering generation");
-                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                this.hasTriggered = true;
+            if (!this.firstTextSent) {
+                // FIRST text: include config + trigger
+                const payload = {
+                    ...(this.sessionCfg ?? {}),
+                    text,
+                    try_trigger_generation: true,
+                };
+                console.log(`[ElevenLabs] sendText() FIRST payload: ${JSON.stringify(payload).slice(0,200)}`);
+                this.ws.send(JSON.stringify(payload));
+                this.firstTextSent = true;              // also replaces hasTriggered=true
+            } else {
+                // Subsequent chunks: plain text only
+                const payload = { text };
+                console.log(`[ElevenLabs] sendText() payload: ${JSON.stringify(payload)}`);
+                this.ws.send(JSON.stringify(payload));
             }
-            // this.armIdleFlush();
+            // Do NOT idle-flush here
         } catch (e) {
             console.error("[ElevenLabs] sendText() failed:", e);
         }
@@ -309,30 +303,13 @@ export class ElevenLabsClient {
     /** Signal no more text — TTS will finish and then close. */
     public endStream() {
         console.log("[ElevenLabs] endStream() called");
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.log("[ElevenLabs] endStream() WebSocket not open");
-            return;
-        }
-        try {
-            // ensure any remaining buffer is synthesized
-            if (!this.hasTriggered) {
-                console.log("[ElevenLabs] endStream() triggering generation");
-                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                this.hasTriggered = true;
-            }
-            console.log("[ElevenLabs] endStream() sending flush and end messages");
-            this.ws.send(JSON.stringify({ flush: true }));
-        } catch (e) {
-            console.error("[ElevenLabs] endStream() failed:", e);
-        } finally {
-            this.clearIdleFlush();
-        }
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ flush: true })); // one flush at the end
     }
 
     /** Force close (e.g., user interruption / call ended). */
     public stop() {
         console.log("[ElevenLabs] stop() called");
-        this.clearIdleFlush();
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             try {
                 console.log("[ElevenLabs] stop() closing WebSocket");
@@ -345,52 +322,23 @@ export class ElevenLabsClient {
         this.streamStarted = false;
         this.pendingText = [];
         this.hasTriggered = false;
+        this.firstTextSent = false;
+        this.sessionCfg = null
     }
 
-    private flushPending(trigger = false) {
-        console.log(`[ElevenLabs] flushPending() called with ${this.pendingText.length} pending texts, trigger: ${trigger}`);
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.log("[ElevenLabs] flushPending() WebSocket not open");
-            return;
+    private flushPendingFirst() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+        const first = this.pendingText.shift();
+        if (first && first.trim() && !this.firstTextSent) {
+            const payload = { ...this.sessionCfg, text: first, try_trigger_generation: true };
+            this.ws.send(JSON.stringify(payload));         // FIRST text carries config + trigger
+            this.firstTextSent = true;
         }
         for (const t of this.pendingText) {
-            console.log(`[ElevenLabs] flushPending() sending: "${t.slice(0, 50)}..."`);
-            this.ws.send(JSON.stringify({ text: t }));
+            if (t.trim()) this.ws.send(JSON.stringify({ text: t }));
         }
         this.pendingText = [];
-        if (trigger && !this.hasTriggered) {
-            console.log("[ElevenLabs] flushPending() triggering generation");
-            this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-            this.hasTriggered = true;
-        }
     }
 
-    private armIdleFlush() {
-        this.clearIdleFlush();
-        console.log("[ElevenLabs] armIdleFlush() setting 250ms timeout");
-        // if no new text for 250ms, force synthesis of what we have
-        this.idleFlushTimer = setTimeout(() => {
-            console.log("[ElevenLabs] armIdleFlush() timeout triggered, sending flush");
-            try {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({ flush: true }));
-                    if (!this.hasTriggered) {
-                        console.log("[ElevenLabs] armIdleFlush() triggering generation");
-                        this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                        this.hasTriggered = true;
-                    }
-                }
-            } catch (e) {
-                console.error("[ElevenLabs] armIdleFlush() timeout error:", e);
-            }
-        }, 250);
-    }
-
-    private clearIdleFlush() {
-        if (this.idleFlushTimer) {
-            console.log("[ElevenLabs] clearIdleFlush() clearing timeout");
-            clearTimeout(this.idleFlushTimer);
-            this.idleFlushTimer = null;
-        }
-    }
 }
