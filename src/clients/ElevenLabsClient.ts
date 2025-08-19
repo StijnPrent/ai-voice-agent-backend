@@ -134,6 +134,7 @@ export class ElevenLabsClient {
         });
 
         this.ws.on("message", (data: Buffer, isBinary: boolean) => {
+            console.log("[EL] message", isBinary ? "binary" : "text", data.length);
             try {
                 if (isBinary) {
                     // ← dit zijn de audio-chunks
@@ -149,6 +150,7 @@ export class ElevenLabsClient {
                 // ← JSON control frames (alignment, final, errors, etc.)
                 const text = data.toString("utf8");
                 const res = JSON.parse(text);
+                console.log("[EL] control:", res);
 
                 if (res?.error) {
                     console.error("[ElevenLabs] server error:", res.error);
@@ -203,6 +205,7 @@ export class ElevenLabsClient {
 
         try {
             // Send the text chunk
+            console.log("[EL] sendText 2", text.slice(0,80));
             this.ws.send(JSON.stringify({ text }));
 
             // First real text? Nudge the server to start generating
