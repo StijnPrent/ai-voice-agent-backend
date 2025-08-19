@@ -136,7 +136,7 @@ export class ElevenLabsClient {
         this.ws.on("message", (data) => {
             try {
                 const res = JSON.parse(data.toString());
-                console.log("[ElevenLabs] beginStream(): message:", JSON.stringify(res, null, 2));
+                console.log("[ElevenLabs] beginStream(): message:", JSON.stringify(res));
                 if (res.audio) {
                     if (!this.streamStarted) {
                         onStreamStart();
