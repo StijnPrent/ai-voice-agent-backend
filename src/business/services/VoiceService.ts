@@ -13,7 +13,7 @@ import { ElevenPhraseStreamer } from "../../utils/tts/ElevenPhraseStreamer";
 import { SchedulingService } from "./SchedulingService";
 
 const USER_SILENCE_TIMEOUT_MS = 0; // Time in ms of silence before processing transcript
-const TTS_END_DEBOUNCE_MS = 700;      // End ElevenLabs stream shortly after last delta
+const TTS_END_DEBOUNCE_MS = 1800;      // End ElevenLabs stream shortly after last delta
 
 // "Uhm" pre-roll config
 const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
@@ -358,7 +358,7 @@ export class VoiceService {
             this.isAssistantSpeaking = false;
         };
 
-        await this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
+        this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
     }
 
     public sendAudio(payload: string) {
