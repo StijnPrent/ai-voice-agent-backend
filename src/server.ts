@@ -12,6 +12,7 @@ import googleRoute from "./routes/GoogleRoute";
 import outlookRoute from "./routes/OutlookRoute";
 import integrationRoute from "./routes/IntegrationRoute";
 import updateRoute from "./routes/UpdateRoute";
+import schedulingRoute from "./routes/SchedulingRoute";
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use("/google", googleRoute)
 app.use("/outlook", outlookRoute)
 app.use("/integrations", integrationRoute)
 app.use("/updates", updateRoute)
+app.use("/scheduling", schedulingRoute)
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
@@ -40,5 +42,5 @@ server.on('upgrade', (request, socket, head) => {
     webSocketServer.handleUpgrade(request, socket, head);
 });
 
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3003;
 server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));

@@ -23,6 +23,9 @@ import {OutlookCalendarClient} from "../clients/OutlookCalendarClient";
 import {OutlookService} from "../business/services/OutlookService";
 import {IOutlookRepository} from "../data/interfaces/IOutlookRepository";
 import {OutlookRepository} from "../data/repositories/OutlookRepository";
+import {SchedulingService} from "../business/services/SchedulingService";
+import {ISchedulingRepository} from "../data/interfaces/ISchedulingRepository";
+import {SchedulingRepository} from "../data/repositories/SchedulingRepository";
 
 // Register all clients in the container
 container.register("DeepgramClient", { useClass: DeepgramClient });
@@ -46,6 +49,7 @@ container.register("CompanyService", { useClass: CompanyService });
 container.register("VoiceSettingsService", { useClass: VoiceSettingModel });
 container.register("IntegrationService", { useClass: IntegrationService });
 container.register("UpdateService", { useClass: UpdateService });
+container.register("SchedulingService", { useClass: SchedulingService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -68,4 +72,7 @@ container.register("IIntegrationRepository", {
 })
 container.register<IUpdateRepository>("IUpdateRepository", {
     useClass: UpdateRepository,
+})
+container.register<ISchedulingRepository>("ISchedulingRepository", {
+    useClass: SchedulingRepository,
 })

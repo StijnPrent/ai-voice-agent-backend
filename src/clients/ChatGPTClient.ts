@@ -11,12 +11,19 @@ import { CompanyDetailsModel } from "../business/models/CompanyDetailsModel";
 import { CompanyHourModel } from "../business/models/CompanyHourModel";
 import { CompanyContactModel } from "../business/models/CompanyContactModel";
 import { summarizeSlots } from "../utils/tts/SummerizeSlots";
+import { AppointmentTypeModel } from "../business/models/AppointmentTypeModel";
+import { StaffMemberModel } from "../business/models/StaffMemberModel";
 
 type CompanyContext = {
     details: CompanyDetailsModel | null;
     contact: CompanyContactModel | null;
     hours: CompanyHourModel[];
     info: CompanyInfoModel[];
+};
+
+type SchedulingContext = {
+    appointmentTypes: AppointmentTypeModel[];
+    staffMembers: StaffMemberModel[];
 };
 
 @injectable()
@@ -28,6 +35,7 @@ export class ChatGPTClient {
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
     private companyContext: CompanyContext | null = null;
+    private schedulingContext: SchedulingContext | null = null;
     private messages: ChatCompletionMessageParam[] = [];
 
     constructor(@inject(GoogleService) private googleService: GoogleService) {}
@@ -36,12 +44,14 @@ export class ChatGPTClient {
         company: CompanyModel,
         hasGoogleIntegration: boolean,
         replyStyle: ReplyStyleModel,
-        context: CompanyContext
+        context: CompanyContext,
+        schedulingContext: SchedulingContext
     ) {
         this.company = company;
         this.hasGoogleIntegration = hasGoogleIntegration;
         this.replyStyle = replyStyle;
         this.companyContext = context;
+        this.schedulingContext = schedulingContext;
         this.messages = [
             {
                 role: "system",
@@ -255,11 +265,12 @@ export class ChatGPTClient {
     }
 
     private getSystemPrompt(): string {
-        if (!this.company || !this.replyStyle || !this.companyContext) {
-            throw new Error("Company info, reply style, and context must be set before generating a system prompt.");
+        if (!this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
+            throw new Error("Company info, reply style, context, and scheduling context must be set before generating a system prompt.");
         }
 
         const { details, contact, hours, info } = this.companyContext;
+        const { appointmentTypes, staffMembers } = this.schedulingContext;
 
         let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}
  je praat zo menselijk mogelijk
@@ -300,6 +311,31 @@ export class ChatGPTClient {
             prompt += "\n**Algemene Informatie:**\n";
             info.forEach((i) => {
                 prompt += `- ${i.value}\n`;
+            });
+        }
+
+        if (appointmentTypes && appointmentTypes.length > 0) {
+            prompt += "\n**Soorten Afspraken:**\n";
+            appointmentTypes.forEach((appointment) => {
+                prompt += `- ${appointment.name} (${appointment.duration} minuten)\n`;
+            });
+        }
+
+        if (staffMembers && staffMembers.length > 0) {
+            prompt += "\n**Medewerkers en Beschikbaarheid:**\n";
+            staffMembers.forEach((staff) => {
+                prompt += `- ${staff.name} (${staff.role})\n`;
+                if (staff.availability && staff.availability.length > 0) {
+                    const days = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"];
+                    staff.availability.forEach((avail) => {
+                        const day = days[avail.dayOfWeek - 1];
+                        if (avail.isActive) {
+                            prompt += `  - ${day}: ${avail.startTime} - ${avail.endTime}\n`;
+                        } else {
+                            prompt += `  - ${day}: Niet beschikbaar\n`;
+                        }
+                    });
+                }
             });
         }
 

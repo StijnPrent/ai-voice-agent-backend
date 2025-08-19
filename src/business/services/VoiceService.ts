@@ -10,8 +10,9 @@ import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { ElevenPhraseStreamer } from "../../utils/tts/ElevenPhraseStreamer";
+import { SchedulingService } from "./SchedulingService";
 
-const USER_SILENCE_TIMEOUT_MS = 1200; // Time in ms of silence before processing transcript
+const USER_SILENCE_TIMEOUT_MS = 0; // Time in ms of silence before processing transcript
 const TTS_END_DEBOUNCE_MS = 700;      // End ElevenLabs stream shortly after last delta
 
 // "Uhm" pre-roll config
@@ -52,7 +53,8 @@ export class VoiceService {
         @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient,
         @inject(CompanyService) private companyService: CompanyService,
         @inject("IVoiceRepository") private voiceRepository: IVoiceRepository,
-        @inject(IntegrationService) private integrationService: IntegrationService
+        @inject(IntegrationService) private integrationService: IntegrationService,
+        @inject(SchedulingService) private schedulingService: SchedulingService
     ) {}
 
     public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
@@ -71,6 +73,7 @@ export class VoiceService {
         this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
         const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
         const companyContext = await this.companyService.getCompanyContext(company.id);
+        const schedulingContext = await this.schedulingService.getSchedulingContext(company.id);
         const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
 
         console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
@@ -100,7 +103,7 @@ export class VoiceService {
 
         try {
             await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext);
+            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext, schedulingContext);
             console.log(`[${this.callSid}] Deepgram client initialized.`);
 
             // One-shot welcome phrase (kept as before)

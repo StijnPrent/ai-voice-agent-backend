@@ -135,17 +135,18 @@ export class ElevenLabsClient {
 
         this.ws.on("message", (data) => {
             try {
-                const j = JSON.parse(data.toString());
-                if (j.audio) {
-                    console.log("[EL] first audio frame"); // ← should appear once
-                    onAudio(j.audio);
-                } else if (j.error) {
-                    console.error("[EL] server error:", j.error);
-                } else {
-                    console.log("[EL] non-audio:", j);
+                const res = JSON.parse(data.toString());
+                if (res.audio) {
+                    if (!this.streamStarted) {
+                        onStreamStart();
+                        this.streamStarted = true;
+                    }
+                    onAudio(res.audio);
+                } else if (res?.error) {
+                    console.error("[ElevenLabs] beginStream(): server error:", res.error);
                 }
-            } catch {
-                console.log("[EL] binary frame len", (data as Buffer).length);
+            } catch (e) {
+                console.error("[ElevenLabs] beginStream(): JSON parse error:", e);
             }
         });
 
@@ -257,48 +258,5 @@ export class ElevenLabsClient {
 
     private clearIdleFlush() {
         if (this.idleFlushTimer) { clearTimeout(this.idleFlushTimer); this.idleFlushTimer = null; }
-    }
-
-    private attachCommonHandlers(
-        onStreamStart: () => void,
-        onAudio: (audioB64Ulaw: string) => void,
-        onClose: () => void
-    ) {
-        this.ws!.on("message", (data) => {
-            try {
-                const j = JSON.parse(data.toString());
-                if (j.audio) {
-                    if (!this.streamStarted) onStreamStart();
-                    this.streamStarted = true;
-                    onAudio(j.audio);
-                } else if (j?.error) {
-                    console.error("[ElevenLabs] server error:", j.error);
-                } else {
-                    // useful during debugging; harmless otherwise
-                    // console.log("[EL] non-audio:", j);
-                }
-            } catch {
-                // binary frames are already base64 in 'audio'; ignore
-            }
-        });
-
-        this.ws!.on("close", (code, reason) => {
-            if (code !== 1000 && code !== 1005) {
-                console.error("[ElevenLabs] WS closed", code, reason.toString());
-            }
-            this.clearIdleFlush();
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
-
-        this.ws!.on("error", (err) => {
-            console.error("[ElevenLabs] connection error:", err);
-            try { this.ws?.close(1011); } catch {}
-            this.clearIdleFlush();
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
     }
 }
