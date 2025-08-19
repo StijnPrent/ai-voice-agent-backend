@@ -269,7 +269,6 @@ export class VoiceService {
     }
 
     private onLLMDelta(delta: string) {
-        console.log(`[${this.callSid}] onLLMDelta len=${delta.length} state=${this.ttsState}`);
         if (!delta) return;
 
         if (this.ttsState === "idle") {
@@ -342,7 +341,6 @@ export class VoiceService {
         };
 
         const onAudio = (audioPayload: string) => {
-            console.log("[TW] write", { bytes: audioPayload.length });
             if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     event: "media",

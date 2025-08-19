@@ -82,8 +82,6 @@ export class ElevenLabsClient {
         });
 
         this.ws.on("message", (data, isBinary) => {
-            console.log(`[ElevenLabs] speak() received message - binary: ${isBinary}, length: ${data}`);
-
             try {
                 if (isBinary) {
                     // This should be audio data in newer API versions
