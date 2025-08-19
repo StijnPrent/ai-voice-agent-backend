@@ -119,7 +119,7 @@ export class ElevenLabsClient {
             try {
                 this.ws.send(JSON.stringify({
                     voice_settings: {
-                        stability: 0.35,
+                        stability: 0.5,
                         similarity_boost: 0.8,
                         speed: settings.talkingSpeed,
                     },
@@ -133,21 +133,37 @@ export class ElevenLabsClient {
             }
         });
 
-        this.ws.on("message", (data) => {
+        this.ws.on("message", (data: Buffer, isBinary: boolean) => {
             try {
-                const res = JSON.parse(data.toString());
-                console.log("[ElevenLabs] beginStream(): message:", JSON.stringify(res));
-                if (res.audio) {
+                if (isBinary) {
+                    // ← dit zijn de audio-chunks
+                    const b64 = data.toString("base64");
                     if (!this.streamStarted) {
                         onStreamStart();
                         this.streamStarted = true;
                     }
-                    onAudio(res.audio);
-                } else if (res?.error) {
-                    console.error("[ElevenLabs] beginStream(): server error:", res.error);
+                    onAudio(b64);
+                    return;
                 }
+
+                // ← JSON control frames (alignment, final, errors, etc.)
+                const text = data.toString("utf8");
+                const res = JSON.parse(text);
+
+                if (res?.error) {
+                    console.error("[ElevenLabs] server error:", res.error);
+                    return;
+                }
+                if (res?.isFinal) {
+                    // laatste control frame van deze generatie; geen audio hier
+                    // console.log("[EL] final:", res);
+                    return;
+                }
+                // evt. andere control types loggen
+                // console.log("[EL] ctrl:", res);
+
             } catch (e) {
-                console.error("[ElevenLabs] beginStream(): JSON parse error:", e);
+                console.error("[ElevenLabs] message parse error:", e);
             }
         });
 
