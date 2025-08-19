@@ -138,22 +138,20 @@ export class VoiceService {
         this.transcriptBuffer = "";
         console.log(`[${this.callSid}] Processing final transcript:`, finalTranscript);
 
-        // Reset pre-roll state
         this.clearPrefill();
         this.llmStarted = false;
         this.prefilled = false;
 
-        // ---- OPEN a TTS turn (persistent ElevenLabs stream) ----
         this.beginTTSTurn();
-
-        // Optionally insert a short "uhm" if the model hasn't started quickly
         this.schedulePrefillFiller(finalTranscript);
 
-        // Stream LLM tokens; deltas will go to phraseStreamer → ElevenLabs
+        // --- Start of new logging ---
+        console.log(`[${this.callSid}] Calling chatGptClient.start...`);
+
         await this.chatGptClient.start(
             Readable.from([finalTranscript]),
             async (delta: string) => {
-                // First delta cancels pre-roll timer
+                console.log(`[${this.callSid}] [ChatGPT] Received delta: "${delta}"`); // <-- ADD THIS
                 if (!this.llmStarted) {
                     this.llmStarted = true;
                     this.clearPrefill();
@@ -162,7 +160,9 @@ export class VoiceService {
             }
         ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
 
-        // When ChatGPT stops sending deltas, close TTS shortly after
+        console.log(`[${this.callSid}] Awaited chatGptClient.start has finished.`); // <-- AND THIS
+        // --- End of new logging ---
+
         this.scheduleTTSEnd();
     }
 
