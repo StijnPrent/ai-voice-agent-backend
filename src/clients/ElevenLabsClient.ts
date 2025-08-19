@@ -197,7 +197,7 @@ export class ElevenLabsClient {
                 // flush any queued text
                 if (this.pendingText.length) {
                     console.log(`[ElevenLabs] beginStream() flushing ${this.pendingText.length} pending texts`);
-                    this.flushPending(true);
+                    this.flushPending(false);
                 }
 
                 console.log("[ElevenLabs] beginStream() calling onReady");
@@ -363,7 +363,6 @@ export class ElevenLabsClient {
             this.ws.send(JSON.stringify({ try_trigger_generation: true }));
             this.hasTriggered = true;
         }
-        this.armIdleFlush();
     }
 
     private armIdleFlush() {
