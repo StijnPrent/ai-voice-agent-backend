@@ -295,12 +295,12 @@ export class ElevenLabsClient {
             this.ws.send(JSON.stringify(payload));
 
             // First real text? Nudge the server to start generating
-            if (!this.hasTriggered && text.trim().length >= 40) {
+            if (!this.hasTriggered) {
                 console.log("[ElevenLabs] sendText() triggering generation");
                 this.ws.send(JSON.stringify({ try_trigger_generation: true }));
                 this.hasTriggered = true;
             }
-            this.armIdleFlush();
+            // this.armIdleFlush();
         } catch (e) {
             console.error("[ElevenLabs] sendText() failed:", e);
         }
@@ -322,7 +322,6 @@ export class ElevenLabsClient {
             }
             console.log("[ElevenLabs] endStream() sending flush and end messages");
             this.ws.send(JSON.stringify({ flush: true }));
-            this.ws.send(JSON.stringify({ text: "" }));
         } catch (e) {
             console.error("[ElevenLabs] endStream() failed:", e);
         } finally {
