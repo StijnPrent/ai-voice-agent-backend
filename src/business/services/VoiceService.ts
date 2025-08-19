@@ -253,6 +253,7 @@ export class VoiceService {
             () => {
                 // onReady
                 // Create the chunker only once TTS is ready
+                console.log(`[${this.callSid}] TTS onReady (stream open)`);
                 this.phraseStreamer = new ElevenPhraseStreamer((text) => this.elevenLabsClient.sendText(text));
                 this.ttsState = "open";
 
@@ -268,6 +269,7 @@ export class VoiceService {
     }
 
     private onLLMDelta(delta: string) {
+        console.log(`[${this.callSid}] onLLMDelta len=${delta.length} state=${this.ttsState}`);
         if (!delta) return;
 
         if (this.ttsState === "idle") {
@@ -326,6 +328,7 @@ export class VoiceService {
         this.transcriptBuffer = "";
 
         const onStreamStart = () => {
+            console.log("[TW] onStreamStart");
             this.isAssistantSpeaking = true;
             const markName = `spoke-${this.markCount++}`;
             if (this.ws?.readyState === WebSocket.OPEN) {
@@ -351,6 +354,7 @@ export class VoiceService {
         };
 
         const onClose = () => {
+            console.log("[TW] onClose");
             this.isAssistantSpeaking = false;
         };
 
