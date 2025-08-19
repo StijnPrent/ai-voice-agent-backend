@@ -1,398 +1,387 @@
-// Enhanced debugging version of ElevenLabsClient.ts
+// src/business/services/VoiceService.ts
+import { inject, injectable } from "tsyringe";
 import WebSocket from "ws";
-import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
+import { PassThrough, Readable, Writable } from "stream";
+import { DeepgramClient } from "../../clients/DeepgramClient";
+import { ChatGPTClient } from "../../clients/ChatGPTClient";
+import { ElevenLabsClient } from "../../clients/ElevenLabsClient";
+import { CompanyService } from "./CompanyService";
+import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
+import { VoiceSettingModel } from "../models/VoiceSettingsModel";
+import { IntegrationService } from "./IntegrationService";
+import { ElevenPhraseStreamer } from "../../utils/tts/ElevenPhraseStreamer";
+import { SchedulingService } from "./SchedulingService";
 
-export class ElevenLabsClient {
-    private readonly apiKey = process.env.ELEVENLABS_API_KEY!;
+const USER_SILENCE_TIMEOUT_MS = 0; // Time in ms of silence before processing transcript
+const TTS_END_DEBOUNCE_MS = 1800;      // End ElevenLabs stream shortly after last delta
+
+// "Uhm" pre-roll config
+const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
+const PREFILL_PROBABILITY = 0.15;     // 15% of turns get a filler
+const PREFILL_CHOICES = ["Ehm… ", "Even kijken… ", "Hmm… "];
+
+@injectable()
+export class VoiceService {
     private ws: WebSocket | null = null;
-    private streamStarted = false;
-    private pendingText: string[] = [];
-    private hasTriggered = false;
-    private idleFlushTimer: NodeJS.Timeout | null = null;
+    private callSid: string | null = null;
+    private streamSid: string | null = null;
+    private audioIn: PassThrough | null = null;
+    private isAssistantSpeaking: boolean = false;
+    private markCount: number = 0;
+    private voiceSettings: VoiceSettingModel | null = null;
 
-    // Build URL once; Twilio expects 8k u-law
-    private urlFor(voiceId: string) {
-        const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=eleven_multilingual_v2&output_format=ulaw_8000`;
-        console.log(`[ElevenLabs] Connecting to URL: ${url}`);
-        return url;
-    }
+    // Interruption and buffering logic
+    private transcriptBuffer: string = "";
+    private userSpeakingTimer: NodeJS.Timeout | null = null;
 
-    /**
-     * One-shot helper: sends the text *in the very first message*
-     * (voice_settings + text in the same payload), then a blank message to end.
-     * This mirrors your old behavior so the welcome line works reliably.
-     */
-    public speak(
-        text: string,
-        settings: VoiceSettingModel,
-        onStreamStart: () => void,
-        onAudio: (audioB64Ulaw: string) => void,
-        onClose: () => void
-    ) {
-        console.log(`[ElevenLabs] speak() called with text: "${text.slice(0, 100)}..."`);
-        console.log(`[ElevenLabs] speak() settings:`, { voiceId: settings.voiceId, speed: settings.talkingSpeed });
+    // TTS streaming helpers
+    private phraseStreamer: ElevenPhraseStreamer | null = null;
+    private ttsEndTimer: NodeJS.Timeout | null = null;
+    private ttsOpen = false;
 
-        // Validate API key
-        if (!this.apiKey) {
-            console.error("[ElevenLabs] API key is missing!");
-            onClose();
-            return;
+    // "Uhm" pre-roll state
+    private prefillTimer: NodeJS.Timeout | null = null;
+    private llmStarted = false;
+    private prefilled = false;
+
+    private ttsState: "idle" | "opening" | "open" = "idle";
+    private earlyLLMBuffer: string[] = [];
+
+    constructor(
+        @inject(DeepgramClient) private deepgramClient: DeepgramClient,
+        @inject(ChatGPTClient) private chatGptClient: ChatGPTClient,
+        @inject(ElevenLabsClient) private elevenLabsClient: ElevenLabsClient,
+        @inject(CompanyService) private companyService: CompanyService,
+        @inject("IVoiceRepository") private voiceRepository: IVoiceRepository,
+        @inject(IntegrationService) private integrationService: IntegrationService,
+        @inject(SchedulingService) private schedulingService: SchedulingService
+    ) {}
+
+    public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
+        this.ws = ws;
+        this.callSid = callSid;
+        this.streamSid = streamSid;
+        this.audioIn = new PassThrough();
+        this.isAssistantSpeaking = false;
+        this.markCount = 0;
+        this.transcriptBuffer = "";
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
+
+        console.log(`[${this.callSid}] Starting stream for ${to}...`);
+
+        const company = await this.companyService.findByTwilioNumber(to);
+        this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
+        const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
+        const companyContext = await this.companyService.getCompanyContext(company.id);
+        const schedulingContext = await this.schedulingService.getSchedulingContext(company.id);
+        const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
+
+        console.log(`[${this.callSid}] Company: ${company.name}, Google Integration: ${hasGoogleIntegration}`);
+
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ event: "clear", streamSid: this.streamSid }));
+            console.log(`[${this.callSid}] Sent clear message to Twilio.`);
         }
 
-        // Close any existing stream first
-        this.stop();
+        const dgToGpt = new Writable({
+            write: (chunk: Buffer, _encoding, callback) => {
+                const transcript = chunk.toString();
+                if (transcript) {
+                    console.log(`[${this.callSid}] [Deepgram] Transcript chunk:`, transcript);
 
-        const url = this.urlFor(settings.voiceId);
-        this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
-        this.streamStarted = false;
-
-        this.ws.on("open", () => {
-            console.log("[ElevenLabs] speak() WebSocket opened");
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                console.error("[ElevenLabs] speak() WebSocket not open in open handler");
-                return;
-            }
-
-            // IMPORTANT: send voice_settings + initial text together
-            const payload = {
-                voice_settings: {
-                    stability: 0.35,
-                    similarity_boost: 0.8,
-                    speed: settings.talkingSpeed,
-                },
-                text,
-                try_trigger_generation: true,
-                flush: true
-            };
-
-            console.log("[ElevenLabs] speak() sending initial payload:", JSON.stringify(payload, null, 2));
-
-            try {
-                this.ws.send(JSON.stringify(payload));
-                console.log("[ElevenLabs] speak() sent initial message successfully");
-
-                // End immediately for one-shot
-                this.ws.send(JSON.stringify({ text: "" }));
-                console.log("[ElevenLabs] speak() sent end message");
-            } catch (e) {
-                console.error("[ElevenLabs] speak() initial send failed:", e);
-            }
-        });
-
-        this.ws.on("message", (data, isBinary) => {
-            console.log(`[ElevenLabs] speak() received message - binary: ${isBinary}, length: ${data}`);
-
-            try {
-                if (isBinary) {
-                    // This should be audio data in newer API versions
-                    const b64 = data.toString("base64");
-                    console.log(`[ElevenLabs] speak() received BINARY audio data, base64 length: ${b64.length}`);
-
-                    if (!this.streamStarted) {
-                        console.log("[ElevenLabs] speak() triggering onStreamStart");
-                        onStreamStart();
-                        this.streamStarted = true;
+                    // If we get a transcript while the assistant is speaking, it's a confirmed interruption.
+                    if (this.isAssistantSpeaking) {
+                        console.log(`[${this.callSid}] User interruption detected.`);
+                        this.stopTTSTurn(); // stop ElevenLabs immediately
                     }
-                    onAudio(b64);
-                    return;
-                }
 
-                // Text message - parse as JSON
-                const res = JSON.parse(data.toString());
-                console.log("[ElevenLabs] speak() received JSON message:", res);
-
-                // ElevenLabs may send non-audio events; we only forward audio
-                if (res.audio) {
-                    console.log(`[ElevenLabs] speak() received audio in JSON, length: ${res.audio.length}`);
-                    if (!this.streamStarted) {
-                        console.log("[ElevenLabs] speak() triggering onStreamStart");
-                        onStreamStart();
-                        this.streamStarted = true;
-                    }
-                    onAudio(res.audio); // base64 uLaw 8k audio
-                } else if (res?.error) {
-                    console.error("[ElevenLabs] speak() server error:", res.error);
-                } else if (res?.isFinal) {
-                    console.log("[ElevenLabs] speak() received isFinal message");
-                } else {
-                    console.log("[ElevenLabs] speak() received other message type:", res);
+                    this.handleUserSpeech(transcript);
                 }
-            } catch (e) {
-                console.error("[ElevenLabs] speak() JSON parse error:", e);
-                console.error("[ElevenLabs] speak() raw data:", data.toString());
+                callback();
             }
         });
-
-        this.ws.on("close", (code, reason) => {
-            console.log(`[ElevenLabs] speak() WebSocket closed - code: ${code}, reason: ${reason.toString()}`);
-            if (code !== 1000 && code !== 1005) {
-                console.error(`[ElevenLabs] speak() WS closed unexpectedly code=${code} reason=${reason.toString()}`);
-            }
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
-
-        this.ws.on("error", (err) => {
-            console.error("[ElevenLabs] speak() connection error:", err);
-            try { this.ws?.close(1011); } catch {}
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
-    }
-
-    /**
-     * Streaming session for LLM deltas.
-     * First message sends only voice_settings. Then call sendText() repeatedly.
-     * Finally call endStream() to signal completion.
-     */
-    public beginStream(
-        settings: VoiceSettingModel,
-        onStreamStart: () => void,
-        onAudio: (audioB64Ulaw: string) => void,
-        onClose: () => void,
-        onReady?: () => void
-    ) {
-        console.log(`[ElevenLabs] beginStream() called with voiceId: ${settings.voiceId}`);
-
-        // Validate API key
-        if (!this.apiKey) {
-            console.error("[ElevenLabs] API key is missing!");
-            onClose();
-            return;
-        }
-
-        // Close any previous stream first
-        this.stop();
-        this.pendingText = []; // reset
-        this.hasTriggered = false;
-
-        const url = this.urlFor(settings.voiceId);
-        this.ws = new WebSocket(url, { headers: { "xi-api-key": this.apiKey } });
-        this.streamStarted = false;
-
-        this.ws.on("open", () => {
-            console.log("[ElevenLabs] beginStream() WebSocket opened");
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-                console.error("[ElevenLabs] beginStream() WebSocket not open in open handler");
-                return;
-            }
-
-            const payload = {
-                voice_settings: {
-                    stability: 0.5,
-                    similarity_boost: 0.8,
-                    speed: settings.talkingSpeed,
-                },
-                generation_config: { optimize_streaming_latency: 2 }
-            };
-
-            console.log("[ElevenLabs] beginStream() sending initial config:", JSON.stringify(payload, null, 2));
-
-            try {
-                this.ws.send(JSON.stringify(payload));
-                console.log("[ElevenLabs] beginStream() sent initial config successfully");
-
-                // flush any queued text
-                if (this.pendingText.length) {
-                    console.log(`[ElevenLabs] beginStream() flushing ${this.pendingText.length} pending texts`);
-                    this.flushPending(true);
-                }
-
-                console.log("[ElevenLabs] beginStream() calling onReady");
-                onReady && onReady();
-            } catch (e) {
-                console.error("[ElevenLabs] beginStream() initial config send failed:", e);
-            }
-        });
-
-        this.ws.on("message", (data: Buffer, isBinary: boolean) => {
-            console.log(`[ElevenLabs] beginStream() received message - binary: ${isBinary}, length: ${data.length}`);
-
-            try {
-                if (isBinary) {
-                    // ← dit zijn de audio-chunks
-                    const b64 = data.toString("base64");
-                    console.log(`[ElevenLabs] beginStream() received BINARY audio data, base64 length: ${b64.length}`);
-
-                    if (!this.streamStarted) {
-                        console.log("[ElevenLabs] beginStream() triggering onStreamStart");
-                        onStreamStart();
-                        this.streamStarted = true;
-                    }
-                    onAudio(b64);
-                    return;
-                }
-
-                // ← JSON control frames (alignment, final, errors, etc.)
-                const text = data.toString("utf8");
-                const res = JSON.parse(text);
-                console.log("[ElevenLabs] beginStream() received JSON control:", res);
-
-                if (res?.error) {
-                    console.error("[ElevenLabs] beginStream() server error:", res.error);
-                    return;
-                }
-                if (res?.isFinal) {
-                    console.log("[ElevenLabs] beginStream() received isFinal");
-                    return;
-                }
-                if (res?.audio) {
-                    console.log(`[ElevenLabs] beginStream() received audio in JSON, length: ${res.audio.length}`);
-                    if (!this.streamStarted) {
-                        console.log("[ElevenLabs] beginStream() triggering onStreamStart");
-                        onStreamStart();
-                        this.streamStarted = true;
-                    }
-                    onAudio(res.audio);
-                }
-
-            } catch (e) {
-                console.error("[ElevenLabs] beginStream() message parse error:", e);
-                console.error("[ElevenLabs] beginStream() raw data:", data.toString().slice(0, 200));
-            }
-        });
-
-        this.ws.on("close", (code, reason) => {
-            console.log(`[ElevenLabs] beginStream() WebSocket closed - code: ${code}, reason: ${reason.toString()}`);
-            if (code !== 1000 && code !== 1005) {
-                console.error(`[ElevenLabs] beginStream() WS closed unexpectedly code=${code} reason=${reason.toString()}`);
-            }
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
-
-        this.ws.on("error", (err) => {
-            console.error("[ElevenLabs] beginStream() connection error:", err);
-            try { this.ws?.close(1011); } catch {}
-            this.ws = null;
-            this.streamStarted = false;
-            onClose();
-        });
-    }
-
-    /** Send more text (can be called multiple times as tokens arrive). */
-    public sendText(text: string) {
-        console.log(`[ElevenLabs] sendText() called with: "${text.slice(0, 80)}..."`);
-
-        if (!text || !text.trim()) {
-            console.log("[ElevenLabs] sendText() ignoring empty text");
-            return;
-        }
-
-        // queue if not open yet
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.log("[ElevenLabs] sendText() WebSocket not open, queuing text");
-            this.pendingText.push(text);
-            return;
-        }
 
         try {
-            const payload = { text };
-            console.log(`[ElevenLabs] sendText() sending: ${JSON.stringify(payload)}`);
-            this.ws.send(JSON.stringify(payload));
+            await this.deepgramClient.start(this.audioIn, dgToGpt);
+            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext, schedulingContext);
+            console.log(`[${this.callSid}] Deepgram client initialized.`);
 
-            // First real text? Nudge the server to start generating
-            if (!this.hasTriggered && text.trim().length >= 40) {
-                console.log("[ElevenLabs] sendText() triggering generation");
-                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                this.hasTriggered = true;
-            }
-            this.armIdleFlush();
-        } catch (e) {
-            console.error("[ElevenLabs] sendText() failed:", e);
+            // One-shot welcome phrase (kept as before)
+            console.log("[VoiceService] speak() starting welcome");
+            await this.speak(this.voiceSettings.welcomePhrase);
+            console.log("[VoiceService] speak() finished welcome");
+        } catch (error) {
+            console.error(`[${this.callSid}] Error during service initialization:`, error);
+            this.stopStreaming();
         }
     }
 
-    /** Signal no more text — TTS will finish and then close. */
-    public endStream() {
-        console.log("[ElevenLabs] endStream() called");
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.log("[ElevenLabs] endStream() WebSocket not open");
+    private handleUserSpeech(transcript: string) {
+        this.transcriptBuffer += transcript + " ";
+
+        if (this.userSpeakingTimer) {
+            clearTimeout(this.userSpeakingTimer);
+        }
+
+        this.userSpeakingTimer = setTimeout(() => {
+            this.processBufferedTranscript();
+        }, USER_SILENCE_TIMEOUT_MS);
+    }
+
+    private async processBufferedTranscript() {
+        if (!this.transcriptBuffer.trim()) {
+            this.transcriptBuffer = "";
             return;
         }
-        try {
-            // ensure any remaining buffer is synthesized
-            if (!this.hasTriggered) {
-                console.log("[ElevenLabs] endStream() triggering generation");
-                this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                this.hasTriggered = true;
+
+        const finalTranscript = this.transcriptBuffer.trim();
+        this.transcriptBuffer = "";
+        console.log(`[${this.callSid}] Processing final transcript:`, finalTranscript);
+
+        // Reset pre-roll state
+        this.clearPrefill();
+        this.llmStarted = false;
+        this.prefilled = false;
+
+        // ---- OPEN a TTS turn (persistent ElevenLabs stream) ----
+        this.beginTTSTurn();
+
+        // Optionally insert a short "uhm" if the model hasn't started quickly
+        this.schedulePrefillFiller(finalTranscript);
+
+        // Stream LLM tokens; deltas will go to phraseStreamer → ElevenLabs
+        await this.chatGptClient.start(
+            Readable.from([finalTranscript]),
+            async (delta: string) => {
+                // First delta cancels pre-roll timer
+                if (!this.llmStarted) {
+                    this.llmStarted = true;
+                    this.clearPrefill();
+                }
+                this.onLLMDelta(delta);
             }
-            console.log("[ElevenLabs] endStream() sending flush and end messages");
-            this.ws.send(JSON.stringify({ flush: true }));
-            this.ws.send(JSON.stringify({ text: "" }));
-        } catch (e) {
-            console.error("[ElevenLabs] endStream() failed:", e);
+        ).catch(err => console.error(`[${this.callSid}] ChatGPT error:`, err));
+
+        // When ChatGPT stops sending deltas, close TTS shortly after
+        this.scheduleTTSEnd();
+    }
+
+    // ---- "Uhm" pre-roll helpers ----
+    private schedulePrefillFiller(userText: string) {
+        if (!this.shouldPrefillFiller(userText)) return;
+        if (this.prefillTimer) clearTimeout(this.prefillTimer);
+
+        this.prefillTimer = setTimeout(() => {
+            if (this.llmStarted) return; // model already talking
+
+            if (this.ttsState === "idle") this.beginTTSTurn();
+            const filler = this.pickFiller();
+
+            // If not fully open yet, buffer the filler; otherwise push it immediately
+            if (this.ttsState !== "open" || !this.phraseStreamer) {
+                this.earlyLLMBuffer.push(filler);
+            } else {
+                this.phraseStreamer.push(filler);
+                this.scheduleTTSEnd();
+            }
+            this.prefilled = true;
+        }, PREFILL_DELAY_MS);
+    }
+
+    private shouldPrefillFiller(userText: string): boolean {
+        // Keep it simple: random chance, avoid after simple yes/no starts
+        if (Math.random() >= PREFILL_PROBABILITY) return false;
+        if (/^\s*(ja|nee)\b/i.test(userText)) return false;
+        return true;
+    }
+
+    private pickFiller(): string {
+        const i = Math.floor(Math.random() * PREFILL_CHOICES.length);
+        return PREFILL_CHOICES[i];
+    }
+
+    private clearPrefill() {
+        if (this.prefillTimer) { clearTimeout(this.prefillTimer); this.prefillTimer = null; }
+    }
+    // ---- End pre-roll helpers ----
+
+    // ---- ElevenLabs streaming orchestration ----
+    private beginTTSTurn() {
+        if (!this.voiceSettings) {
+            console.error(`[${this.callSid}] Attempted to open TTS without voice settings.`);
+            return;
+        }
+        if (this.ttsState !== "idle") return; // ← prevent re-entrant opens
+        this.ttsState = "opening";
+
+        const onStreamStart = () => {
+            this.isAssistantSpeaking = true;
+            const markName = `spoke-${this.markCount++}`;
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "mark",
+                    streamSid: this.streamSid,
+                    mark: { name: markName },
+                }));
+                console.log(`[${this.callSid}] Sent mark: ${markName}`);
+            }
+        };
+
+        const onAudio = (audioPayload: string) => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "media",
+                    streamSid: this.streamSid,
+                    media: { payload: audioPayload },
+                }));
+            }
+        };
+
+        const onClose = () => {
+            this.isAssistantSpeaking = false;
+            this.phraseStreamer = null;
+            if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+            this.clearPrefill();
+            this.ttsState = "idle";
+        };
+
+        this.elevenLabsClient.beginStream(
+            this.voiceSettings,
+            onStreamStart,
+            onAudio,
+            onClose,
+            () => {
+                // onReady
+                // Create the chunker only once TTS is ready
+                console.log(`[${this.callSid}] TTS onReady (stream open)`);
+                this.phraseStreamer = new ElevenPhraseStreamer((text) => this.elevenLabsClient.sendText(text));
+                this.ttsState = "open";
+
+                // Drain anything that arrived while opening
+                if (this.earlyLLMBuffer.length) {
+                    const buffered = this.earlyLLMBuffer.join("");
+                    this.earlyLLMBuffer = [];
+                    this.phraseStreamer.push(buffered);
+                    this.scheduleTTSEnd();
+                }
+            }
+        );
+    }
+
+    private onLLMDelta(delta: string) {
+        console.log(`[${this.callSid}] onLLMDelta len=${delta.length} state=${this.ttsState}`);
+        if (!delta) return;
+
+        if (this.ttsState === "idle") {
+            this.beginTTSTurn();              // start a new turn
+            this.earlyLLMBuffer.push(delta);  // buffer until open
+            return;
+        }
+        if (this.ttsState === "opening" || !this.phraseStreamer) {
+            this.earlyLLMBuffer.push(delta);  // still opening: buffer
+            return;
+        }
+
+        // state === "open"
+        this.phraseStreamer.push(delta);
+        this.scheduleTTSEnd();
+    }
+
+
+    private scheduleTTSEnd() {
+        if (this.ttsEndTimer) clearTimeout(this.ttsEndTimer);
+        this.ttsEndTimer = setTimeout(() => this.endTTSTurn(), TTS_END_DEBOUNCE_MS);
+    }
+
+    private endTTSTurn() {
+        if (this.ttsState !== "open") return;
+        try {
+            this.phraseStreamer?.end();
+            this.elevenLabsClient.endStream();
         } finally {
-            this.clearIdleFlush();
+            this.phraseStreamer = null;
+            this.isAssistantSpeaking = false;
+            this.ttsState = "idle";
+            if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+            this.clearPrefill();
         }
     }
 
-    /** Force close (e.g., user interruption / call ended). */
-    public stop() {
-        console.log("[ElevenLabs] stop() called");
-        this.clearIdleFlush();
-        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-            try {
-                console.log("[ElevenLabs] stop() closing WebSocket");
-                this.ws.close(1000);
-            } catch (e) {
-                console.error("[ElevenLabs] stop() error closing WebSocket:", e);
-            }
-        }
-        this.ws = null;
-        this.streamStarted = false;
-        this.pendingText = [];
-        this.hasTriggered = false;
+    private stopTTSTurn() {
+        try { this.elevenLabsClient.stop(); } catch {}
+        this.phraseStreamer = null;
+        this.isAssistantSpeaking = false;
+        this.ttsState = "idle";
+        if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
+        this.clearPrefill();
     }
+    // ---- End ElevenLabs streaming orchestration ----
 
-    private flushPending(trigger = false) {
-        console.log(`[ElevenLabs] flushPending() called with ${this.pendingText.length} pending texts, trigger: ${trigger}`);
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.log("[ElevenLabs] flushPending() WebSocket not open");
+    // Kept for one-shot phrases like the welcome line
+    private async speak(text: string) {
+        if (!this.voiceSettings) {
+            console.error(`[${this.callSid}] Attempted to speak without voice settings.`);
             return;
         }
-        for (const t of this.pendingText) {
-            console.log(`[ElevenLabs] flushPending() sending: "${t.slice(0, 50)}..."`);
-            this.ws.send(JSON.stringify({ text: t }));
-        }
-        this.pendingText = [];
-        if (trigger && !this.hasTriggered) {
-            console.log("[ElevenLabs] flushPending() triggering generation");
-            this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-            this.hasTriggered = true;
-        }
-        this.armIdleFlush();
-    }
 
-    private armIdleFlush() {
-        this.clearIdleFlush();
-        console.log("[ElevenLabs] armIdleFlush() setting 250ms timeout");
-        // if no new text for 250ms, force synthesis of what we have
-        this.idleFlushTimer = setTimeout(() => {
-            console.log("[ElevenLabs] armIdleFlush() timeout triggered, sending flush");
-            try {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({ flush: true }));
-                    if (!this.hasTriggered) {
-                        console.log("[ElevenLabs] armIdleFlush() triggering generation");
-                        this.ws.send(JSON.stringify({ try_trigger_generation: true }));
-                        this.hasTriggered = true;
-                    }
-                }
-            } catch (e) {
-                console.error("[ElevenLabs] armIdleFlush() timeout error:", e);
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
+        this.transcriptBuffer = "";
+
+        const onStreamStart = () => {
+            console.log("[TW] onStreamStart");
+            this.isAssistantSpeaking = true;
+            const markName = `spoke-${this.markCount++}`;
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "mark",
+                    streamSid: this.streamSid,
+                    mark: { name: markName },
+                }));
+                console.log(`[${this.callSid}] Sent mark: ${markName}`);
             }
-        }, 250);
+        };
+
+        const onAudio = (audioPayload: string) => {
+            console.log("[TW] write", { bytes: audioPayload.length });
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    event: "media",
+                    streamSid: this.streamSid,
+                    media: { payload: audioPayload },
+                }));
+            }
+        };
+
+        const onClose = () => {
+            console.log("[TW] onClose");
+            this.isAssistantSpeaking = false;
+        };
+
+        this.elevenLabsClient.speak(text, this.voiceSettings, onStreamStart, onAudio, onClose);
     }
 
-    private clearIdleFlush() {
-        if (this.idleFlushTimer) {
-            console.log("[ElevenLabs] clearIdleFlush() clearing timeout");
-            clearTimeout(this.idleFlushTimer);
-            this.idleFlushTimer = null;
+    public sendAudio(payload: string) {
+        if (this.audioIn) {
+            this.audioIn.write(Buffer.from(payload, "base64"));
         }
+    }
+
+    public handleMark(name: string) {
+        console.log(`[${this.callSid}] Received mark: ${name}. Assistant finished a sentence.`);
+    }
+
+    public stopStreaming() {
+        if (!this.callSid) return;
+        console.log(`[${this.callSid}] Stopping stream...`);
+        this.stopTTSTurn();
+        if (this.userSpeakingTimer) clearTimeout(this.userSpeakingTimer);
+        this.audioIn?.end();
+        this.chatGptClient.clearHistory();
+        this.ws = null;
+        this.callSid = null;
+        this.streamSid = null;
+        this.audioIn = null;
+        this.voiceSettings = null;
+        this.transcriptBuffer = "";
     }
 }
