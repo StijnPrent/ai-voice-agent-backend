@@ -33,7 +33,7 @@ export class DeepgramClient {
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
-            endpointing: 1000, // was 800; sneller einde van een uiting detecteren
+            endpointing: 800, // was 800; sneller einde van een uiting detecteren
             vad_events: true, // ontvang UtteranceEnd events
         });
 
