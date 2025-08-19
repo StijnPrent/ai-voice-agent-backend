@@ -80,7 +80,7 @@ export class ElevenLabsClient {
         });
 
         this.ws.on("message", (data, isBinary) => {
-            console.log(`[ElevenLabs] speak() received message - binary: ${isBinary}, length: ${data.length}`);
+            console.log(`[ElevenLabs] speak() received message - binary: ${isBinary}, length: ${data}`);
 
             try {
                 if (isBinary) {
