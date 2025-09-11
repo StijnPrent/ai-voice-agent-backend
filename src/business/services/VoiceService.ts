@@ -19,6 +19,8 @@ const TTS_END_DEBOUNCE_MS = 1800;      // End ElevenLabs stream shortly after la
 const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
 const PREFILL_PROBABILITY = 0.15;     // 15% of turns get a filler
 const PREFILL_CHOICES = ["Ehm… ", "Even kijken… ", "Hmm… "];
+const ENERGY_THRESHOLD = 200; // Higher threshold to avoid cutting off too early
+const ENERGY_FRAMES_REQUIRED = 3; // consecutive frames above threshold to trigger stop
 
 @injectable()
 export class VoiceService {
@@ -46,6 +48,7 @@ export class VoiceService {
 
     private ttsState: "idle" | "opening" | "open" = "idle";
     private earlyLLMBuffer: string[] = [];
+    private highEnergyFrames: number = 0;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -102,8 +105,19 @@ export class VoiceService {
         });
 
         try {
-            await this.deepgramClient.start(this.audioIn, dgToGpt);
-            this.chatGptClient.setCompanyInfo(company, hasGoogleIntegration, replyStyle, companyContext, schedulingContext);
+            await this.deepgramClient.start(this.audioIn, dgToGpt, () => {
+                if (this.isAssistantSpeaking) {
+                    console.log(`[${this.callSid}] VAD detected speech start.`);
+                    this.stopTTSTurn();
+                }
+            });
+            this.chatGptClient.setCompanyInfo(
+                company,
+                hasGoogleIntegration,
+                replyStyle,
+                companyContext,
+                schedulingContext
+            );
             console.log(`[${this.callSid}] Deepgram client initialized.`);
 
             // One-shot welcome phrase (kept as before)
@@ -213,6 +227,7 @@ export class VoiceService {
         }
         if (this.ttsState !== "idle") return; // ← prevent re-entrant opens
         this.ttsState = "opening";
+        this.highEnergyFrames = 0;
 
         const onStreamStart = () => {
             this.isAssistantSpeaking = true;
@@ -303,6 +318,7 @@ export class VoiceService {
             this.ttsState = "idle";
             if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
             this.clearPrefill();
+            this.highEnergyFrames = 0;
         }
     }
 
@@ -313,6 +329,7 @@ export class VoiceService {
         this.ttsState = "idle";
         if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
         this.clearPrefill();
+        this.highEnergyFrames = 0;
     }
     // ---- End ElevenLabs streaming orchestration ----
 
@@ -359,9 +376,33 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
-        if (this.audioIn) {
-            this.audioIn.write(Buffer.from(payload, "base64"));
+        const buffer = Buffer.from(payload, "base64");
+
+        if (this.isAssistantSpeaking) {
+            const energy = this.computeEnergy(buffer);
+            if (energy > ENERGY_THRESHOLD) {
+                this.highEnergyFrames++;
+                if (this.highEnergyFrames >= ENERGY_FRAMES_REQUIRED) {
+                    console.log(
+                        `[${this.callSid}] Audio energy ${energy.toFixed(2)} sustained over ${this.highEnergyFrames} frames. Stopping.`
+                    );
+                    this.stopTTSTurn();
+                }
+            } else {
+                this.highEnergyFrames = 0;
+            }
         }
+
+        this.audioIn?.write(buffer);
+    }
+
+    private computeEnergy(buf: Buffer): number {
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+            const v = buf[i] - 128; // center around zero
+            sum += v * v;
+        }
+        return Math.sqrt(sum / buf.length);
     }
 
     public handleMark(name: string) {

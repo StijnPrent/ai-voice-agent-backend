@@ -24,7 +24,16 @@ export class DeepgramClient {
      * - VAD events ingeschakeld
      * - Lagere endpointing voor snellere turn-taking
      */
-    async start(inputStream: Readable, outputStream: Writable): Promise<void> {
+    /**
+     * @param inputStream  Audio stream coming from the caller
+     * @param outputStream Where final transcripts are written
+     * @param onSpeechStart Optional callback invoked when VAD detects speech start
+     */
+    async start(
+        inputStream: Readable,
+        outputStream: Writable,
+        onSpeechStart?: () => void
+    ): Promise<void> {
         // Set up a live connection
         const transcription = this.deepgram.listen.live({
             language: "nl",
@@ -77,6 +86,7 @@ export class DeepgramClient {
         let buf = "";
         let failsafeTimer: NodeJS.Timeout | null = null;
         let closed = false;
+        let speechStarted = false;
 
         const clearFailsafe = () => {
             if (failsafeTimer) {
@@ -105,17 +115,28 @@ export class DeepgramClient {
             }
             buf = "";
             clearFailsafe();
+            speechStarted = false;
         };
 
-        // Consume only FINAL transcript pieces; do NOT flush on punctuation
+        // Consume transcript pieces
         transcription.on(LiveTranscriptionEvents.Transcript, (data: any) => {
             const transcript = data?.channel?.alternatives?.[0]?.transcript ?? "";
             const isFinal = Boolean(data?.is_final);
 
-            if (transcript && isFinal) {
-                buf += (buf ? " " : "") + transcript;
-                // We wachten op UtteranceEnd; start failsafe mocht het lang stil zijn
-                startFailsafe();
+            if (transcript) {
+                if (!isFinal) {
+                    if (!speechStarted && transcript.trim().length > 2) {
+                        // Ignore very short/noisy fragments to avoid false positives
+                        speechStarted = true;
+                        try { onSpeechStart?.(); } catch (e) {
+                            console.error("[Deepgram] onSpeechStart callback error:", e);
+                        }
+                    }
+                } else {
+                    buf += (buf ? " " : "") + transcript;
+                    // We wachten op UtteranceEnd; start failsafe mocht het lang stil zijn
+                    startFailsafe();
+                }
             }
         });
 
