@@ -20,7 +20,7 @@ export class DeepgramClient {
 
     /**
      * Start a real-time transcriptie-stream met Deepgram.
-     * - Flusht ALLEEN bij UtteranceEnd (of na 2s failsafe-stilte)
+     * - Flusht ALLEEN bij UtteranceEnd (of na 0.5s failsafe-stilte)
      * - VAD events ingeschakeld
      * - Lagere endpointing voor snellere turn-taking
      */
@@ -33,7 +33,7 @@ export class DeepgramClient {
             sample_rate: 8000,
             punctuate: true,
             smart_format: true,
-            endpointing: 800, // was 800; sneller einde van een uiting detecteren
+            endpointing: 200, // was 800; sneller einde van een uiting detecteren
             vad_events: true, // ontvang UtteranceEnd events
         });
 
@@ -87,8 +87,8 @@ export class DeepgramClient {
 
         const startFailsafe = () => {
             clearFailsafe();
-            // Als 2s geen UtteranceEnd komt, toch flushen (lange pauze)
-            failsafeTimer = setTimeout(() => flushNow("failsafe"), 2000);
+            // Als 0.5s geen UtteranceEnd komt, toch flushen (lange pauze)
+            failsafeTimer = setTimeout(() => flushNow("failsafe"), 500);
         };
 
         const flushNow = (reason: FlushReason) => {
