@@ -125,7 +125,8 @@ export class DeepgramClient {
 
             if (transcript) {
                 if (!isFinal) {
-                    if (!speechStarted) {
+                    if (!speechStarted && transcript.trim().length > 2) {
+                        // Ignore very short/noisy fragments to avoid false positives
                         speechStarted = true;
                         try { onSpeechStart?.(); } catch (e) {
                             console.error("[Deepgram] onSpeechStart callback error:", e);

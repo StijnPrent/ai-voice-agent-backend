@@ -19,7 +19,8 @@ const TTS_END_DEBOUNCE_MS = 1800;      // End ElevenLabs stream shortly after la
 const PREFILL_DELAY_MS = 350;         // wait this long before inserting a filler
 const PREFILL_PROBABILITY = 0.15;     // 15% of turns get a filler
 const PREFILL_CHOICES = ["Ehm… ", "Even kijken… ", "Hmm… "];
-const ENERGY_THRESHOLD = 100; // Rough energy level to detect user speech during TTS
+const ENERGY_THRESHOLD = 200; // Higher threshold to avoid cutting off too early
+const ENERGY_FRAMES_REQUIRED = 3; // consecutive frames above threshold to trigger stop
 
 @injectable()
 export class VoiceService {
@@ -47,6 +48,7 @@ export class VoiceService {
 
     private ttsState: "idle" | "opening" | "open" = "idle";
     private earlyLLMBuffer: string[] = [];
+    private highEnergyFrames: number = 0;
 
     constructor(
         @inject(DeepgramClient) private deepgramClient: DeepgramClient,
@@ -225,6 +227,7 @@ export class VoiceService {
         }
         if (this.ttsState !== "idle") return; // ← prevent re-entrant opens
         this.ttsState = "opening";
+        this.highEnergyFrames = 0;
 
         const onStreamStart = () => {
             this.isAssistantSpeaking = true;
@@ -315,6 +318,7 @@ export class VoiceService {
             this.ttsState = "idle";
             if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
             this.clearPrefill();
+            this.highEnergyFrames = 0;
         }
     }
 
@@ -325,6 +329,7 @@ export class VoiceService {
         this.ttsState = "idle";
         if (this.ttsEndTimer) { clearTimeout(this.ttsEndTimer); this.ttsEndTimer = null; }
         this.clearPrefill();
+        this.highEnergyFrames = 0;
     }
     // ---- End ElevenLabs streaming orchestration ----
 
@@ -376,10 +381,15 @@ export class VoiceService {
         if (this.isAssistantSpeaking) {
             const energy = this.computeEnergy(buffer);
             if (energy > ENERGY_THRESHOLD) {
-                console.log(
-                    `[${this.callSid}] Audio energy ${energy.toFixed(2)} detected during TTS. Stopping.`
-                );
-                this.stopTTSTurn();
+                this.highEnergyFrames++;
+                if (this.highEnergyFrames >= ENERGY_FRAMES_REQUIRED) {
+                    console.log(
+                        `[${this.callSid}] Audio energy ${energy.toFixed(2)} sustained over ${this.highEnergyFrames} frames. Stopping.`
+                    );
+                    this.stopTTSTurn();
+                }
+            } else {
+                this.highEnergyFrames = 0;
             }
         }
 
