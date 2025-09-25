@@ -55,6 +55,7 @@ type VapiAssistantsApi = {
     list: (params?: Record<string, unknown>) => Promise<unknown>;
 };
 
+
 class VapiRealtimeSession {
     private closed = false;
 
@@ -107,7 +108,6 @@ export class VapiClient {
     private readonly http: AxiosInstance | null;
     private readonly sdkAssistants: VapiAssistantsApi | null;
     private readonly assistantCache = new Map<string, string>();
-
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
@@ -643,6 +643,7 @@ export class VapiClient {
     private buildAssistantPayload(config: VapiAssistantConfig) {
         const instructions = this.buildSystemPrompt(config);
         const snapshot = this.buildCompanySnapshot(config);
+
         const tools = this.getTools(config.hasGoogleIntegration);
         const voice = config.voiceSettings
             ? {
@@ -662,6 +663,7 @@ export class VapiClient {
                 companyName: config.company.name,
                 googleCalendarEnabled: config.hasGoogleIntegration,
                 companyContext: snapshot,
+
             },
             first_message: config.voiceSettings?.welcomePhrase ?? undefined,
             firstMessage: config.voiceSettings?.welcomePhrase ?? undefined,
