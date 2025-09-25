@@ -203,12 +203,10 @@ export class CompanyService {
     }
 
     public async getCompanyContext(companyId: bigint) {
-        const [details, contact, hours, info] = await Promise.all([
-            this.getCompanyDetails(companyId),
-            this.getCompanyContact(companyId),
-            this.getCompanyHours(companyId),
-            this.getCompanyInfo(companyId),
-        ]);
+        const details = await this.getCompanyDetails(companyId);
+        const contact = await this.getCompanyContact(companyId);
+        const hours = await this.getCompanyHours(companyId);
+        const info = await this.getCompanyInfo(companyId);
 
         return {
             details,
