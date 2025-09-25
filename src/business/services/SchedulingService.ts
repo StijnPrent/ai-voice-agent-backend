@@ -48,10 +48,8 @@ export class SchedulingService {
     }
 
     public async getSchedulingContext(companyId: bigint) {
-        const [appointmentTypes, staffMembers] = await Promise.all([
-            this.getAppointmentTypes(companyId),
-            this.getStaffMembers(companyId),
-        ]);
+        const appointmentTypes = await this.getAppointmentTypes(companyId);
+        const staffMembers = await this.getStaffMembers(companyId);
 
         return {
             appointmentTypes,

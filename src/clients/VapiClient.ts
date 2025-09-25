@@ -100,7 +100,6 @@ export class VapiClient {
     private readonly realtimeBaseUrl: string;
     private readonly http: AxiosInstance;
     private readonly assistantCache = new Map<string, string>();
-
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
@@ -117,6 +116,7 @@ export class VapiClient {
 
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/v1/realtime";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
+
         this.http = axios.create({
             baseURL: apiBaseUrl,
             headers: {
@@ -173,7 +173,6 @@ export class VapiClient {
             "Zaterdag",
         ];
         const getDayName = (index: number) => dayNames[((index % 7) + 7) % 7] ?? `Dag ${index}`;
-
         let prompt =
             `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${company.name}'. ${replyStyle.description}` +
             " je praat zo menselijk mogelijk" +
@@ -283,7 +282,7 @@ export class VapiClient {
         if (!enabled) {
             return [];
         }
-
+      
         return [
             {
                 type: "function",
