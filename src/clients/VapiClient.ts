@@ -49,6 +49,13 @@ export type NormalizedToolCall = {
     args: Record<string, unknown>;
 };
 
+type VapiAssistantsApi = {
+    create: (payload: Record<string, unknown>) => Promise<unknown>;
+    update: (id: string, payload: Record<string, unknown>) => Promise<unknown>;
+    list: (params?: Record<string, unknown>) => Promise<unknown>;
+};
+
+
 class VapiRealtimeSession {
     private closed = false;
 
@@ -98,7 +105,8 @@ class VapiRealtimeSession {
 export class VapiClient {
     private readonly apiKey: string;
     private readonly realtimeBaseUrl: string;
-    private readonly http: AxiosInstance;
+    private readonly http: AxiosInstance | null;
+    private readonly sdkAssistants: VapiAssistantsApi | null;
     private readonly assistantCache = new Map<string, string>();
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -114,17 +122,23 @@ export class VapiClient {
             console.warn("[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.");
         }
 
-        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/v1/realtime";
+        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/realtime";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
 
-        this.http = axios.create({
-            baseURL: apiBaseUrl,
-            headers: {
-                Authorization: `Bearer ${this.apiKey}`,
-                "Content-Type": "application/json",
-            },
-            timeout: 15000,
-        });
+        this.sdkAssistants = this.initializeSdkAssistants(apiBaseUrl);
+
+        if (this.sdkAssistants) {
+            this.http = null;
+        } else {
+            this.http = axios.create({
+                baseURL: apiBaseUrl,
+                headers: {
+                    Authorization: `Bearer ${this.apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                timeout: 15000,
+            });
+        }
     }
 
     public setCompanyInfo(
@@ -159,9 +173,52 @@ export class VapiClient {
             );
         }
 
-        const { company, replyStyle, companyContext, schedulingContext, hasGoogleIntegration, voiceSettings } = effectiveConfig;
-        const { details, contact, hours, info } = companyContext;
-        const { appointmentTypes, staffMembers } = schedulingContext;
+        const today = new Date().toLocaleDateString("nl-NL", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+        });
+
+        const context = this.buildCompanySnapshot(effectiveConfig);
+        const contextJson = JSON.stringify(context);
+
+        const instructions: string[] = [
+            `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
+            "Praat natuurlijk en menselijk en help de beller snel verder.",
+            `Vandaag is het ${today}. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
+            "Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.",
+        ];
+
+        if (effectiveConfig.voiceSettings?.welcomePhrase) {
+            instructions.push(
+                `Start elk gesprek vriendelijk met de welkomstboodschap: \"${effectiveConfig.voiceSettings.welcomePhrase}\".`
+            );
+        }
+
+        if (effectiveConfig.hasGoogleIntegration) {
+            instructions.push(
+                "Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool 'check_calendar_availability' voordat je een tijdstip voorstelt en vraag om naam en geboortedatum voordat je 'create_calendar_event' of 'cancel_calendar_event' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden."
+            );
+        } else {
+            instructions.push(
+                "Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden."
+            );
+        }
+
+        instructions.push("Bedrijfscontext (JSON):", contextJson);
+
+        return instructions.join("\n\n");
+    }
+
+    private buildCompanySnapshot(config: VapiAssistantConfig) {
+        const limitString = (value: string | null | undefined, max = 240) => {
+            if (!value) return undefined;
+            const trimmed = value.trim();
+            if (!trimmed) return undefined;
+            if (trimmed.length <= max) return trimmed;
+            return `${trimmed.slice(0, max - 1)}…`;
+        };
 
         const dayNames = [
             "Zondag",
@@ -173,108 +230,71 @@ export class VapiClient {
             "Zaterdag",
         ];
         const getDayName = (index: number) => dayNames[((index % 7) + 7) % 7] ?? `Dag ${index}`;
-        let prompt =
-            `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${company.name}'. ${replyStyle.description}` +
-            " je praat zo menselijk mogelijk" +
-            ` het is vandaag ${new Date().toLocaleDateString('nl-NL', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            })}` +
-            " Vermijd het gebruik van numerieke datum- en tijdnotatie (zoals 'dd-mm-jj', '14-08-25' of '10:00'). Schrijf tijden en datums altijd voluit in natuurlijke taal, bijvoorbeeld 'tien uur' en '14 augustus 2025'.";
 
-        prompt += "Hier is wat informatie over het bedrijf:\n";
+        const hours = (config.companyContext.hours ?? []).slice(0, 7).map((hour) => ({
+            day: getDayName(hour.dayOfWeek),
+            status: hour.isOpen ? `${hour.openTime} - ${hour.closeTime}` : "Gesloten",
+        }));
 
-        if (details) {
-            prompt += `\n**Bedrijfsdetails:**\n`;
-            prompt += `- Naam: ${details.name}\n`;
-            if (details.industry) prompt += `- Industrie: ${details.industry}\n`;
-            if (details.description) prompt += `- Omschrijving: ${details.description}\n`;
-        }
+        const info = (config.companyContext.info ?? [])
+            .filter((entry) => entry.value)
+            .slice(0, 10)
+            .map((entry) => limitString(entry.value, 320))
+            .filter((value): value is string => Boolean(value));
 
-        if (contact) {
-            prompt += `\n**Contactgegevens:**\n`;
-            if (contact.website) prompt += `- Website: ${contact.website}\n`;
-            if (contact.contact_email) prompt += `- E-mailadres: ${contact.contact_email}\n`;
-            if (contact.phone) prompt += `- Telefoonnummer: ${contact.phone}\n`;
-            if (contact.address) prompt += `- Adres: ${contact.address}\n`;
-        }
+        const appointmentTypes = (config.schedulingContext.appointmentTypes ?? [])
+            .slice(0, 8)
+            .map((appointment) => ({
+                name: appointment.name,
+                durationMinutes: appointment.duration ?? undefined,
+            }));
 
-        if (hours && hours.length > 0) {
-            prompt += `\n**Openingstijden:**\n`;
-            hours.forEach((hour) => {
-                const day = getDayName(hour.dayOfWeek);
-                if (hour.isOpen) {
-                    prompt += `- ${day}: ${hour.openTime} - ${hour.closeTime}\n`;
-                } else {
-                    prompt += `- ${day}: Gesloten\n`;
-                }
-            });
-        }
+        const staffMembers = (config.schedulingContext.staffMembers ?? [])
+            .slice(0, 5)
+            .map((staff) => {
+                const grouped = new Map<number, string[]>();
+                (staff.availability ?? [])
+                    .filter((slot) => slot.isActive && slot.startTime && slot.endTime)
+                    .forEach((slot) => {
+                        const ranges = grouped.get(slot.dayOfWeek) ?? [];
+                        if (ranges.length < 3) {
+                            ranges.push(`${slot.startTime} - ${slot.endTime}`);
+                            grouped.set(slot.dayOfWeek, ranges);
+                        }
+                    });
 
-        if (info && info.length > 0) {
-            prompt += "\n**Algemene Informatie:**\n";
-            info.forEach((i) => {
-                prompt += `- ${i.value}\n`;
-            });
-        }
+                const availability = Array.from(grouped.entries())
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([dayOfWeek, ranges]) => ({
+                        day: getDayName(dayOfWeek),
+                        ranges,
+                    }));
 
-        if (appointmentTypes && appointmentTypes.length > 0) {
-            const MAX_APPOINTMENT_TYPES = 10;
-            const limitedAppointments = appointmentTypes.slice(0, MAX_APPOINTMENT_TYPES);
-            prompt += "\n**Soorten Afspraken:**\n";
-            limitedAppointments.forEach((appointment) => {
-                const durationLabel = appointment.duration ? ` (${appointment.duration} minuten)` : "";
-                prompt += `- ${appointment.name}${durationLabel}\n`;
-            });
-            if (appointmentTypes.length > MAX_APPOINTMENT_TYPES) {
-                prompt += `- ...en ${appointmentTypes.length - MAX_APPOINTMENT_TYPES} extra afspraaktypes beschikbaar.\n`;
-            }
-        }
-
-        if (staffMembers && staffMembers.length > 0) {
-            const MAX_STAFF_ENTRIES = 5;
-            const limitedStaff = staffMembers.slice(0, MAX_STAFF_ENTRIES);
-            prompt += "\n**Medewerkers en Beschikbaarheid:**\n";
-            limitedStaff.forEach((staff) => {
-                prompt += `- ${staff.name} (${staff.role})\n`;
-                if (staff.availability && staff.availability.length > 0) {
-                    const groupedByDay = new Map<number, string[]>();
-                    staff.availability
-                        .filter((avail) => avail.isActive && avail.startTime && avail.endTime)
-                        .forEach((avail) => {
-                            const slots = groupedByDay.get(avail.dayOfWeek) ?? [];
-                            slots.push(`${avail.startTime} - ${avail.endTime}`);
-                            groupedByDay.set(avail.dayOfWeek, slots);
-                        });
-
-                    const orderedDays = Array.from(groupedByDay.entries()).sort((a, b) => a[0] - b[0]);
-                    for (const [dayOfWeek, ranges] of orderedDays) {
-                        const day = getDayName(dayOfWeek);
-                        prompt += `  - ${day}: ${ranges.join(", ")}\n`;
-                    }
-                }
+                return {
+                    name: staff.name,
+                    role: staff.role ?? undefined,
+                    availability,
+                };
             });
 
-            if (staffMembers.length > MAX_STAFF_ENTRIES) {
-                prompt += `  ...en ${staffMembers.length - MAX_STAFF_ENTRIES} extra medewerkers beschikbaar.\n`;
-            }
-        }
-
-        prompt += "\n";
-
-        if (voiceSettings?.welcomePhrase) {
-            prompt += `\nStart elk gesprek vriendelijk met: \"${voiceSettings.welcomePhrase}\".`;
-        }
-
-        if (hasGoogleIntegration) {
-            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik ALTIJD de 'check_calendar_availability' tool om te controleren op beschikbare tijden voordat je een afspraak voorstelt. Vraag de gebruiker om hun volledige naam en geboortedatum voor je de afspraak inplant met 'create_calendar_event'. Deze gegevens zijn nodig om de afspraak later te kunnen annuleren met 'cancel_calendar_event'. Vraag altijd om een expliciete bevestiging voordat je de afspraak definitief inplant.";
-        } else {
-            prompt += "BELANGRIJKE INSTRUCTIE: Je hebt GEEN toegang tot de agenda. Als een gebruiker een afspraak wil maken, informeer hen dan dat je dit niet automatisch kunt doen. Bied aan om een notitie achter te laten voor het team of om de gebruiker door te verbinden met een medewerker.";
-        }
-
-        return prompt;
+        return {
+            company: {
+                id: config.company.id.toString(),
+                name: config.company.name,
+                industry: limitString(config.companyContext.details?.industry),
+                description: limitString(config.companyContext.details?.description, 400),
+            },
+            contact: {
+                email: limitString(config.companyContext.contact?.contact_email),
+                phone: limitString(config.companyContext.contact?.phone),
+                website: limitString(config.companyContext.contact?.website),
+                address: limitString(config.companyContext.contact?.address, 320),
+            },
+            hours,
+            info,
+            appointmentTypes,
+            staffMembers,
+        };
     }
 
     public getTools(hasGoogleIntegration?: boolean) {
@@ -282,7 +302,7 @@ export class VapiClient {
         if (!enabled) {
             return [];
         }
-      
+
         return [
             {
                 type: "function",
@@ -622,6 +642,8 @@ export class VapiClient {
 
     private buildAssistantPayload(config: VapiAssistantConfig) {
         const instructions = this.buildSystemPrompt(config);
+        const snapshot = this.buildCompanySnapshot(config);
+
         const tools = this.getTools(config.hasGoogleIntegration);
         const voice = config.voiceSettings
             ? {
@@ -640,6 +662,8 @@ export class VapiClient {
                 companyId: config.company.id.toString(),
                 companyName: config.company.name,
                 googleCalendarEnabled: config.hasGoogleIntegration,
+                companyContext: snapshot,
+
             },
             first_message: config.voiceSettings?.welcomePhrase ?? undefined,
             firstMessage: config.voiceSettings?.welcomePhrase ?? undefined,
@@ -647,10 +671,47 @@ export class VapiClient {
         };
     }
 
+    private initializeSdkAssistants(apiBaseUrl: string): VapiAssistantsApi | null {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const sdkModule = require("@vapi/server-sdk");
+            const clientConstructor = [sdkModule?.VapiClient, sdkModule?.default, sdkModule?.Vapi].find(
+                (candidate) => typeof candidate === "function"
+            );
+
+            if (!clientConstructor) {
+                console.warn("[VapiClient] @vapi/server-sdk did not expose a VapiClient constructor. Falling back to HTTP.");
+                return null;
+            }
+
+            const options: { token: string; baseUrl?: string } = { token: this.apiKey };
+            if (apiBaseUrl) {
+                options.baseUrl = apiBaseUrl;
+            }
+
+            const instance = new clientConstructor(options);
+            if (!instance?.assistants) {
+                console.warn("[VapiClient] @vapi/server-sdk client missing assistants API. Falling back to HTTP requests.");
+                return null;
+            }
+
+            return instance.assistants as VapiAssistantsApi;
+        } catch (error) {
+            console.warn("[VapiClient] Failed to load @vapi/server-sdk. Falling back to HTTP requests.", error);
+            return null;
+        }
+    }
+
     private async findAssistantIdByName(name: string): Promise<string | null> {
         try {
-            const response = await this.http.get("/assistants", { params: { name } });
-            const assistants = this.extractAssistants(response.data);
+            let assistants: any[] = [];
+            if (this.sdkAssistants?.list) {
+                const response = await this.sdkAssistants.list({ name });
+                assistants = this.extractAssistants(response);
+            } else if (this.http) {
+                const response = await this.http.get("/assistants", { params: { name } });
+                assistants = this.extractAssistants(response.data);
+            }
             const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
             if (!assistant) return null;
             const container = assistant.assistant ?? assistant;
@@ -662,8 +723,16 @@ export class VapiClient {
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post("/assistants", payload);
-        const assistant = response.data?.assistant ?? response.data?.data ?? response.data;
+        let response: any;
+        if (this.sdkAssistants?.create) {
+            response = await this.sdkAssistants.create(payload);
+        } else if (this.http) {
+            response = await this.http.post("/assistants", payload);
+            response = response.data;
+        } else {
+            throw new Error("No Vapi assistant client available");
+        }
+        const assistant = response?.assistant ?? response?.data ?? response;
         const id = assistant?.id ?? assistant?._id;
         if (!id) {
             throw new Error("Vapi create assistant response did not include an id");
@@ -672,7 +741,17 @@ export class VapiClient {
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(`/assistants/${id}`, payload);
+        if (this.sdkAssistants?.update) {
+            await this.sdkAssistants.update(id, payload);
+            return;
+        }
+
+        if (this.http) {
+            await this.http.patch(`/assistants/${id}`, payload);
+            return;
+        }
+
+        throw new Error("No Vapi assistant client available");
     }
 
     private extractAssistants(data: any): any[] {
