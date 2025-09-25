@@ -70,6 +70,27 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         );
     }
 
+    public async findById(companyId: bigint): Promise<CompanyModel | null> {
+        const sql = `
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name
+            FROM company c
+            LEFT JOIN company_details cd ON c.id = cd.company_id
+            WHERE c.id = ?
+                LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
+        if (rows.length === 0) return null;
+        const r = rows[0];
+        return new CompanyModel(
+            BigInt(r.id),
+            r.name,
+            r.email,
+            r.twilio_number,
+            r.created_at,
+            r.updated_at
+        );
+    }
+
     public async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {
         const sql = `
             UPDATE company
@@ -115,6 +136,13 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         `;
         const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
         return rows.map(r => new CompanyInfoModel(r.id, r.info_value, r.created_at));
+    }
+
+    public async getCompanyIdForInfo(infoId: number): Promise<bigint | null> {
+        const sql = `SELECT company_id FROM company_info WHERE id = ? LIMIT 1`;
+        const rows = await this.execute<RowDataPacket[]>(sql, [infoId]);
+        if (rows.length === 0) return null;
+        return BigInt(rows[0].company_id);
     }
 
     // ---------- Company Details ----------
@@ -178,6 +206,13 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         await this.execute<ResultSetHeader>(sql, [detailsId]);
     }
 
+    public async getCompanyIdForDetails(detailsId: number): Promise<bigint | null> {
+        const sql = `SELECT company_id FROM company_details WHERE id = ? LIMIT 1`;
+        const rows = await this.execute<RowDataPacket[]>(sql, [detailsId]);
+        if (rows.length === 0) return null;
+        return BigInt(rows[0].company_id);
+    }
+
     // ---------- Company Contacts ----------
     public async addCompanyContact(contact: CompanyContactModel): Promise<void> {
         const sql = `
@@ -233,6 +268,13 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         await this.execute<ResultSetHeader>(sql, [contactId]);
     }
 
+    public async getCompanyIdForContact(contactId: number): Promise<bigint | null> {
+        const sql = `SELECT company_id FROM company_contacts WHERE id = ? LIMIT 1`;
+        const rows = await this.execute<RowDataPacket[]>(sql, [contactId]);
+        if (rows.length === 0) return null;
+        return BigInt(rows[0].company_id);
+    }
+
     // ---------- Company Hours ----------
     public async addCompanyHour(hour: CompanyHourModel): Promise<void> {
         const sql = `
@@ -286,5 +328,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async deleteCompanyHour(hourId: number): Promise<void> {
         const sql = `DELETE FROM company_hours WHERE id = ?`;
         await this.execute<ResultSetHeader>(sql, [hourId]);
+    }
+
+    public async getCompanyIdForHour(hourId: number): Promise<bigint | null> {
+        const sql = `SELECT company_id FROM company_hours WHERE id = ? LIMIT 1`;
+        const rows = await this.execute<RowDataPacket[]>(sql, [hourId]);
+        if (rows.length === 0) return null;
+        return BigInt(rows[0].company_id);
     }
 }
