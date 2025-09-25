@@ -100,8 +100,6 @@ export class VapiClient {
     private readonly realtimeBaseUrl: string;
     private readonly http: AxiosInstance;
     private readonly assistantCache = new Map<string, string>();
-
-
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
@@ -110,7 +108,6 @@ export class VapiClient {
     private voiceSettings: VoiceSettingModel | null = null;
     private currentConfig: VapiAssistantConfig | null = null;
 
-
     constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
         this.apiKey = process.env.VAPI_API_KEY || "";
         if (!this.apiKey) {
@@ -118,7 +115,8 @@ export class VapiClient {
         }
 
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/v1/realtime";
-        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai/v1";
+        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
+
         this.http = axios.create({
             baseURL: apiBaseUrl,
             headers: {
@@ -165,6 +163,16 @@ export class VapiClient {
         const { details, contact, hours, info } = companyContext;
         const { appointmentTypes, staffMembers } = schedulingContext;
 
+        const dayNames = [
+            "Zondag",
+            "Maandag",
+            "Dinsdag",
+            "Woensdag",
+            "Donderdag",
+            "Vrijdag",
+            "Zaterdag",
+        ];
+        const getDayName = (index: number) => dayNames[((index % 7) + 7) % 7] ?? `Dag ${index}`;
         let prompt =
             `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${company.name}'. ${replyStyle.description}` +
             " je praat zo menselijk mogelijk" +
@@ -195,9 +203,8 @@ export class VapiClient {
 
         if (hours && hours.length > 0) {
             prompt += `\n**Openingstijden:**\n`;
-            const days = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"];
             hours.forEach((hour) => {
-                const day = days[hour.dayOfWeek - 1];
+                const day = getDayName(hour.dayOfWeek);
                 if (hour.isOpen) {
                     prompt += `- ${day}: ${hour.openTime} - ${hour.closeTime}\n`;
                 } else {
@@ -214,28 +221,45 @@ export class VapiClient {
         }
 
         if (appointmentTypes && appointmentTypes.length > 0) {
+            const MAX_APPOINTMENT_TYPES = 10;
+            const limitedAppointments = appointmentTypes.slice(0, MAX_APPOINTMENT_TYPES);
             prompt += "\n**Soorten Afspraken:**\n";
-            appointmentTypes.forEach((appointment) => {
-                prompt += `- ${appointment.name} (${appointment.duration} minuten)\n`;
+            limitedAppointments.forEach((appointment) => {
+                const durationLabel = appointment.duration ? ` (${appointment.duration} minuten)` : "";
+                prompt += `- ${appointment.name}${durationLabel}\n`;
             });
+            if (appointmentTypes.length > MAX_APPOINTMENT_TYPES) {
+                prompt += `- ...en ${appointmentTypes.length - MAX_APPOINTMENT_TYPES} extra afspraaktypes beschikbaar.\n`;
+            }
         }
 
         if (staffMembers && staffMembers.length > 0) {
+            const MAX_STAFF_ENTRIES = 5;
+            const limitedStaff = staffMembers.slice(0, MAX_STAFF_ENTRIES);
             prompt += "\n**Medewerkers en Beschikbaarheid:**\n";
-            staffMembers.forEach((staff) => {
+            limitedStaff.forEach((staff) => {
                 prompt += `- ${staff.name} (${staff.role})\n`;
                 if (staff.availability && staff.availability.length > 0) {
-                    const days = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"];
-                    staff.availability.forEach((avail) => {
-                        const day = days[avail.dayOfWeek - 1];
-                        if (avail.isActive) {
-                            prompt += `  - ${day}: ${avail.startTime} - ${avail.endTime}\n`;
-                        } else {
-                            prompt += `  - ${day}: Niet beschikbaar\n`;
-                        }
-                    });
+                    const groupedByDay = new Map<number, string[]>();
+                    staff.availability
+                        .filter((avail) => avail.isActive && avail.startTime && avail.endTime)
+                        .forEach((avail) => {
+                            const slots = groupedByDay.get(avail.dayOfWeek) ?? [];
+                            slots.push(`${avail.startTime} - ${avail.endTime}`);
+                            groupedByDay.set(avail.dayOfWeek, slots);
+                        });
+
+                    const orderedDays = Array.from(groupedByDay.entries()).sort((a, b) => a[0] - b[0]);
+                    for (const [dayOfWeek, ranges] of orderedDays) {
+                        const day = getDayName(dayOfWeek);
+                        prompt += `  - ${day}: ${ranges.join(", ")}\n`;
+                    }
                 }
             });
+
+            if (staffMembers.length > MAX_STAFF_ENTRIES) {
+                prompt += `  ...en ${staffMembers.length - MAX_STAFF_ENTRIES} extra medewerkers beschikbaar.\n`;
+            }
         }
 
         prompt += "\n";
@@ -258,6 +282,7 @@ export class VapiClient {
         if (!enabled) {
             return [];
         }
+      
         return [
             {
                 type: "function",
