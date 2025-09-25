@@ -1,4 +1,5 @@
 // src/clients/VapiClient.ts
+import axios, { AxiosInstance } from "axios";
 import WebSocket from "ws";
 import { inject, injectable } from "tsyringe";
 import { CompanyModel } from "../business/models/CompanyModel";
@@ -23,6 +24,15 @@ type CompanyContext = {
 type SchedulingContext = {
     appointmentTypes: AppointmentTypeModel[];
     staffMembers: StaffMemberModel[];
+};
+
+export type VapiAssistantConfig = {
+    company: CompanyModel;
+    hasGoogleIntegration: boolean;
+    replyStyle: ReplyStyleModel;
+    companyContext: CompanyContext;
+    schedulingContext: SchedulingContext;
+    voiceSettings: VoiceSettingModel;
 };
 
 export type VapiRealtimeCallbacks = {
@@ -87,15 +97,19 @@ class VapiRealtimeSession {
 @injectable()
 export class VapiClient {
     private readonly apiKey: string;
-    private readonly assistantId?: string;
-    private readonly realtimeUrl: string;
+    private readonly realtimeBaseUrl: string;
+    private readonly http: AxiosInstance;
+    private readonly assistantCache = new Map<string, string>();
+
 
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
     private companyContext: CompanyContext | null = null;
     private schedulingContext: SchedulingContext | null = null;
-    private voiceSettings: VoiceSettingModel | null = null;
+    private voiceSettings: VoiceSettingModel | null = null;l
+    private currentConfig: VapiAssistantConfig | null = null;
+
 
     constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
         this.apiKey = process.env.VAPI_API_KEY || "";
@@ -103,9 +117,16 @@ export class VapiClient {
             console.warn("[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.");
         }
 
-        this.assistantId = process.env.VAPI_ASSISTANT_ID || undefined;
-        const baseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/v1/realtime";
-        this.realtimeUrl = this.assistantId ? `${baseUrl}?assistantId=${this.assistantId}` : baseUrl;
+        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/v1/realtime";
+        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai/v1";
+        this.http = axios.create({
+            baseURL: apiBaseUrl,
+            headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                "Content-Type": "application/json",
+            },
+            timeout: 15000,
+        });
     }
 
     public setCompanyInfo(
@@ -122,21 +143,38 @@ export class VapiClient {
         this.companyContext = context;
         this.schedulingContext = schedulingContext;
         this.voiceSettings = voiceSettings;
+        this.currentConfig = {
+            company,
+            hasGoogleIntegration,
+            replyStyle,
+            companyContext: context,
+            schedulingContext,
+            voiceSettings,
+        };
     }
 
-    public buildSystemPrompt(): string {
-        if (!this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
-            throw new Error("Company info, reply style, context, and scheduling context must be set before generating a system prompt.");
+    public buildSystemPrompt(config?: VapiAssistantConfig): string {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error(
+                "Company info, reply style, context, and scheduling context must be set before generating a system prompt."
+            );
         }
 
-        const { details, contact, hours, info } = this.companyContext;
-        const { appointmentTypes, staffMembers } = this.schedulingContext;
+        const { company, replyStyle, companyContext, schedulingContext, hasGoogleIntegration, voiceSettings } = effectiveConfig;
+        const { details, contact, hours, info } = companyContext;
+        const { appointmentTypes, staffMembers } = schedulingContext;
 
-        let prompt = `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${this.company.name}'. ${this.replyStyle.description}
- je praat zo menselijk mogelijk
- het is vandaag ${new Date().toLocaleDateString('nl-NL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-
- Vermijd het gebruik van numerieke datum- en tijdnotatie (zoals 'dd-mm-jj', '14-08-25' of '10:00'). Schrijf tijden en datums altijd voluit in natuurlijke taal, bijvoorbeeld 'tien uur' en '14 augustus 2025'.`;
+        let prompt =
+            `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${company.name}'. ${replyStyle.description}` +
+            " je praat zo menselijk mogelijk" +
+            ` het is vandaag ${new Date().toLocaleDateString('nl-NL', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            })}` +
+            " Vermijd het gebruik van numerieke datum- en tijdnotatie (zoals 'dd-mm-jj', '14-08-25' of '10:00'). Schrijf tijden en datums altijd voluit in natuurlijke taal, bijvoorbeeld 'tien uur' en '14 augustus 2025'.";
 
         prompt += "Hier is wat informatie over het bedrijf:\n";
 
@@ -202,11 +240,11 @@ export class VapiClient {
 
         prompt += "\n";
 
-        if (this.voiceSettings?.welcomePhrase) {
-            prompt += `\nStart elk gesprek vriendelijk met: \"${this.voiceSettings.welcomePhrase}\".`;
+        if (voiceSettings?.welcomePhrase) {
+            prompt += `\nStart elk gesprek vriendelijk met: \"${voiceSettings.welcomePhrase}\".`;
         }
 
-        if (this.hasGoogleIntegration) {
+        if (hasGoogleIntegration) {
             prompt += "BELANGRIJKE INSTRUCTIE: Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik ALTIJD de 'check_calendar_availability' tool om te controleren op beschikbare tijden voordat je een afspraak voorstelt. Vraag de gebruiker om hun volledige naam en geboortedatum voor je de afspraak inplant met 'create_calendar_event'. Deze gegevens zijn nodig om de afspraak later te kunnen annuleren met 'cancel_calendar_event'. Vraag altijd om een expliciete bevestiging voordat je de afspraak definitief inplant.";
         } else {
             prompt += "BELANGRIJKE INSTRUCTIE: Je hebt GEEN toegang tot de agenda. Als een gebruiker een afspraak wil maken, informeer hen dan dat je dit niet automatisch kunt doen. Bied aan om een notitie achter te laten voor het team of om de gebruiker door te verbinden met een medewerker.";
@@ -215,7 +253,11 @@ export class VapiClient {
         return prompt;
     }
 
-    public getTools() {
+    public getTools(hasGoogleIntegration?: boolean) {
+        const enabled = hasGoogleIntegration ?? this.hasGoogleIntegration;
+        if (!enabled) {
+            return [];
+        }
         return [
             {
                 type: "function",
@@ -269,18 +311,16 @@ export class VapiClient {
         callSid: string,
         callbacks: VapiRealtimeCallbacks
     ): Promise<VapiRealtimeSession> {
-        if (!this.company) {
+        const config = this.currentConfig;
+        if (!config || !this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
             throw new Error("Company must be configured before opening a Vapi session");
         }
 
-        if (!this.assistantId) {
-            throw new Error("VAPI_ASSISTANT_ID must be configured to use the realtime API");
-        }
+        const assistantId = await this.syncAssistant(config);
+        const prompt = this.buildSystemPrompt(config);
+        const tools = this.getTools(config.hasGoogleIntegration);
 
-        const prompt = this.buildSystemPrompt();
-        const tools = this.hasGoogleIntegration ? this.getTools() : [];
-
-        const ws = new WebSocket(this.realtimeUrl, {
+        const ws = new WebSocket(`${this.realtimeBaseUrl}?assistantId=${assistantId}`, {
             headers: {
                 Authorization: `Bearer ${this.apiKey}`,
             },
@@ -305,17 +345,17 @@ export class VapiClient {
                             encoding: "mulaw",
                             sample_rate: 8000,
                         },
-                        voice: this.voiceSettings
+                        voice: config.voiceSettings
                             ? {
                                   provider: "vapi",
-                                  voice_id: this.voiceSettings.voiceId,
-                                  speed: this.voiceSettings.talkingSpeed,
+                                  voice_id: config.voiceSettings.voiceId,
+                                  speed: config.voiceSettings.talkingSpeed,
                               }
                             : undefined,
                         metadata: {
-                            companyId: this.company?.id,
-                            companyName: this.company?.name,
-                            googleCalendarEnabled: this.hasGoogleIntegration,
+                            companyId: config.company.id,
+                            companyName: config.company.name,
+                            googleCalendarEnabled: config.hasGoogleIntegration,
                         },
                     },
                 };
@@ -511,6 +551,112 @@ export class VapiClient {
         }
 
         session.sendToolResponse(call.id, toolResponse);
+    }
+
+    public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error("Company configuration must be set before syncing a Vapi assistant");
+        }
+
+        const name = effectiveConfig.company.id.toString();
+        const cacheKey = name;
+        const payload = this.buildAssistantPayload(effectiveConfig);
+
+        try {
+            const cachedId = this.assistantCache.get(cacheKey);
+            if (cachedId) {
+                try {
+                    await this.updateAssistant(cachedId, payload);
+                    return cachedId;
+                } catch (error) {
+                    console.warn(`[VapiClient] Cached assistant ${cachedId} for company ${name} could not be updated; recreating.`, error);
+                    this.assistantCache.delete(cacheKey);
+                }
+            }
+
+            const existingId = await this.findAssistantIdByName(name);
+            if (existingId) {
+                this.assistantCache.set(cacheKey, existingId);
+                try {
+                    await this.updateAssistant(existingId, payload);
+                    return existingId;
+                } catch (error) {
+                    console.warn(`[VapiClient] Existing assistant ${existingId} for company ${name} could not be updated; creating new.`, error);
+                }
+            }
+
+            const createdId = await this.createAssistant(payload);
+            this.assistantCache.set(cacheKey, createdId);
+            return createdId;
+        } catch (error) {
+            console.error(`[VapiClient] Failed to sync assistant for company ${name}`, error);
+            throw error;
+        }
+    }
+
+    private buildAssistantPayload(config: VapiAssistantConfig) {
+        const instructions = this.buildSystemPrompt(config);
+        const tools = this.getTools(config.hasGoogleIntegration);
+        const voice = config.voiceSettings
+            ? {
+                  provider: "vapi",
+                  voice_id: config.voiceSettings.voiceId,
+                  speed: config.voiceSettings.talkingSpeed,
+              }
+            : undefined;
+
+        return {
+            name: config.company.id.toString(),
+            instructions,
+            tools,
+            voice,
+            metadata: {
+                companyId: config.company.id.toString(),
+                companyName: config.company.name,
+                googleCalendarEnabled: config.hasGoogleIntegration,
+            },
+            first_message: config.voiceSettings?.welcomePhrase ?? undefined,
+            firstMessage: config.voiceSettings?.welcomePhrase ?? undefined,
+            modalities: ["audio"],
+        };
+    }
+
+    private async findAssistantIdByName(name: string): Promise<string | null> {
+        try {
+            const response = await this.http.get("/assistants", { params: { name } });
+            const assistants = this.extractAssistants(response.data);
+            const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
+            if (!assistant) return null;
+            const container = assistant.assistant ?? assistant;
+            return container.id ?? container._id ?? null;
+        } catch (error) {
+            console.warn(`[VapiClient] Failed to find assistant '${name}':`, error);
+            return null;
+        }
+    }
+
+    private async createAssistant(payload: Record<string, unknown>): Promise<string> {
+        const response = await this.http.post("/assistants", payload);
+        const assistant = response.data?.assistant ?? response.data?.data ?? response.data;
+        const id = assistant?.id ?? assistant?._id;
+        if (!id) {
+            throw new Error("Vapi create assistant response did not include an id");
+        }
+        return id;
+    }
+
+    private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
+        await this.http.patch(`/assistants/${id}`, payload);
+    }
+
+    private extractAssistants(data: any): any[] {
+        if (!data) return [];
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data.data)) return data.data;
+        if (Array.isArray(data.assistants)) return data.assistants;
+        if (Array.isArray(data.items)) return data.items;
+        return [];
     }
 }
 

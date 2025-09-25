@@ -24,6 +24,7 @@ import {OutlookRepository} from "../data/repositories/OutlookRepository";
 import {SchedulingService} from "../business/services/SchedulingService";
 import {ISchedulingRepository} from "../data/interfaces/ISchedulingRepository";
 import {SchedulingRepository} from "../data/repositories/SchedulingRepository";
+import { AssistantSyncService } from "../business/services/AssistantSyncService";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -46,6 +47,7 @@ container.register("VoiceSettingsService", { useClass: VoiceSettingModel });
 container.register(IntegrationService, { useClass: IntegrationService });
 container.register(UpdateService, { useClass: UpdateService });
 container.register(SchedulingService, { useClass: SchedulingService });
+container.register(AssistantSyncService, { useClass: AssistantSyncService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
