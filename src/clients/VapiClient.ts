@@ -100,7 +100,6 @@ export class VapiClient {
     private readonly realtimeBaseUrl: string;
     private readonly http: AxiosInstance;
     private readonly assistantCache = new Map<string, string>();
-
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
@@ -288,7 +287,7 @@ export class VapiClient {
         if (!enabled) {
             return [];
         }
-
+      
         return [
             {
                 type: "function",
