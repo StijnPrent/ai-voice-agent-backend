@@ -101,13 +101,15 @@ export class VapiClient {
     private readonly http: AxiosInstance;
     private readonly assistantCache = new Map<string, string>();
 
+
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
     private companyContext: CompanyContext | null = null;
     private schedulingContext: SchedulingContext | null = null;
-    private voiceSettings: VoiceSettingModel | null = null;
+    private voiceSettings: VoiceSettingModel | null = null;l
     private currentConfig: VapiAssistantConfig | null = null;
+
 
     constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
         this.apiKey = process.env.VAPI_API_KEY || "";
@@ -256,7 +258,6 @@ export class VapiClient {
         if (!enabled) {
             return [];
         }
-
         return [
             {
                 type: "function",
