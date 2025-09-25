@@ -9,12 +9,14 @@ import { CompanyHourModel } from "../models/CompanyHourModel";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { AssistantSyncService } from "./AssistantSyncService";
 
 @injectable()
 export class CompanyService {
     constructor(
         @inject("ICompanyRepository") private companyRepo: ICompanyRepository,
-        @inject("IPasswordRepository") private passwordRepo: IPasswordRepository
+        @inject("IPasswordRepository") private passwordRepo: IPasswordRepository,
+        @inject(AssistantSyncService) private readonly assistantSyncService: AssistantSyncService
     ) {}
 
     // Create and authenticate companies
@@ -80,6 +82,7 @@ export class CompanyService {
     // Company Info
     public async addInfo(companyId: bigint, value: string): Promise<void> {
         await this.companyRepo.addInfo(companyId, value);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     public async getCompanyInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
@@ -89,10 +92,18 @@ export class CompanyService {
     public async updateInfo(id: number, value: string): Promise<void> {
         const info = new CompanyInfoModel(id, value, new Date());
         await this.companyRepo.updateInfo(info);
+        const companyId = await this.companyRepo.getCompanyIdForInfo(id);
+        if (companyId) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
     }
 
     public async removeInfo(infoId: number): Promise<void> {
+        const companyId = await this.companyRepo.getCompanyIdForInfo(infoId);
         await this.companyRepo.removeInfo(infoId);
+        if (companyId) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
     }
 
     // Company Details
@@ -114,6 +125,7 @@ export class CompanyService {
             description
         );
         await this.companyRepo.addCompanyDetails(details);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     public async getCompanyDetails(
@@ -126,10 +138,15 @@ export class CompanyService {
         details: CompanyDetailsModel
     ): Promise<void> {
         await this.companyRepo.updateCompanyDetails(details);
+        await this.assistantSyncService.syncCompanyAssistant(details.companyId);
     }
 
     public async deleteCompanyDetails(detailsId: number): Promise<void> {
+        const companyId = await this.companyRepo.getCompanyIdForDetails(detailsId);
         await this.companyRepo.deleteCompanyDetails(detailsId);
+        if (companyId) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
     }
 
     // Company Contact
@@ -149,6 +166,7 @@ export class CompanyService {
             address
         );
         await this.companyRepo.addCompanyContact(contact);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     public async getCompanyContact(
@@ -161,10 +179,15 @@ export class CompanyService {
         contact: CompanyContactModel
     ): Promise<void> {
         await this.companyRepo.updateCompanyContact(contact);
+        await this.assistantSyncService.syncCompanyAssistant(contact.companyId);
     }
 
     public async deleteCompanyContact(contactId: number): Promise<void> {
+        const companyId = await this.companyRepo.getCompanyIdForContact(contactId);
         await this.companyRepo.deleteCompanyContact(contactId);
+        if (companyId) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
     }
 
     // Company Hours
@@ -184,6 +207,7 @@ export class CompanyService {
             closeTime
         );
         await this.companyRepo.addCompanyHour(hour);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     public async getCompanyHours(
@@ -196,10 +220,15 @@ export class CompanyService {
         hour: CompanyHourModel
     ): Promise<void> {
         await this.companyRepo.updateCompanyHour(hour);
+        await this.assistantSyncService.syncCompanyAssistant(hour.companyId);
     }
 
     public async deleteCompanyHour(hourId: number): Promise<void> {
+        const companyId = await this.companyRepo.getCompanyIdForHour(hourId);
         await this.companyRepo.deleteCompanyHour(hourId);
+        if (companyId) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
     }
 
     public async getCompanyContext(companyId: bigint) {

@@ -1,7 +1,5 @@
 import { container } from "tsyringe";
-import { DeepgramClient } from "../clients/DeepgramClient";
-import { ChatGPTClient } from "../clients/ChatGPTClient";
-import { ElevenLabsClient } from "../clients/ElevenLabsClient";
+import { VapiClient } from "../clients/VapiClient";
 import { TwilioClient } from "../clients/TwilioClient";
 import {VoiceService} from "../business/services/VoiceService";
 import {GoogleService} from "../business/services/GoogleService";
@@ -26,11 +24,10 @@ import {OutlookRepository} from "../data/repositories/OutlookRepository";
 import {SchedulingService} from "../business/services/SchedulingService";
 import {ISchedulingRepository} from "../data/interfaces/ISchedulingRepository";
 import {SchedulingRepository} from "../data/repositories/SchedulingRepository";
+import { AssistantSyncService } from "../business/services/AssistantSyncService";
 
 // Register all clients in the container
-container.register("DeepgramClient", { useClass: DeepgramClient });
-container.register("ChatGPTClient", { useClass: ChatGPTClient });
-container.register("ElevenLabsClient", { useClass: ElevenLabsClient });
+container.register(VapiClient, { useClass: VapiClient });
 container.register("TwilioClient", { useClass: TwilioClient });
 container.register("GoogleCalendarClient", {
     useFactory: () =>
@@ -42,14 +39,15 @@ container.register("OutlookCalendarClient", {
 });
 
 // Register business services
-container.register("VoiceService", { useClass: VoiceService });
-container.register("GoogleService", { useClass: GoogleService });
+container.register(VoiceService, { useClass: VoiceService });
+container.register(GoogleService, { useClass: GoogleService });
 container.register("OutlookService", { useClass: OutlookService });
-container.register("CompanyService", { useClass: CompanyService });
+container.register(CompanyService, { useClass: CompanyService });
 container.register("VoiceSettingsService", { useClass: VoiceSettingModel });
-container.register("IntegrationService", { useClass: IntegrationService });
-container.register("UpdateService", { useClass: UpdateService });
-container.register("SchedulingService", { useClass: SchedulingService });
+container.register(IntegrationService, { useClass: IntegrationService });
+container.register(UpdateService, { useClass: UpdateService });
+container.register(SchedulingService, { useClass: SchedulingService });
+container.register(AssistantSyncService, { useClass: AssistantSyncService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
