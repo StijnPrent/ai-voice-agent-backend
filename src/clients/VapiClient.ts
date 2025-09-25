@@ -107,7 +107,7 @@ export class VapiClient {
     private replyStyle: ReplyStyleModel | null = null;
     private companyContext: CompanyContext | null = null;
     private schedulingContext: SchedulingContext | null = null;
-    private voiceSettings: VoiceSettingModel | null = null;l
+    private voiceSettings: VoiceSettingModel | null = null;
     private currentConfig: VapiAssistantConfig | null = null;
 
 
