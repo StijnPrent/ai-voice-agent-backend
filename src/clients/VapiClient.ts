@@ -115,7 +115,7 @@ export class VapiClient {
         }
 
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
-        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai/v1";
+        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
@@ -672,7 +672,7 @@ export class VapiClient {
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post("/assistants", payload);
+        const response = await this.http.post("/assistant", payload);
         const data = response.data;
         const assistant = data?.assistant ?? data?.data ?? data;
         const id = assistant?.id ?? assistant?._id;
