@@ -49,13 +49,6 @@ export type NormalizedToolCall = {
     args: Record<string, unknown>;
 };
 
-type VapiAssistantsApi = {
-    create: (payload: Record<string, unknown>) => Promise<unknown>;
-    update: (id: string, payload: Record<string, unknown>) => Promise<unknown>;
-    list: (params?: Record<string, unknown>) => Promise<unknown>;
-};
-
-
 class VapiRealtimeSession {
     private closed = false;
 
@@ -105,8 +98,7 @@ class VapiRealtimeSession {
 export class VapiClient {
     private readonly apiKey: string;
     private readonly realtimeBaseUrl: string;
-    private readonly http: AxiosInstance | null;
-    private readonly sdkAssistants: VapiAssistantsApi | null;
+    private readonly http: AxiosInstance;
     private readonly assistantCache = new Map<string, string>();
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -125,20 +117,14 @@ export class VapiClient {
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
 
-        this.sdkAssistants = this.initializeSdkAssistants(apiBaseUrl);
-
-        if (this.sdkAssistants) {
-            this.http = null;
-        } else {
-            this.http = axios.create({
-                baseURL: apiBaseUrl,
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`,
-                    "Content-Type": "application/json",
-                },
-                timeout: 15000,
-            });
-        }
+        this.http = axios.create({
+            baseURL: apiBaseUrl,
+            headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                "Content-Type": "application/json",
+            },
+            timeout: 15000,
+        });
     }
 
     public setCompanyInfo(
@@ -671,47 +657,10 @@ export class VapiClient {
         };
     }
 
-    private initializeSdkAssistants(apiBaseUrl: string): VapiAssistantsApi | null {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const sdkModule = require("@vapi/server-sdk");
-            const clientConstructor = [sdkModule?.VapiClient, sdkModule?.default, sdkModule?.Vapi].find(
-                (candidate) => typeof candidate === "function"
-            );
-
-            if (!clientConstructor) {
-                console.warn("[VapiClient] @vapi/server-sdk did not expose a VapiClient constructor. Falling back to HTTP.");
-                return null;
-            }
-
-            const options: { token: string; baseUrl?: string } = { token: this.apiKey };
-            if (apiBaseUrl) {
-                options.baseUrl = apiBaseUrl;
-            }
-
-            const instance = new clientConstructor(options);
-            if (!instance?.assistants) {
-                console.warn("[VapiClient] @vapi/server-sdk client missing assistants API. Falling back to HTTP requests.");
-                return null;
-            }
-
-            return instance.assistants as VapiAssistantsApi;
-        } catch (error) {
-            console.warn("[VapiClient] Failed to load @vapi/server-sdk. Falling back to HTTP requests.", error);
-            return null;
-        }
-    }
-
     private async findAssistantIdByName(name: string): Promise<string | null> {
         try {
-            let assistants: any[] = [];
-            if (this.sdkAssistants?.list) {
-                const response = await this.sdkAssistants.list({ name });
-                assistants = this.extractAssistants(response);
-            } else if (this.http) {
-                const response = await this.http.get("/assistants", { params: { name } });
-                assistants = this.extractAssistants(response.data);
-            }
+            const response = await this.http.get("/assistants", { params: { name } });
+            const assistants = this.extractAssistants(response.data);
             const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
             if (!assistant) return null;
             const container = assistant.assistant ?? assistant;
@@ -723,16 +672,9 @@ export class VapiClient {
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        let response: any;
-        if (this.sdkAssistants?.create) {
-            response = await this.sdkAssistants.create(payload);
-        } else if (this.http) {
-            response = await this.http.post("/assistants", payload);
-            response = response.data;
-        } else {
-            throw new Error("No Vapi assistant client available");
-        }
-        const assistant = response?.assistant ?? response?.data ?? response;
+        const response = await this.http.post("/assistants", payload);
+        const data = response.data;
+        const assistant = data?.assistant ?? data?.data ?? data;
         const id = assistant?.id ?? assistant?._id;
         if (!id) {
             throw new Error("Vapi create assistant response did not include an id");
@@ -741,17 +683,7 @@ export class VapiClient {
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        if (this.sdkAssistants?.update) {
-            await this.sdkAssistants.update(id, payload);
-            return;
-        }
-
-        if (this.http) {
-            await this.http.patch(`/assistants/${id}`, payload);
-            return;
-        }
-
-        throw new Error("No Vapi assistant client available");
+        await this.http.patch(`/assistants/${id}`, payload);
     }
 
     private extractAssistants(data: any): any[] {
