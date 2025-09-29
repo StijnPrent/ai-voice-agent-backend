@@ -644,7 +644,7 @@ export class VapiClient {
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
         } catch (error: any) {
-            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.data);
+            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.config.data);
             throw error;
         }
     }
