@@ -115,7 +115,7 @@ export class VapiClient {
         }
 
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
-        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
+        const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai/v1";
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
