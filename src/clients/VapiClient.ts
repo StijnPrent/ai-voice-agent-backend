@@ -580,12 +580,11 @@ export class VapiClient {
                 callbacks.onToolStatus?.("calendar-availability-checked");
             } else if (call.name === "cancel_calendar_event") {
                 const { name, dateOfBirth, eventId, reason } = call.args as Record<string, string>;
-                const success = await this.googleService.cancelEventById(
+                const success = await this.googleService.cancelEvent(
                   this.company.id,
                   eventId,
                   name,
-                  dateOfBirth,
-                  reason
+                  dateOfBirth
                 );
                 toolResponse = { success };
                 callbacks.onToolStatus?.("calendar-event-cancelled");
