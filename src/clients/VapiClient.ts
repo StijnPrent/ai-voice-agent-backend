@@ -654,30 +654,38 @@ export class VapiClient {
         const companyContext = this.buildCompanySnapshot(config);
         const tools = this.getTools(config.hasGoogleIntegration);
 
-        const voice = config.voiceSettings?.voiceId
-          ? {
-              provider: "11labs",
-              voiceId: config.voiceSettings.voiceId,
-              ...(config.voiceSettings.talkingSpeed
-                ? { speed: config.voiceSettings.talkingSpeed }
-                : {}),
-          }
-          : undefined;
+        const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
-        const firstMessage = config.voiceSettings?.welcomePhrase || undefined;
+        const voiceId = config.voiceSettings?.voiceId?.trim();
+        const voice: { provider: string; voiceId?: string } = {
+            provider: "11labs",
+        };
+        if (voiceId) {
+            voice.voiceId = voiceId;
+        }
 
-        return {
+        const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
             instructions,
+            transcriber: { provider: "assembly-ai" },
             model: { provider: this.modelProvider, model: this.modelName },
-            tools,
-            ...(voice ? { voice } : {}),
+            voice,
+            firstMessageInterruptionsEnabled: false,
+            firstMessageMode: "assistant-speaks-first",
+            voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
+            endCallMessage: "Fijne dag!",
             metadata: this.buildAssistantMetadata(config, companyContext),
-            ...(firstMessage ? { firstMessage } : {}),
-            modalities: ["audio"],
-            // transcriber kan je hier toevoegen wanneer nodig:
-            // transcriber: { provider: "deepgram", model: "nova-2" }
         };
+
+        if (firstMessage) {
+            payload.firstMessage = firstMessage;
+        }
+
+        if (tools.length > 0) {
+            payload.tools = tools;
+        }
+
+        return payload;
     }
 
     private getAssistantName(config: VapiAssistantConfig): string {
