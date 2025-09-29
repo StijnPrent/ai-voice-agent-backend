@@ -643,7 +643,7 @@ export class VapiClient {
             const createdId = await this.createAssistant(payload);
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
-        } catch (error) {
+        } catch (error: any) {
             console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.data);
             throw error;
         }
