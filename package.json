@@ -31,7 +31,6 @@
     "@azure/msal-node": "^3.7.0",
     "@deepgram/sdk": "^4.7.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
-    "@vapi/server-sdk": "latest",
     "@types/bcrypt": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.10.0",
