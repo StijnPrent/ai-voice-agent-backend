@@ -670,7 +670,6 @@ export class VapiClient {
 
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
-            instructions,
             transcriber: { provider: "assembly-ai" },
             model: { provider: this.modelProvider, model: this.modelName },
             voice,
@@ -678,15 +677,11 @@ export class VapiClient {
             firstMessageMode: "assistant-speaks-first",
             voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
             endCallMessage: "Fijne dag!",
-            metadata: this.buildAssistantMetadata(config, companyContext),
+            metadata: this.buildAssistantMetadata(config, companyContext, instructions, tools),
         };
 
         if (firstMessage) {
             payload.firstMessage = firstMessage;
-        }
-
-        if (tools.length > 0) {
-            payload.tools = tools;
         }
 
         return payload;
@@ -699,7 +694,9 @@ export class VapiClient {
 
     private buildAssistantMetadata(
       config: VapiAssistantConfig,
-      companyContext: ReturnType<typeof this.buildCompanySnapshot>
+      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      systemPrompt?: string,
+      tools?: ReturnType<VapiClient["getTools"]>
     ) {
         const metadata: Record<string, unknown> = {
             companyId: companyContext.companyId,
@@ -714,6 +711,14 @@ export class VapiClient {
                 description: config.replyStyle.description,
             },
         };
+
+        if (systemPrompt) {
+            metadata.systemPrompt = systemPrompt;
+        }
+
+        if (tools && tools.length > 0) {
+            metadata.tools = tools;
+        }
 
         if (config.voiceSettings) {
             metadata.voiceSettings = {
