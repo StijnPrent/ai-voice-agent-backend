@@ -659,7 +659,7 @@ export class VapiClient {
 
     private async findAssistantIdByName(name: string): Promise<string | null> {
         try {
-            const response = await this.http.get("/assistants", { params: { name } });
+            const response = await this.http.get("/assistant", { params: { name } });
             const assistants = this.extractAssistants(response.data);
             const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
             if (!assistant) return null;
@@ -683,7 +683,7 @@ export class VapiClient {
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(`/assistants/${id}`, payload);
+        await this.http.patch(`/assistant/${id}`, payload);
     }
 
     private extractAssistants(data: any): any[] {
