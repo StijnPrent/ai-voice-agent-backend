@@ -99,6 +99,9 @@ export class VapiClient {
     private readonly apiKey: string;
     private readonly realtimeBaseUrl: string;
     private readonly http: AxiosInstance;
+    private readonly apiPathPrefix: string;
+    private readonly modelProvider: string;
+    private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -116,6 +119,9 @@ export class VapiClient {
 
         this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
+        this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
+        this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
+        this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
@@ -125,6 +131,22 @@ export class VapiClient {
             },
             timeout: 15000,
         });
+    }
+
+    private normalizePathPrefix(prefix: string): string {
+        if (!prefix) return "";
+        const trimmed = prefix.trim();
+        if (!trimmed) return "";
+        return trimmed.replace(/^\/+|\/+$|\s+/g, "");
+    }
+
+    private buildApiPath(path: string): string {
+        if (!path.startsWith("/")) {
+            throw new Error(`[VapiClient] API paths must start with '/'. Received: ${path}`);
+        }
+        const normalizedPath = path.replace(/^\/+/, "");
+        const segments = [this.apiPathPrefix, normalizedPath].filter((segment) => segment.length > 0);
+        return `/${segments.join("/")}`;
     }
 
     public setCompanyInfo(
@@ -217,10 +239,16 @@ export class VapiClient {
         ];
         const getDayName = (index: number) => dayNames[((index % 7) + 7) % 7] ?? `Dag ${index}`;
 
-        const hours = (config.companyContext.hours ?? []).slice(0, 7).map((hour) => ({
-            day: getDayName(hour.dayOfWeek),
-            status: hour.isOpen ? `${hour.openTime} - ${hour.closeTime}` : "Gesloten",
-        }));
+        const hours = (config.companyContext.hours ?? [])
+            .slice(0, 7)
+            .map((hour) => ({
+                day: getDayName(hour.dayOfWeek),
+                isOpen: Boolean(hour.isOpen && hour.openTime && hour.closeTime),
+                ranges:
+                    hour.isOpen && hour.openTime && hour.closeTime
+                        ? [`${hour.openTime} - ${hour.closeTime}`]
+                        : [],
+            }));
 
         const info = (config.companyContext.info ?? [])
             .filter((entry) => entry.value)
@@ -264,12 +292,10 @@ export class VapiClient {
             });
 
         return {
-            company: {
-                id: config.company.id.toString(),
-                name: config.company.name,
-                industry: limitString(config.companyContext.details?.industry),
-                description: limitString(config.companyContext.details?.description, 400),
-            },
+            companyId: config.company.id.toString(),
+            companyName: config.company.name,
+            industry: limitString(config.companyContext.details?.industry),
+            description: limitString(config.companyContext.details?.description, 400),
             contact: {
                 email: limitString(config.companyContext.contact?.contact_email),
                 phone: limitString(config.companyContext.contact?.phone),
@@ -289,51 +315,66 @@ export class VapiClient {
             return [];
         }
 
+        const createCalendarSchema = {
+            type: "object",
+            properties: {
+                summary: { type: "string", description: "De titel van de afspraak" },
+                location: { type: "string", description: "De locatie van de afspraak" },
+                description: { type: "string", description: "Aanvullende details over de afspraak" },
+                startTime: { type: "string", description: "ISO datumtijd van de start" },
+                endTime: { type: "string", description: "ISO datumtijd van het einde" },
+                attendeeName: { type: "string", description: "De volledige naam van de klant" },
+                attendeeEmail: { type: "string", description: "E-mailadres van de klant" },
+                attendeeBirthDate: { type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)" },
+            },
+            required: ["summary", "startTime", "endTime", "attendeeName", "attendeeBirthDate"],
+        };
+
+        const cancelCalendarSchema = {
+            type: "object",
+            properties: {
+                eventId: { type: "string", description: "ID van het te annuleren evenement" },
+                attendeeName: { type: "string", description: "Naam van de klant" },
+                attendeeBirthDate: { type: "string", description: "Geboortedatum ter verificatie" },
+                reason: { type: "string", description: "Reden van annulering" },
+            },
+            required: ["eventId", "attendeeName", "attendeeBirthDate"],
+        };
+
+        const availabilitySchema = {
+            type: "object",
+            properties: {
+                startTime: { type: "string", description: "Voorkeursstarttijd of datum" },
+                endTime: { type: "string", description: "Voorkeurseindtijd of datum" },
+                attendeeName: { type: "string", description: "Naam van de klant" },
+            },
+            required: [],
+        };
+
         return [
             {
                 type: "function",
                 name: "create_calendar_event",
                 description:
                     "Maak een nieuw evenement aan in de Google Agenda. Vraag eerst naar de datum en tijd en als er een datum en tijd en vastgesteld vraag dan naar de naam en geboortedatum van de klant.",
-                input_schema: {
-                    type: "object",
-                    properties: {
-                        summary: { type: "string", description: "De titel van de afspraak" },
-                        location: { type: "string", description: "De locatie van de afspraak" },
-                        description: { type: "string", description: "Een beschrijving van de afspraak" },
-                        start: { type: "string", description: "De starttijd in ISO 8601 formaat (e.g., 2025-07-21T10:00:00)" },
-                        end: { type: "string", description: "De eindtijd in ISO 8601 formaat (e.g., 2025-07-21T11:00:00)" },
-                        name: { type: "string", description: "De volledige naam van de klant" },
-                        dateOfBirth: { type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)" },
-                    },
-                    required: ["summary", "start", "end", "name", "dateOfBirth"],
-                },
+                input_schema: createCalendarSchema,
+                parameters: createCalendarSchema,
             },
             {
                 type: "function",
                 name: "check_calendar_availability",
-                description: "Controleer de beschikbaarheid in de agenda voor een specifieke datum.",
-                input_schema: {
-                    type: "object",
-                    properties: {
-                        date: { type: "string", description: "De datum om te controleren in YYYY-MM-DD formaat" },
-                    },
-                    required: ["date"],
-                },
+                description:
+                    "Controleer de beschikbaarheid in de Google Agenda voordat je een afspraak voorstelt. Gebruik dit om vrije tijdsloten te vinden.",
+                input_schema: availabilitySchema,
+                parameters: availabilitySchema,
             },
             {
                 type: "function",
                 name: "cancel_calendar_event",
-                description: "Annuleer een afspraak op basis van naam, geboortedatum en de datum van de afspraak.",
-                input_schema: {
-                    type: "object",
-                    properties: {
-                        name: { type: "string", description: "De volledige naam van de klant" },
-                        dateOfBirth: { type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)" },
-                        date: { type: "string", description: "De datum van de afspraak in YYYY-MM-DD formaat" },
-                    },
-                    required: ["name", "dateOfBirth", "date"],
-                },
+                description:
+                    "Annuleer een bestaande afspraak in de Google Agenda. Vraag altijd naar de naam en geboortedatum ter verificatie voordat je annuleert.",
+                input_schema: cancelCalendarSchema,
+                parameters: cancelCalendarSchema,
             },
         ];
     }
@@ -590,8 +631,8 @@ export class VapiClient {
             throw new Error("Company configuration must be set before syncing a Vapi assistant");
         }
 
-        const name = effectiveConfig.company.id.toString();
-        const cacheKey = name;
+        const assistantName = this.getAssistantName(effectiveConfig);
+        const cacheKey = effectiveConfig.company.id.toString();
         const payload = this.buildAssistantPayload(effectiveConfig);
 
         try {
@@ -601,19 +642,25 @@ export class VapiClient {
                     await this.updateAssistant(cachedId, payload);
                     return cachedId;
                 } catch (error) {
-                    console.warn(`[VapiClient] Cached assistant ${cachedId} for company ${name} could not be updated; recreating.`, error);
+                    console.warn(
+                        `[VapiClient] Cached assistant ${cachedId} for company ${assistantName} could not be updated; recreating.`,
+                        error
+                    );
                     this.assistantCache.delete(cacheKey);
                 }
             }
 
-            const existingId = await this.findAssistantIdByName(name);
+            const existingId = await this.findAssistantIdByName(assistantName);
             if (existingId) {
                 this.assistantCache.set(cacheKey, existingId);
                 try {
                     await this.updateAssistant(existingId, payload);
                     return existingId;
                 } catch (error) {
-                    console.warn(`[VapiClient] Existing assistant ${existingId} for company ${name} could not be updated; creating new.`, error);
+                    console.warn(
+                        `[VapiClient] Existing assistant ${existingId} for company ${assistantName} could not be updated; creating new.`,
+                        error
+                    );
                 }
             }
 
@@ -621,14 +668,14 @@ export class VapiClient {
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
         } catch (error) {
-            console.error(`[VapiClient] Failed to sync assistant for company ${name}`, error);
+            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error);
             throw error;
         }
     }
 
     private buildAssistantPayload(config: VapiAssistantConfig) {
         const instructions = this.buildSystemPrompt(config);
-        const snapshot = this.buildCompanySnapshot(config);
+        const companyContext = this.buildCompanySnapshot(config);
 
         const tools = this.getTools(config.hasGoogleIntegration);
         const voice = config.voiceSettings
@@ -640,26 +687,60 @@ export class VapiClient {
             : undefined;
 
         return {
-            name: config.company.id.toString(),
+            name: this.getAssistantName(config),
             instructions,
+            model: {
+                provider: this.modelProvider,
+                model: this.modelName,
+            },
             tools,
             voice,
-            metadata: {
-                companyId: config.company.id.toString(),
-                companyName: config.company.name,
-                googleCalendarEnabled: config.hasGoogleIntegration,
-                companyContext: snapshot,
-
-            },
+            metadata: this.buildAssistantMetadata(config, companyContext),
             first_message: config.voiceSettings?.welcomePhrase ?? undefined,
             firstMessage: config.voiceSettings?.welcomePhrase ?? undefined,
             modalities: ["audio"],
         };
     }
 
+    private getAssistantName(config: VapiAssistantConfig): string {
+        const trimmed = config.company.name?.trim();
+        if (trimmed) {
+            return trimmed;
+        }
+        return config.company.id.toString();
+    }
+
+    private buildAssistantMetadata(config: VapiAssistantConfig, companyContext: ReturnType<typeof this.buildCompanySnapshot>) {
+        const metadata: Record<string, unknown> = {
+            companyId: companyContext.companyId,
+            companyName: companyContext.companyName,
+            googleCalendarEnabled: config.hasGoogleIntegration,
+            companyContext: {
+                ...companyContext,
+                googleCalendarEnabled: config.hasGoogleIntegration,
+            },
+            replyStyle: {
+                name: config.replyStyle.name,
+                description: config.replyStyle.description,
+            },
+        };
+
+        if (config.voiceSettings) {
+            metadata.voiceSettings = {
+                voiceId: config.voiceSettings.voiceId,
+                talkingSpeed: config.voiceSettings.talkingSpeed,
+                welcomePhrase: config.voiceSettings.welcomePhrase,
+            };
+        }
+
+        return metadata;
+    }
+
     private async findAssistantIdByName(name: string): Promise<string | null> {
         try {
-            const response = await this.http.get("/assistant", { params: { name } });
+            const response = await this.http.get(this.buildApiPath("/assistant"), {
+                params: { name },
+            });
             const assistants = this.extractAssistants(response.data);
             const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
             if (!assistant) return null;
@@ -672,7 +753,7 @@ export class VapiClient {
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post("/assistant", payload);
+        const response = await this.http.post(this.buildApiPath("/assistant"), payload);
         const data = response.data;
         const assistant = data?.assistant ?? data?.data ?? data;
         const id = assistant?.id ?? assistant?._id;
@@ -683,7 +764,7 @@ export class VapiClient {
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(`/assistant/${id}`, payload);
+        await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
     }
 
     private extractAssistants(data: any): any[] {
