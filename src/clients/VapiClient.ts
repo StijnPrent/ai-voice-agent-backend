@@ -122,7 +122,7 @@ export class VapiClient {
             console.warn("[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.");
         }
 
-        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/realtime";
+        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
 
         this.sdkAssistants = this.initializeSdkAssistants(apiBaseUrl);
