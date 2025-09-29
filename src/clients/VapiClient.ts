@@ -643,8 +643,12 @@ export class VapiClient {
             const createdId = await this.createAssistant(payload);
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
-        } catch (error: any) {
-            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.config.data);
+        } catch (error: unknown) {
+            this.logAxiosError(
+              `[VapiClient] Failed to sync assistant for company ${assistantName}`,
+              error,
+              payload
+            );
             throw error;
         }
     }
@@ -735,24 +739,34 @@ export class VapiClient {
             const container = assistant.assistant ?? assistant;
             return container.id ?? container._id ?? null;
         } catch (error) {
-            console.warn(`[VapiClient] Failed to find assistant '${name}':`, error);
+            this.logAxiosError(`[VapiClient] Failed to find assistant '${name}'`, error, undefined, "warn");
             return null;
         }
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post(this.buildApiPath("/assistant"), payload);
-        const data = response.data;
-        const assistant = data?.assistant ?? data?.data ?? data;
-        const id = assistant?.id ?? assistant?._id;
-        if (!id) {
-            throw new Error("Vapi create assistant response did not include an id");
+        try {
+            const response = await this.http.post(this.buildApiPath("/assistant"), payload);
+            const data = response.data;
+            const assistant = data?.assistant ?? data?.data ?? data;
+            const id = assistant?.id ?? assistant?._id;
+            if (!id) {
+                throw new Error("Vapi create assistant response did not include an id");
+            }
+            return id;
+        } catch (error) {
+            this.logAxiosError("[VapiClient] Failed to create assistant", error, payload);
+            throw error;
         }
-        return id;
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        try {
+            await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        } catch (error) {
+            this.logAxiosError(`[VapiClient] Failed to update assistant ${id}`, error, payload);
+            throw error;
+        }
     }
 
     private extractAssistants(data: any): any[] {
@@ -762,6 +776,48 @@ export class VapiClient {
         if (Array.isArray(data.assistants)) return data.assistants;
         if (Array.isArray(data.items)) return data.items;
         return [];
+    }
+
+    private logAxiosError(
+      context: string,
+      error: unknown,
+      payload?: unknown,
+      level: "error" | "warn" = "error"
+    ) {
+        if (axios.isAxiosError(error)) {
+            const { method, url, data } = error.config ?? {};
+            const response = error.response;
+            const status = response?.status;
+            const statusText = response?.statusText;
+            const responseData = response?.data;
+            const requestId =
+                response?.headers?.["x-request-id"] ||
+                response?.headers?.["x-requestid"] ||
+                response?.headers?.["x-amzn-trace-id"];
+
+            const logger = level === "warn" ? console.warn : console.error;
+            const normalizePayload = (value: unknown) => {
+                if (typeof value !== "string") return value;
+                try {
+                    return JSON.parse(value);
+                } catch {
+                    return value;
+                }
+            };
+
+            logger(context, {
+                status,
+                statusText,
+                requestId,
+                method,
+                url,
+                requestData: normalizePayload(data ?? payload),
+                responseData: normalizePayload(responseData),
+            });
+        } else {
+            const logger = level === "warn" ? console.warn : console.error;
+            logger(context, error);
+        }
     }
 }
 
