@@ -51,16 +51,15 @@ export type NormalizedToolCall = {
 
 class VapiRealtimeSession {
     private closed = false;
-
     constructor(private readonly socket: WebSocket) {}
 
     public sendAudioChunk(audioBase64: string) {
         if (this.closed) return;
         this.socket.send(
-            JSON.stringify({
-                type: "input_audio_buffer.append",
-                audio: audioBase64,
-            })
+          JSON.stringify({
+              type: "input_audio_buffer.append",
+              audio: audioBase64,
+          })
         );
     }
 
@@ -73,13 +72,16 @@ class VapiRealtimeSession {
     public sendToolResponse(toolCallId: string, payload: unknown) {
         if (this.closed) return;
         this.socket.send(
-            JSON.stringify({
-                type: "tool.response.create",
-                tool_response: {
-                    tool_call_id: toolCallId,
-                    output: typeof payload === "string" ? payload : JSON.stringify(payload ?? {}),
-                },
-            })
+          JSON.stringify({
+              type: "tool.response.create",
+              tool_response: {
+                  tool_call_id: toolCallId,
+                  output:
+                    typeof payload === "string"
+                      ? payload
+                      : JSON.stringify(payload ?? {}),
+              },
+          })
         );
     }
 
@@ -103,6 +105,7 @@ export class VapiClient {
     private readonly modelProvider: string;
     private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
+
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
     private replyStyle: ReplyStyleModel | null = null;
@@ -145,17 +148,17 @@ export class VapiClient {
             throw new Error(`[VapiClient] API paths must start with '/'. Received: ${path}`);
         }
         const normalizedPath = path.replace(/^\/+/, "");
-        const segments = [this.apiPathPrefix, normalizedPath].filter((segment) => segment.length > 0);
+        const segments = [this.apiPathPrefix, normalizedPath].filter((s) => s.length > 0);
         return `/${segments.join("/")}`;
     }
 
     public setCompanyInfo(
-        company: CompanyModel,
-        hasGoogleIntegration: boolean,
-        replyStyle: ReplyStyleModel,
-        context: CompanyContext,
-        schedulingContext: SchedulingContext,
-        voiceSettings: VoiceSettingModel
+      company: CompanyModel,
+      hasGoogleIntegration: boolean,
+      replyStyle: ReplyStyleModel,
+      context: CompanyContext,
+      schedulingContext: SchedulingContext,
+      voiceSettings: VoiceSettingModel
     ) {
         this.company = company;
         this.hasGoogleIntegration = hasGoogleIntegration;
@@ -177,7 +180,7 @@ export class VapiClient {
         const effectiveConfig = config ?? this.currentConfig;
         if (!effectiveConfig) {
             throw new Error(
-                "Company info, reply style, context, and scheduling context must be set before generating a system prompt."
+              "Company info, reply style, context, and scheduling context must be set before generating a system prompt."
             );
         }
 
@@ -200,22 +203,21 @@ export class VapiClient {
 
         if (effectiveConfig.voiceSettings?.welcomePhrase) {
             instructions.push(
-                `Start elk gesprek vriendelijk met de welkomstboodschap: \"${effectiveConfig.voiceSettings.welcomePhrase}\".`
+              `Start elk gesprek vriendelijk met de welkomstboodschap: "${effectiveConfig.voiceSettings.welcomePhrase}".`
             );
         }
 
         if (effectiveConfig.hasGoogleIntegration) {
             instructions.push(
-                "Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool 'check_calendar_availability' voordat je een tijdstip voorstelt en vraag om naam en geboortedatum voordat je 'create_calendar_event' of 'cancel_calendar_event' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden."
+              "Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool 'check_calendar_availability' voordat je een tijdstip voorstelt en vraag om naam en geboortedatum voordat je 'create_calendar_event' of 'cancel_calendar_event' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden."
             );
         } else {
             instructions.push(
-                "Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden."
+              "Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden."
             );
         }
 
         instructions.push("Bedrijfscontext (JSON):", contextJson);
-
         return instructions.join("\n\n");
     }
 
@@ -229,67 +231,61 @@ export class VapiClient {
         };
 
         const dayNames = [
-            "Zondag",
-            "Maandag",
-            "Dinsdag",
-            "Woensdag",
-            "Donderdag",
-            "Vrijdag",
-            "Zaterdag",
+            "Zondag", "Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag",
         ];
         const getDayName = (index: number) => dayNames[((index % 7) + 7) % 7] ?? `Dag ${index}`;
 
         const hours = (config.companyContext.hours ?? [])
-            .slice(0, 7)
-            .map((hour) => ({
-                day: getDayName(hour.dayOfWeek),
-                isOpen: Boolean(hour.isOpen && hour.openTime && hour.closeTime),
-                ranges:
-                    hour.isOpen && hour.openTime && hour.closeTime
-                        ? [`${hour.openTime} - ${hour.closeTime}`]
-                        : [],
-            }));
+          .slice(0, 7)
+          .map((hour) => ({
+              day: getDayName(hour.dayOfWeek),
+              isOpen: Boolean(hour.isOpen && hour.openTime && hour.closeTime),
+              ranges:
+                hour.isOpen && hour.openTime && hour.closeTime
+                  ? [`${hour.openTime} - ${hour.closeTime}`]
+                  : [],
+          }));
 
         const info = (config.companyContext.info ?? [])
-            .filter((entry) => entry.value)
-            .slice(0, 10)
-            .map((entry) => limitString(entry.value, 320))
-            .filter((value): value is string => Boolean(value));
+          .filter((entry) => entry.value)
+          .slice(0, 10)
+          .map((entry) => limitString(entry.value, 320))
+          .filter((value): value is string => Boolean(value));
 
         const appointmentTypes = (config.schedulingContext.appointmentTypes ?? [])
-            .slice(0, 8)
-            .map((appointment) => ({
-                name: appointment.name,
-                durationMinutes: appointment.duration ?? undefined,
-            }));
+          .slice(0, 8)
+          .map((appointment) => ({
+              name: appointment.name,
+              durationMinutes: appointment.duration ?? undefined,
+          }));
 
         const staffMembers = (config.schedulingContext.staffMembers ?? [])
-            .slice(0, 5)
-            .map((staff) => {
-                const grouped = new Map<number, string[]>();
-                (staff.availability ?? [])
-                    .filter((slot) => slot.isActive && slot.startTime && slot.endTime)
-                    .forEach((slot) => {
-                        const ranges = grouped.get(slot.dayOfWeek) ?? [];
-                        if (ranges.length < 3) {
-                            ranges.push(`${slot.startTime} - ${slot.endTime}`);
-                            grouped.set(slot.dayOfWeek, ranges);
-                        }
-                    });
+          .slice(0, 5)
+          .map((staff) => {
+              const grouped = new Map<number, string[]>();
+              (staff.availability ?? [])
+                .filter((slot) => slot.isActive && slot.startTime && slot.endTime)
+                .forEach((slot) => {
+                    const ranges = grouped.get(slot.dayOfWeek) ?? [];
+                    if (ranges.length < 3) {
+                        ranges.push(`${slot.startTime} - ${slot.endTime}`);
+                        grouped.set(slot.dayOfWeek, ranges);
+                    }
+                });
 
-                const availability = Array.from(grouped.entries())
-                    .sort((a, b) => a[0] - b[0])
-                    .map(([dayOfWeek, ranges]) => ({
-                        day: getDayName(dayOfWeek),
-                        ranges,
-                    }));
+              const availability = Array.from(grouped.entries())
+                .sort((a, b) => a[0] - b[0])
+                .map(([dayOfWeek, ranges]) => ({
+                    day: getDayName(dayOfWeek),
+                    ranges,
+                }));
 
-                return {
-                    name: staff.name,
-                    role: staff.role ?? undefined,
-                    availability,
-                };
-            });
+              return {
+                  name: staff.name,
+                  role: staff.role ?? undefined,
+                  availability,
+              };
+          });
 
         return {
             companyId: config.company.id.toString(),
@@ -309,46 +305,43 @@ export class VapiClient {
         };
     }
 
+    /** ===== Tools (clean JSON Schema via `parameters`) ===== */
     public getTools(hasGoogleIntegration?: boolean) {
         const enabled = hasGoogleIntegration ?? this.hasGoogleIntegration;
-        if (!enabled) {
-            return [];
-        }
+        if (!enabled) return [];
 
-        const createCalendarSchema = {
+        const createCalendarParameters = {
             type: "object",
             properties: {
-                summary: { type: "string", description: "De titel van de afspraak" },
-                location: { type: "string", description: "De locatie van de afspraak" },
-                description: { type: "string", description: "Aanvullende details over de afspraak" },
-                startTime: { type: "string", description: "ISO datumtijd van de start" },
-                endTime: { type: "string", description: "ISO datumtijd van het einde" },
-                attendeeName: { type: "string", description: "De volledige naam van de klant" },
+                summary:       { type: "string", description: "Titel van de afspraak" },
+                location:      { type: "string", description: "Locatie van de afspraak" },
+                description:   { type: "string", description: "Aanvullende details" },
+                start:         { type: "string", description: "Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)" },
+                end:           { type: "string", description: "Einde in ISO 8601" },
+                name:          { type: "string", description: "Volledige naam van de klant" },
                 attendeeEmail: { type: "string", description: "E-mailadres van de klant" },
-                attendeeBirthDate: { type: "string", description: "De geboortedatum van de klant (DD-MM-YYYY)" },
+                dateOfBirth:   { type: "string", description: "Geboortedatum DD-MM-YYYY" }
             },
-            required: ["summary", "startTime", "endTime", "attendeeName", "attendeeBirthDate"],
+            required: ["summary", "start", "end", "name", "dateOfBirth"]
         };
 
-        const cancelCalendarSchema = {
+        const checkAvailabilityParameters = {
             type: "object",
             properties: {
-                eventId: { type: "string", description: "ID van het te annuleren evenement" },
-                attendeeName: { type: "string", description: "Naam van de klant" },
-                attendeeBirthDate: { type: "string", description: "Geboortedatum ter verificatie" },
-                reason: { type: "string", description: "Reden van annulering" },
+                date: { type: "string", description: "Datum (YYYY-MM-DD) om te controleren" }
             },
-            required: ["eventId", "attendeeName", "attendeeBirthDate"],
+            required: ["date"]
         };
 
-        const availabilitySchema = {
+        const cancelCalendarParameters = {
             type: "object",
             properties: {
-                startTime: { type: "string", description: "Voorkeursstarttijd of datum" },
-                endTime: { type: "string", description: "Voorkeurseindtijd of datum" },
-                attendeeName: { type: "string", description: "Naam van de klant" },
+                eventId:     { type: "string", description: "ID van het te annuleren event" },
+                name:        { type: "string", description: "Naam van de klant (verificatie)" },
+                dateOfBirth: { type: "string", description: "Geboortedatum DD-MM-YYYY (verificatie)" },
+                reason:      { type: "string", description: "Reden van annulering" }
             },
-            required: [],
+            required: ["eventId", "name", "dateOfBirth"]
         };
 
         return [
@@ -356,32 +349,29 @@ export class VapiClient {
                 type: "function",
                 name: "create_calendar_event",
                 description:
-                    "Maak een nieuw evenement aan in de Google Agenda. Vraag eerst naar de datum en tijd en als er een datum en tijd en vastgesteld vraag dan naar de naam en geboortedatum van de klant.",
-                input_schema: createCalendarSchema,
-                parameters: createCalendarSchema,
+                  "Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en geboortedatum ter verificatie.",
+                parameters: createCalendarParameters
             },
             {
                 type: "function",
                 name: "check_calendar_availability",
                 description:
-                    "Controleer de beschikbaarheid in de Google Agenda voordat je een afspraak voorstelt. Gebruik dit om vrije tijdsloten te vinden.",
-                input_schema: availabilitySchema,
-                parameters: availabilitySchema,
+                  "Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.",
+                parameters: checkAvailabilityParameters
             },
             {
                 type: "function",
                 name: "cancel_calendar_event",
                 description:
-                    "Annuleer een bestaande afspraak in de Google Agenda. Vraag altijd naar de naam en geboortedatum ter verificatie voordat je annuleert.",
-                input_schema: cancelCalendarSchema,
-                parameters: cancelCalendarSchema,
-            },
+                  "Annuleer een bestaand event in Google Agenda na verificatie met naam + geboortedatum.",
+                parameters: cancelCalendarParameters
+            }
         ];
     }
 
     public async openRealtimeSession(
-        callSid: string,
-        callbacks: VapiRealtimeCallbacks
+      callSid: string,
+      callbacks: VapiRealtimeCallbacks
     ): Promise<VapiRealtimeSession> {
         const config = this.currentConfig;
         if (!config || !this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
@@ -390,12 +380,9 @@ export class VapiClient {
 
         const assistantId = await this.syncAssistant(config);
         const prompt = this.buildSystemPrompt(config);
-        const tools = this.getTools(config.hasGoogleIntegration);
 
         const ws = new WebSocket(`${this.realtimeBaseUrl}?assistantId=${assistantId}`, {
-            headers: {
-                Authorization: `Bearer ${this.apiKey}`,
-            },
+            headers: { Authorization: `Bearer ${this.apiKey}` },
         });
 
         const session = new VapiRealtimeSession(ws);
@@ -403,27 +390,16 @@ export class VapiClient {
         await new Promise<void>((resolve, reject) => {
             ws.once("open", () => {
                 console.log(`[${callSid}] [Vapi] realtime session opened.`);
+
+                // Geen tools meesturen: die zitten al op de assistant
                 const updatePayload: any = {
                     type: "session.update",
                     session: {
                         instructions: prompt,
-                        tools,
                         modalities: ["audio"],
-                        input_audio_format: {
-                            encoding: "mulaw",
-                            sample_rate: 8000,
-                        },
-                        output_audio_format: {
-                            encoding: "mulaw",
-                            sample_rate: 8000,
-                        },
-                        voice: config.voiceSettings
-                            ? {
-                                  provider: "vapi",
-                                  voice_id: config.voiceSettings.voiceId,
-                                  speed: config.voiceSettings.talkingSpeed,
-                              }
-                            : undefined,
+                        input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                        output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                        // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
                         metadata: {
                             companyId: config.company.id,
                             companyName: config.company.name,
@@ -469,17 +445,15 @@ export class VapiClient {
     }
 
     private async handleRealtimeEvent(
-        event: any,
-        session: VapiRealtimeSession,
-        callbacks: VapiRealtimeCallbacks
+      event: any,
+      session: VapiRealtimeSession,
+      callbacks: VapiRealtimeCallbacks
     ) {
         const type = event?.type;
         switch (type) {
             case "response.audio.delta": {
                 const audio = event.audio ?? event.delta ?? event.data;
-                if (audio) {
-                    callbacks.onAudio(audio);
-                }
+                if (audio) callbacks.onAudio(audio);
                 break;
             }
             case "response.output_text.delta": {
@@ -500,18 +474,14 @@ export class VapiClient {
             case "tool.call":
             case "session.tool_call": {
                 const toolCall = this.normalizeToolCall(event);
-                if (toolCall) {
-                    await this.executeToolCall(toolCall, session, callbacks);
-                }
+                if (toolCall) await this.executeToolCall(toolCall, session, callbacks);
                 break;
             }
             default: {
                 if (event?.tool_calls && Array.isArray(event.tool_calls)) {
                     for (const raw of event.tool_calls) {
                         const toolCall = this.normalizeToolCall(raw);
-                        if (toolCall) {
-                            await this.executeToolCall(toolCall, session, callbacks);
-                        }
+                        if (toolCall) await this.executeToolCall(toolCall, session, callbacks);
                     }
                 }
                 break;
@@ -521,21 +491,20 @@ export class VapiClient {
 
     private normalizeToolCall(raw: any): NormalizedToolCall | null {
         if (!raw) return null;
-
         const container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
         if (!container) return null;
 
         const id = container.id ?? container.tool_call_id ?? container.call_id ?? container.callId;
-        const name = container.name ?? container.tool_name ?? container.function?.name ?? container.action;
-
+        const name =
+          container.name ?? container.tool_name ?? container.function?.name ?? container.action;
         if (!id || !name) return null;
 
         let argsRaw =
-            container.arguments ??
-            container.input ??
-            container.payload ??
-            container.function?.arguments ??
-            container.tool_arguments;
+          container.arguments ??
+          container.input ??
+          container.payload ??
+          container.function?.arguments ??
+          container.tool_arguments;
 
         if (typeof argsRaw === "string") {
             try {
@@ -545,22 +514,15 @@ export class VapiClient {
                 argsRaw = {};
             }
         }
+        if (!argsRaw || typeof argsRaw !== "object") argsRaw = {};
 
-        if (!argsRaw || typeof argsRaw !== "object") {
-            argsRaw = {};
-        }
-
-        return {
-            id,
-            name,
-            args: argsRaw as Record<string, unknown>,
-        };
+        return { id, name, args: argsRaw as Record<string, unknown> };
     }
 
     private async executeToolCall(
-        call: NormalizedToolCall,
-        session: VapiRealtimeSession,
-        callbacks: VapiRealtimeCallbacks
+      call: NormalizedToolCall,
+      session: VapiRealtimeSession,
+      callbacks: VapiRealtimeCallbacks
     ) {
         if (!this.company) {
             console.warn("[VapiClient] Company not configured; cannot execute tool call.");
@@ -577,7 +539,8 @@ export class VapiClient {
 
         try {
             if (call.name === "create_calendar_event") {
-                const { summary, location, description, start, end, name, dateOfBirth } = call.args as Record<string, string>;
+                const { summary, location, description, start, end, name, dateOfBirth } =
+                  call.args as Record<string, string>;
                 const event = {
                     summary,
                     location,
@@ -593,7 +556,9 @@ export class VapiClient {
             } else if (call.name === "check_calendar_availability") {
                 const { date } = call.args as Record<string, string>;
                 const dayOfWeek = new Date(date).getDay();
-                const hoursForDay = this.companyContext?.hours.find((h) => h.dayOfWeek === (dayOfWeek === 0 ? 7 : dayOfWeek));
+                const hoursForDay = this.companyContext?.hours.find(
+                  (h) => h.dayOfWeek === (dayOfWeek === 0 ? 7 : dayOfWeek)
+                );
 
                 let openHour = 9;
                 let closeHour = 17;
@@ -604,13 +569,24 @@ export class VapiClient {
                     closeHour = cH;
                 }
 
-                const availableSlots = await this.googleService.getAvailableSlots(this.company.id, date, openHour, closeHour);
+                const availableSlots = await this.googleService.getAvailableSlots(
+                  this.company.id,
+                  date,
+                  openHour,
+                  closeHour
+                );
                 const summary = summarizeSlots(availableSlots, openHour, closeHour);
                 toolResponse = { availableSlots, summary };
                 callbacks.onToolStatus?.("calendar-availability-checked");
             } else if (call.name === "cancel_calendar_event") {
-                const { name, dateOfBirth, date } = call.args as Record<string, string>;
-                const success = await this.googleService.cancelEvent(this.company.id, name, dateOfBirth, date);
+                const { name, dateOfBirth, eventId, reason } = call.args as Record<string, string>;
+                const success = await this.googleService.cancelEventById(
+                  this.company.id,
+                  eventId,
+                  name,
+                  dateOfBirth,
+                  reason
+                );
                 toolResponse = { success };
                 callbacks.onToolStatus?.("calendar-event-cancelled");
             } else {
@@ -625,6 +601,7 @@ export class VapiClient {
         session.sendToolResponse(call.id, toolResponse);
     }
 
+    /** ===== Assistant lifecycle ===== */
     public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
         const effectiveConfig = config ?? this.currentConfig;
         if (!effectiveConfig) {
@@ -643,8 +620,8 @@ export class VapiClient {
                     return cachedId;
                 } catch (error) {
                     console.warn(
-                        `[VapiClient] Cached assistant ${cachedId} for company ${assistantName} could not be updated; recreating.`,
-                        error
+                      `[VapiClient] Cached assistant ${cachedId} for company ${assistantName} could not be updated; recreating.`,
+                      error
                     );
                     this.assistantCache.delete(cacheKey);
                 }
@@ -658,8 +635,8 @@ export class VapiClient {
                     return existingId;
                 } catch (error) {
                     console.warn(
-                        `[VapiClient] Existing assistant ${existingId} for company ${assistantName} could not be updated; creating new.`,
-                        error
+                      `[VapiClient] Existing assistant ${existingId} for company ${assistantName} could not be updated; creating new.`,
+                      error
                     );
                 }
             }
@@ -676,41 +653,43 @@ export class VapiClient {
     private buildAssistantPayload(config: VapiAssistantConfig) {
         const instructions = this.buildSystemPrompt(config);
         const companyContext = this.buildCompanySnapshot(config);
-
         const tools = this.getTools(config.hasGoogleIntegration);
-        const voice = config.voiceSettings
-            ? {
-                  provider: "vapi",
-                  voice_id: config.voiceSettings.voiceId,
-                  speed: config.voiceSettings.talkingSpeed,
-              }
-            : undefined;
+
+        const voice = config.voiceSettings?.voiceId
+          ? {
+              provider: "11labs",
+              voiceId: config.voiceSettings.voiceId,
+              ...(config.voiceSettings.talkingSpeed
+                ? { speed: config.voiceSettings.talkingSpeed }
+                : {}),
+          }
+          : undefined;
+
+        const firstMessage = config.voiceSettings?.welcomePhrase || undefined;
 
         return {
             name: this.getAssistantName(config),
             instructions,
-            model: {
-                provider: this.modelProvider,
-                model: this.modelName,
-            },
+            model: { provider: this.modelProvider, model: this.modelName },
             tools,
-            voice,
+            ...(voice ? { voice } : {}),
             metadata: this.buildAssistantMetadata(config, companyContext),
-            first_message: config.voiceSettings?.welcomePhrase ?? undefined,
-            firstMessage: config.voiceSettings?.welcomePhrase ?? undefined,
+            ...(firstMessage ? { firstMessage } : {}),
             modalities: ["audio"],
+            // transcriber kan je hier toevoegen wanneer nodig:
+            // transcriber: { provider: "deepgram", model: "nova-2" }
         };
     }
 
     private getAssistantName(config: VapiAssistantConfig): string {
         const trimmed = config.company.name?.trim();
-        if (trimmed) {
-            return trimmed;
-        }
-        return config.company.id.toString();
+        return trimmed || config.company.id.toString();
     }
 
-    private buildAssistantMetadata(config: VapiAssistantConfig, companyContext: ReturnType<typeof this.buildCompanySnapshot>) {
+    private buildAssistantMetadata(
+      config: VapiAssistantConfig,
+      companyContext: ReturnType<typeof this.buildCompanySnapshot>
+    ) {
         const metadata: Record<string, unknown> = {
             companyId: companyContext.companyId,
             companyName: companyContext.companyName,
@@ -742,7 +721,9 @@ export class VapiClient {
                 params: { name },
             });
             const assistants = this.extractAssistants(response.data);
-            const assistant = assistants.find((item: any) => item?.name === name || item?.assistant?.name === name);
+            const assistant = assistants.find(
+              (item: any) => item?.name === name || item?.assistant?.name === name
+            );
             if (!assistant) return null;
             const container = assistant.assistant ?? assistant;
             return container.id ?? container._id ?? null;
