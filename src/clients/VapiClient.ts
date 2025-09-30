@@ -481,7 +481,6 @@ export class VapiClient {
         if (Object.keys(scheduling).length > 0) {
             contextPayload.scheduling = scheduling;
         }
-
         const messageContent = [
             instructions.trim(),
             "",
@@ -994,8 +993,10 @@ export class VapiClient {
 
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
-            instructions,
-            transcriber: { provider: "assembly-ai" },
+            transcriber: {
+                provider: "deepgram",
+                language: "nl"
+            },
             model: {
                 provider: this.modelProvider,
                 model: this.modelName,
@@ -1007,7 +1008,6 @@ export class VapiClient {
             firstMessageMode: "assistant-speaks-first",
             voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
             endCallMessage: "Fijne dag!",
-            metadata: this.buildAssistantMetadata(config, companyContext, tools),
         };
 
         if (modelTools.length > 0) {
