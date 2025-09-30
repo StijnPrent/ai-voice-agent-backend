@@ -684,7 +684,7 @@ export class VapiClient {
         }
 
         if (Object.keys(metadata).length > 0) {
-            (transport.websocket as Record<string, unknown>).metadata = metadata;
+            transport.metadata = metadata;
         }
 
         const payload = {
