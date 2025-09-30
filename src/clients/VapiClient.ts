@@ -26,6 +26,27 @@ type SchedulingContext = {
     staffMembers: StaffMemberModel[];
 };
 
+type CompanySnapshot = {
+    companyId: string;
+    companyName: string;
+    industry?: string;
+    description?: string;
+    contact?: {
+        email?: string;
+        phone?: string;
+        website?: string;
+        address?: string;
+    };
+    hours?: { day: string; isOpen: boolean; ranges?: string[] }[];
+    info?: string[];
+    appointmentTypes?: { name: string; durationMinutes?: number }[];
+    staffMembers?: {
+        name: string;
+        role?: string;
+        availability?: { day: string; ranges: string[] }[];
+    }[];
+};
+
 export type VapiAssistantConfig = {
     company: CompanyModel;
     hasGoogleIntegration: boolean;
@@ -228,7 +249,7 @@ export class VapiClient {
         return instructions.join("\n\n");
     }
 
-    private buildCompanySnapshot(config: VapiAssistantConfig) {
+    private buildCompanySnapshot(config: VapiAssistantConfig): CompanySnapshot {
         const limitString = (value: string | null | undefined, max = 240) => {
             if (!value) return undefined;
             const trimmed = value.trim();
@@ -244,14 +265,20 @@ export class VapiClient {
 
         const hours = (config.companyContext.hours ?? [])
           .slice(0, 7)
-          .map((hour) => ({
-              day: getDayName(hour.dayOfWeek),
-              isOpen: Boolean(hour.isOpen && hour.openTime && hour.closeTime),
-              ranges:
-                hour.isOpen && hour.openTime && hour.closeTime
-                  ? [`${hour.openTime} - ${hour.closeTime}`]
-                  : [],
-          }));
+          .map((hour) => {
+              const isOpen = Boolean(hour.isOpen && hour.openTime && hour.closeTime);
+              const entry: { day: string; isOpen: boolean; ranges?: string[] } = {
+                  day: getDayName(hour.dayOfWeek),
+                  isOpen,
+              };
+
+              if (isOpen) {
+                  entry.ranges = [`${hour.openTime} - ${hour.closeTime}`];
+              }
+
+              return entry;
+          })
+          .filter((entry) => entry.isOpen || Boolean(entry.ranges && entry.ranges.length));
 
         const info = (config.companyContext.info ?? [])
           .filter((entry) => entry.value)
@@ -261,10 +288,22 @@ export class VapiClient {
 
         const appointmentTypes = (config.schedulingContext.appointmentTypes ?? [])
           .slice(0, 8)
-          .map((appointment) => ({
-              name: appointment.name,
-              durationMinutes: appointment.duration ?? undefined,
-          }));
+          .map((appointment) => {
+              const trimmedName = typeof appointment.name === "string"
+                  ? appointment.name.trim()
+                  : "";
+
+              const entry: { name: string; durationMinutes?: number } = {
+                  name: trimmedName || appointment.name || "",
+              };
+
+              if (typeof appointment.duration === "number") {
+                  entry.durationMinutes = appointment.duration;
+              }
+
+              return entry;
+          })
+          .filter((appointment) => Boolean(appointment.name));
 
         const staffMembers = (config.schedulingContext.staffMembers ?? [])
           .slice(0, 5)
@@ -285,31 +324,57 @@ export class VapiClient {
                 .map(([dayOfWeek, ranges]) => ({
                     day: getDayName(dayOfWeek),
                     ranges,
-                }));
+                }))
+                .filter((slot) => slot.ranges.length > 0);
 
-              return {
+              const result: {
+                  name: string;
+                  role?: string;
+                  availability?: { day: string; ranges: string[] }[];
+              } = {
                   name: staff.name,
-                  role: staff.role ?? undefined,
-                  availability,
               };
-          });
 
-        return {
+              if (staff.role) {
+                  result.role = staff.role;
+              }
+
+              if (availability.length > 0) {
+                  result.availability = availability;
+              }
+
+              return result;
+          })
+          .filter((staff) => Object.keys(staff).length > 1);
+
+        const contact: Record<string, string> = {};
+        const email = limitString(config.companyContext.contact?.contact_email);
+        const phone = limitString(config.companyContext.contact?.phone);
+        const website = limitString(config.companyContext.contact?.website);
+        const address = limitString(config.companyContext.contact?.address, 320);
+
+        if (email) contact.email = email;
+        if (phone) contact.phone = phone;
+        if (website) contact.website = website;
+        if (address) contact.address = address;
+
+        const snapshot: CompanySnapshot = {
             companyId: config.company.id.toString(),
             companyName: config.company.name,
-            industry: limitString(config.companyContext.details?.industry),
-            description: limitString(config.companyContext.details?.description, 400),
-            contact: {
-                email: limitString(config.companyContext.contact?.contact_email),
-                phone: limitString(config.companyContext.contact?.phone),
-                website: limitString(config.companyContext.contact?.website),
-                address: limitString(config.companyContext.contact?.address, 320),
-            },
-            hours,
-            info,
-            appointmentTypes,
-            staffMembers,
         };
+
+        const industry = limitString(config.companyContext.details?.industry);
+        const description = limitString(config.companyContext.details?.description, 400);
+
+        if (industry) snapshot.industry = industry;
+        if (description) snapshot.description = description;
+        if (Object.keys(contact).length > 0) snapshot.contact = contact;
+        if (hours.length > 0) snapshot.hours = hours;
+        if (info.length > 0) snapshot.info = info;
+        if (appointmentTypes.length > 0) snapshot.appointmentTypes = appointmentTypes;
+        if (staffMembers.length > 0) snapshot.staffMembers = staffMembers;
+
+        return snapshot;
     }
 
     /** ===== Tools (clean JSON Schema via `parameters`) ===== */
@@ -378,23 +443,34 @@ export class VapiClient {
 
     private buildModelMessages(
       instructions: string,
-      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      companyContext: CompanySnapshot,
       config: VapiAssistantConfig
     ) {
-        const contextPayload = {
-            company: {
-                id: companyContext.companyId,
-                name: companyContext.companyName,
-                industry: companyContext.industry,
-                description: companyContext.description,
-                contact: companyContext.contact,
-                hours: companyContext.hours,
-                info: companyContext.info,
-            },
-            scheduling: {
-                appointmentTypes: companyContext.appointmentTypes,
-                staffMembers: companyContext.staffMembers,
-            },
+        const companyPayload: Record<string, unknown> = {
+            id: companyContext.companyId,
+            name: companyContext.companyName,
+        };
+
+        if (companyContext.industry) companyPayload.industry = companyContext.industry;
+        if (companyContext.description) companyPayload.description = companyContext.description;
+        if (companyContext.contact) companyPayload.contact = companyContext.contact;
+        if (companyContext.hours && companyContext.hours.length > 0) {
+            companyPayload.hours = companyContext.hours;
+        }
+        if (companyContext.info && companyContext.info.length > 0) {
+            companyPayload.info = companyContext.info;
+        }
+
+        const scheduling: Record<string, unknown> = {};
+        if (companyContext.appointmentTypes && companyContext.appointmentTypes.length > 0) {
+            scheduling.appointmentTypes = companyContext.appointmentTypes;
+        }
+        if (companyContext.staffMembers && companyContext.staffMembers.length > 0) {
+            scheduling.staffMembers = companyContext.staffMembers;
+        }
+
+        const contextPayload: Record<string, unknown> = {
+            company: companyPayload,
             replyStyle: {
                 name: config.replyStyle.name,
                 description: config.replyStyle.description,
@@ -402,6 +478,9 @@ export class VapiClient {
             googleCalendarEnabled: config.hasGoogleIntegration,
         };
 
+        if (Object.keys(scheduling).length > 0) {
+            contextPayload.scheduling = scheduling;
+        }
         const messageContent = [
             instructions.trim(),
             "",
@@ -949,7 +1028,7 @@ export class VapiClient {
 
     private buildAssistantMetadata(
       config: VapiAssistantConfig,
-      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      companyContext: CompanySnapshot,
       tools?: ReturnType<VapiClient["getTools"]>
     ) {
         const metadata: Record<string, unknown> = {
@@ -971,11 +1050,26 @@ export class VapiClient {
         }
 
         if (config.voiceSettings) {
-            metadata.voiceSettings = {
-                voiceId: config.voiceSettings.voiceId,
-                talkingSpeed: config.voiceSettings.talkingSpeed,
-                welcomePhrase: config.voiceSettings.welcomePhrase,
-            };
+            const voiceMetadata: Record<string, unknown> = {};
+            const trimmedVoiceId = config.voiceSettings.voiceId?.trim();
+            const welcomePhrase = config.voiceSettings.welcomePhrase?.trim();
+
+            if (trimmedVoiceId) {
+                voiceMetadata.voiceId = trimmedVoiceId;
+            }
+
+            if (config.voiceSettings.talkingSpeed !== null &&
+                config.voiceSettings.talkingSpeed !== undefined) {
+                voiceMetadata.talkingSpeed = config.voiceSettings.talkingSpeed;
+            }
+
+            if (welcomePhrase) {
+                voiceMetadata.welcomePhrase = welcomePhrase;
+            }
+
+            if (Object.keys(voiceMetadata).length > 0) {
+                metadata.voiceSettings = voiceMetadata;
+            }
         }
 
         return metadata;
