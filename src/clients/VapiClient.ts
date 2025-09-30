@@ -120,7 +120,6 @@ class VapiRealtimeSession {
 @injectable()
 export class VapiClient {
     private readonly apiKey: string;
-    private readonly realtimeBaseUrl: string;
     private readonly http: AxiosInstance;
     private readonly apiPathPrefix: string;
     private readonly modelProvider: string;
@@ -142,7 +141,6 @@ export class VapiClient {
             console.warn("[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.");
         }
 
-        this.realtimeBaseUrl = process.env.VAPI_REALTIME_URL || "wss://api.vapi.ai/call";
         const apiBaseUrl = process.env.VAPI_API_BASE_URL || "https://api.vapi.ai";
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
@@ -551,13 +549,27 @@ export class VapiClient {
         const assistantId = await this.syncAssistant(config);
         const prompt = this.buildSystemPrompt(config);
 
-        const { socket: ws, url: connectedUrl } = await this.establishRealtimeSocket(
+        const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
             assistantId,
             callSid
         );
 
+        const candidates = [primaryUrl, ...fallbackUrls].filter((url, index, arr) => {
+            return typeof url === "string" && url.startsWith("ws") && arr.indexOf(url) === index;
+        });
+
+        if (candidates.length === 0) {
+            throw new Error("Vapi did not return a websocket URL for the realtime session");
+        }
+
+        const { socket: ws, url: connectedUrl } = await this.establishRealtimeSocket(
+            candidates,
+            callSid
+        );
+
         console.log(
-            `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}`
+            `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}` +
+                (callId ? ` (callId=${callId})` : "")
         );
 
         const session = new VapiRealtimeSession(ws);
@@ -607,61 +619,27 @@ export class VapiClient {
         return session;
     }
 
-    private buildRealtimeUrlCandidates(): string[] {
-        const seen = new Set<string>();
-        const candidates: string[] = [];
-
-        const push = (value: string) => {
-            if (!value) return;
-            if (seen.has(value)) return;
-            seen.add(value);
-            candidates.push(value);
-        };
-
-        const defaultBase = "wss://api.vapi.ai/call";
-        const documentedFallback = "wss://api.vapi.ai/realtime";
-
-        push(this.realtimeBaseUrl);
-        if (this.realtimeBaseUrl !== defaultBase) {
-            push(defaultBase);
-        }
-        push(documentedFallback);
-
-        return candidates;
-    }
-
-    private buildRealtimeSocketUrl(baseUrl: string, assistantId: string): string {
-        try {
-            const url = new URL(baseUrl);
-            url.searchParams.set("assistantId", assistantId);
-            return url.toString();
-        } catch (error) {
-            console.error(
-                `[VapiClient] Failed to parse realtime base URL '${baseUrl}'. Falling back to string concatenation.`,
-                error
-            );
-            const separator = baseUrl.includes("?") ? "&" : "?";
-            return `${baseUrl}${separator}assistantId=${encodeURIComponent(assistantId)}`;
-        }
-    }
-
     private async establishRealtimeSocket(
-        assistantId: string,
+        candidateUrls: string[],
         callSid: string
     ): Promise<{ socket: WebSocket; url: string }> {
-        const candidates = this.buildRealtimeUrlCandidates();
         const errors: Error[] = [];
+        const visited = new Set<string>();
 
-        for (const base of candidates) {
-            const url = this.buildRealtimeSocketUrl(base, assistantId);
+        for (const candidate of candidateUrls) {
+            const url = candidate;
+            if (visited.has(url)) {
+                continue;
+            }
+
             try {
-                const socket = await this.connectRealtimeSocket(url, callSid, new Set());
-                if (base !== this.realtimeBaseUrl) {
+                const { socket, finalUrl } = await this.connectRealtimeSocket(url, callSid, visited);
+                if (finalUrl !== url) {
                     console.warn(
-                        `[${callSid}] [Vapi] realtime base '${this.realtimeBaseUrl}' failed, using fallback '${base}'.`
+                        `[${callSid}] [Vapi] websocket redirected from ${url} to ${finalUrl}`
                     );
                 }
-                return { socket, url };
+                return { socket, url: finalUrl };
             } catch (error) {
                 const err =
                     error instanceof Error
@@ -675,17 +653,145 @@ export class VapiClient {
         }
 
         const aggregate = new Error(
-            `Unable to establish Vapi realtime connection after ${candidates.length} attempts.`
+            `Unable to establish Vapi realtime connection after ${candidateUrls.length} attempts.`
         );
         (aggregate as any).causes = errors;
         throw aggregate;
+    }
+
+    private async createWebsocketCall(
+        assistantId: string,
+        callSid: string
+    ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
+        const transport: Record<string, unknown> = {
+            type: "websocket",
+            websocket: {
+                audio: {
+                    encoding: "mulaw",
+                    sampleRate: 8000,
+                },
+            },
+        };
+
+        const metadata: Record<string, unknown> = {
+            callSid,
+        };
+
+        if (this.company) {
+            metadata.companyId = this.company.id;
+            metadata.companyName = this.company.name;
+        }
+
+        if (Object.keys(metadata).length > 0) {
+            (transport.websocket as Record<string, unknown>).metadata = metadata;
+        }
+
+        const payload = {
+            assistantId,
+            transport,
+        };
+
+        try {
+            const response = await this.http.post(this.buildApiPath("/call"), payload);
+            const info = this.extractWebsocketCallInfo(response.data);
+            if (!info) {
+                throw new Error("Vapi create call response did not include a websocket URL");
+            }
+            return info;
+        } catch (error) {
+            this.logAxiosError("[VapiClient] Failed to create websocket call", error, payload);
+            throw error;
+        }
+    }
+
+    private extractWebsocketCallInfo(
+        data: any
+    ): { primaryUrl: string; fallbackUrls: string[]; callId?: string | null } | null {
+        if (!data) return null;
+
+        const containers = [data, data?.data, data?.call, data?.result, data?.response];
+        const urls = new Set<string>();
+        const fallbackUrls = new Set<string>();
+        let callId: string | null = null;
+
+        const addUrl = (value: unknown, target: Set<string>) => {
+            if (typeof value === "string" && value.startsWith("ws")) {
+                target.add(value);
+            }
+        };
+
+        const visit = (value: unknown, path: string[] = []) => {
+            if (!value) return;
+
+            if (typeof value === "string") {
+                if (value.startsWith("ws")) {
+                    const key = path[path.length - 1]?.toLowerCase() ?? "";
+                    if (key.includes("fallback")) {
+                        fallbackUrls.add(value);
+                    } else {
+                        urls.add(value);
+                    }
+                } else if (!callId && path[path.length - 1] === "id" && path.includes("call")) {
+                    callId = value;
+                } else if (!callId && path[path.length - 1] === "callId") {
+                    callId = value;
+                }
+                return;
+            }
+
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    visit(item, path);
+                }
+                return;
+            }
+
+            if (typeof value === "object") {
+                for (const [key, nested] of Object.entries(value)) {
+                    const lowerKey = key.toLowerCase();
+                    if (lowerKey === "websocketcallurl" || lowerKey === "url") {
+                        addUrl(nested, urls);
+                    } else if (lowerKey.includes("fallback") && Array.isArray(nested)) {
+                        nested.forEach((item) => addUrl(item, fallbackUrls));
+                    }
+                    visit(nested, [...path, key]);
+                }
+            }
+        };
+
+        for (const container of containers) {
+            visit(container ?? {}, []);
+        }
+
+        if (urls.size === 0 && fallbackUrls.size === 0) {
+            return null;
+        }
+
+        const [primaryUrl] = urls.size > 0 ? Array.from(urls) : Array.from(fallbackUrls);
+        const remainingFallbacks = new Set<string>();
+        for (const url of urls) {
+            if (url !== primaryUrl) {
+                remainingFallbacks.add(url);
+            }
+        }
+        for (const url of fallbackUrls) {
+            if (url !== primaryUrl && !remainingFallbacks.has(url)) {
+                remainingFallbacks.add(url);
+            }
+        }
+
+        return {
+            primaryUrl,
+            fallbackUrls: Array.from(remainingFallbacks),
+            callId,
+        };
     }
 
     private async connectRealtimeSocket(
         url: string,
         callSid: string,
         visited: Set<string>
-    ): Promise<WebSocket> {
+    ): Promise<{ socket: WebSocket; finalUrl: string }> {
         if (visited.has(url)) {
             throw new Error(
               `[${callSid}] [Vapi] Realtime handshake loop detected when revisiting ${url}`
@@ -693,7 +799,7 @@ export class VapiClient {
         }
         visited.add(url);
 
-        return new Promise<WebSocket>((resolve, reject) => {
+        return new Promise<{ socket: WebSocket; finalUrl: string }>((resolve, reject) => {
             const socket = new WebSocket(url, {
                 headers: { Authorization: `Bearer ${this.apiKey}` },
             });
@@ -733,7 +839,7 @@ export class VapiClient {
             const onOpen = () => {
                 settled = true;
                 cleanup();
-                resolve(socket);
+                resolve({ socket, finalUrl: url });
             };
 
             const onError = (err: Error) => {
@@ -766,13 +872,13 @@ export class VapiClient {
                     safeShutdown(() => socket.terminate());
 
                     this.connectRealtimeSocket(fallbackUrl, callSid, visited)
-                        .then((nextSocket) => {
+                        .then((result) => {
                             if (settled) {
-                                nextSocket.close();
+                                result.socket.close();
                                 return;
                             }
                             settled = true;
-                            resolve(nextSocket);
+                            resolve(result);
                         })
                         .catch((fallbackError) => {
                             if (settled) return;
