@@ -146,7 +146,7 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
-        this.transportProvider = "vapi.websocket";
+        this.transportProvider = process.env.VAPI_TRANSPORT_PROVIDER || "vapi.websocket";
 
         this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
@@ -665,33 +665,34 @@ export class VapiClient {
         assistantId: string,
         callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
-        const transport: Record<string, unknown> = {
-            websocket: {
-                provider: 'vapi.websocket',
-                audio: {
-                    encoding: "mulaw",
-                    sampleRate: 8000,
-                },
+        const websocketTransport: Record<string, unknown> = {
+            provider: "vapi.websocket",
+            audio: {
+                encoding: "mulaw",
+                sampleRate: 8000,
             },
         };
 
-        const metadata: Record<string, unknown> = {
-            callSid,
+        const transport: Record<string, unknown> = {
+            provider: this.transportProvider,
+            audioFormat: {
+                format: "pcm_s16le",
+                container: "raw",
+                sampleRate: 16000,
+            },
+            websocket: websocketTransport,
         };
 
-        if (this.company) {
-            metadata.companyId = this.company.id.toString();
-            metadata.companyName = this.company.name;
-        }
+        const metadata = this.buildCallMetadata(callSid);
 
-        if (Object.keys(metadata).length > 0) {
-            (transport.websocket as Record<string, unknown>).metadata = metadata;
-        }
-
-        const payload = {
+        const payload: Record<string, unknown> = {
             assistantId,
             transport,
         };
+
+        if (Object.keys(metadata).length > 0) {
+            payload.metadata = metadata;
+        }
 
         try {
             const response = await this.http.post(this.buildApiPath("/call"), payload);
@@ -704,6 +705,19 @@ export class VapiClient {
             this.logAxiosError("[VapiClient] Failed to create websocket call", error, payload);
             throw error;
         }
+    }
+
+    private buildCallMetadata(callSid: string): Record<string, unknown> {
+        const metadata: Record<string, unknown> = {
+            callSid,
+        };
+
+        if (this.company) {
+            metadata.companyId = this.company.id.toString();
+            metadata.companyName = this.company.name;
+        }
+
+        return metadata;
     }
 
     private extractWebsocketCallInfo(
