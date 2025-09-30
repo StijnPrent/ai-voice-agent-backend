@@ -427,8 +427,6 @@ export class VapiClient {
         const join = (path: string) =>
             `${this.toolBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
-        const headers = { "Content-Type": "application/json" };
-
         return [
             {
                 type: "apiRequest",
@@ -437,7 +435,6 @@ export class VapiClient {
                   "Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.",
                 method: "POST",
                 url: join("/google/availability"),
-                headers,
             },
             {
                 type: "apiRequest",
@@ -446,7 +443,6 @@ export class VapiClient {
                   "Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.",
                 method: "POST",
                 url: join("/google/schedule"),
-                headers,
             },
             {
                 type: "apiRequest",
@@ -455,7 +451,6 @@ export class VapiClient {
                   "Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.",
                 method: "POST",
                 url: join("/google/cancel"),
-                headers,
             },
         ];
     }
