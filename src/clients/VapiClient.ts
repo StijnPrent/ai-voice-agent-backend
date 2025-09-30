@@ -481,6 +481,7 @@ export class VapiClient {
         if (Object.keys(scheduling).length > 0) {
             contextPayload.scheduling = scheduling;
         }
+        
         const messageContent = [
             instructions.trim(),
             "",
@@ -715,12 +716,21 @@ export class VapiClient {
                 const finalize = () => {
                     if (settled) return;
                     settled = true;
-                    cleanup();
                     const body = Buffer.concat(chunks).toString("utf8");
                     const errorMessage =
                         `[${callSid}] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
                         (statusMessage ? ` ${statusMessage}` : "") +
                         (body ? ` – ${body}` : "");
+                    const swallowHandshakeError = (err: Error) => {
+                        console.warn(
+                            `[${callSid}] [Vapi] realtime socket error after unexpected response: ${err.message}`
+                        );
+                    };
+                    socket.once("error", swallowHandshakeError);
+                    socket.once("close", () => {
+                        socket.removeListener("error", swallowHandshakeError);
+                    });
+                    cleanup();
                     try {
                         socket.close();
                     } catch {}
