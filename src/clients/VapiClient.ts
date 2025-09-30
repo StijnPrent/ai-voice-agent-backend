@@ -584,7 +584,7 @@ export class VapiClient {
                 output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
                 // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
                 metadata: {
-                    companyId: config.company.id,
+                    companyId: config.company.id.toString(),
                     companyName: config.company.name,
                     googleCalendarEnabled: config.hasGoogleIntegration,
                 },
@@ -678,7 +678,7 @@ export class VapiClient {
         };
 
         if (this.company) {
-            metadata.companyId = this.company.id;
+            metadata.companyId = this.company.id.toString();
             metadata.companyName = this.company.name;
         }
 
