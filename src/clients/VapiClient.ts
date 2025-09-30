@@ -126,6 +126,7 @@ export class VapiClient {
     private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
     private readonly toolBaseUrl: string;
+    private readonly transportProvider: string;
 
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -145,6 +146,8 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
+        const configuredTransportProvider = process.env.VAPI_TRANSPORT_PROVIDER?.trim();
+        this.transportProvider = configuredTransportProvider || "vapi.websocket";
 
         this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
@@ -665,6 +668,7 @@ export class VapiClient {
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
         const transport: Record<string, unknown> = {
             type: "websocket",
+            provider: this.transportProvider,
             websocket: {
                 audio: {
                     encoding: "mulaw",
