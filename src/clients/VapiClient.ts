@@ -409,6 +409,7 @@ export class VapiClient {
 
         return [
             {
+                role: "system",
                 content: messageContent,
             },
         ];
@@ -782,6 +783,7 @@ export class VapiClient {
         if (modelTools.length > 0) {
             (payload.model as Record<string, unknown>).tools = modelTools;
         }
+
         if (firstMessage) {
             payload.firstMessage = firstMessage;
         }
