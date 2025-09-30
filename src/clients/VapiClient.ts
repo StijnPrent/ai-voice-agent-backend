@@ -662,11 +662,12 @@ export class VapiClient {
     }
 
     private async createWebsocketCall(
-        assistantId: string,
-        callSid: string
+      assistantId: string,
+      callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
-        const transport: Record<string, unknown> = {
-            provider: this.transportProvider,
+
+        const transport = {
+            provider: this.transportProvider, // "vapi.websocket"
             audioFormat: {
                 format: "mulaw",
                 container: "raw",
@@ -674,30 +675,24 @@ export class VapiClient {
             },
         };
 
-        const metadata: Record<string, unknown> = {
-            callSid,
-        };
-
+        // <-- move metadata OUT of transport and to the top-level payload
+        const metadata: Record<string, unknown> = { callSid };
         if (this.company) {
             metadata.companyId = this.company.id.toString();
             metadata.companyName = this.company.name;
         }
 
-        if (Object.keys(metadata).length > 0) {
-            transport.metadata = metadata;
-        }
-
         const payload = {
             assistantId,
             transport,
+            metadata,              // <-- top-level
+            // (optional) voicemailDetection, analysisPlan, etc. also go top-level
         };
 
         try {
             const response = await this.http.post(this.buildApiPath("/call"), payload);
             const info = this.extractWebsocketCallInfo(response.data);
-            if (!info) {
-                throw new Error("Vapi create call response did not include a websocket URL");
-            }
+            if (!info) throw new Error("Vapi create call response did not include a websocket URL");
             return info;
         } catch (error) {
             this.logAxiosError("[VapiClient] Failed to create websocket call", error, payload);
