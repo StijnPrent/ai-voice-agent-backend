@@ -762,7 +762,6 @@ export class VapiClient {
 
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
-            instructions,
             transcriber: {
                 provider: "deepgram",
                 language: "nl"
