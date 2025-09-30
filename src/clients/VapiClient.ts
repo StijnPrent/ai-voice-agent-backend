@@ -26,6 +26,27 @@ type SchedulingContext = {
     staffMembers: StaffMemberModel[];
 };
 
+type CompanySnapshot = {
+    companyId: string;
+    companyName: string;
+    industry?: string;
+    description?: string;
+    contact?: {
+        email?: string;
+        phone?: string;
+        website?: string;
+        address?: string;
+    };
+    hours?: { day: string; isOpen: boolean; ranges?: string[] }[];
+    info?: string[];
+    appointmentTypes?: { name: string; durationMinutes?: number }[];
+    staffMembers?: {
+        name: string;
+        role?: string;
+        availability?: { day: string; ranges: string[] }[];
+    }[];
+};
+
 export type VapiAssistantConfig = {
     company: CompanyModel;
     hasGoogleIntegration: boolean;
@@ -105,6 +126,7 @@ export class VapiClient {
     private readonly modelProvider: string;
     private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
+    private readonly toolBaseUrl: string;
 
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -125,6 +147,8 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
+
+        this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
@@ -174,6 +198,10 @@ export class VapiClient {
             schedulingContext,
             voiceSettings,
         };
+
+        if (company.assistantId) {
+            this.assistantCache.set(company.id.toString(), company.assistantId);
+        }
     }
 
     public buildSystemPrompt(config?: VapiAssistantConfig): string {
@@ -221,7 +249,7 @@ export class VapiClient {
         return instructions.join("\n\n");
     }
 
-    private buildCompanySnapshot(config: VapiAssistantConfig) {
+    private buildCompanySnapshot(config: VapiAssistantConfig): CompanySnapshot {
         const limitString = (value: string | null | undefined, max = 240) => {
             if (!value) return undefined;
             const trimmed = value.trim();
@@ -237,14 +265,20 @@ export class VapiClient {
 
         const hours = (config.companyContext.hours ?? [])
           .slice(0, 7)
-          .map((hour) => ({
-              day: getDayName(hour.dayOfWeek),
-              isOpen: Boolean(hour.isOpen && hour.openTime && hour.closeTime),
-              ranges:
-                hour.isOpen && hour.openTime && hour.closeTime
-                  ? [`${hour.openTime} - ${hour.closeTime}`]
-                  : [],
-          }));
+          .map((hour) => {
+              const isOpen = Boolean(hour.isOpen && hour.openTime && hour.closeTime);
+              const entry: { day: string; isOpen: boolean; ranges?: string[] } = {
+                  day: getDayName(hour.dayOfWeek),
+                  isOpen,
+              };
+
+              if (isOpen) {
+                  entry.ranges = [`${hour.openTime} - ${hour.closeTime}`];
+              }
+
+              return entry;
+          })
+          .filter((entry) => entry.isOpen || Boolean(entry.ranges && entry.ranges.length));
 
         const info = (config.companyContext.info ?? [])
           .filter((entry) => entry.value)
@@ -254,10 +288,22 @@ export class VapiClient {
 
         const appointmentTypes = (config.schedulingContext.appointmentTypes ?? [])
           .slice(0, 8)
-          .map((appointment) => ({
-              name: appointment.name,
-              durationMinutes: appointment.duration ?? undefined,
-          }));
+          .map((appointment) => {
+              const trimmedName = typeof appointment.name === "string"
+                  ? appointment.name.trim()
+                  : "";
+
+              const entry: { name: string; durationMinutes?: number } = {
+                  name: trimmedName || appointment.name || "",
+              };
+
+              if (typeof appointment.duration === "number") {
+                  entry.durationMinutes = appointment.duration;
+              }
+
+              return entry;
+          })
+          .filter((appointment) => Boolean(appointment.name));
 
         const staffMembers = (config.schedulingContext.staffMembers ?? [])
           .slice(0, 5)
@@ -278,31 +324,57 @@ export class VapiClient {
                 .map(([dayOfWeek, ranges]) => ({
                     day: getDayName(dayOfWeek),
                     ranges,
-                }));
+                }))
+                .filter((slot) => slot.ranges.length > 0);
 
-              return {
+              const result: {
+                  name: string;
+                  role?: string;
+                  availability?: { day: string; ranges: string[] }[];
+              } = {
                   name: staff.name,
-                  role: staff.role ?? undefined,
-                  availability,
               };
-          });
 
-        return {
+              if (staff.role) {
+                  result.role = staff.role;
+              }
+
+              if (availability.length > 0) {
+                  result.availability = availability;
+              }
+
+              return result;
+          })
+          .filter((staff) => Object.keys(staff).length > 1);
+
+        const contact: Record<string, string> = {};
+        const email = limitString(config.companyContext.contact?.contact_email);
+        const phone = limitString(config.companyContext.contact?.phone);
+        const website = limitString(config.companyContext.contact?.website);
+        const address = limitString(config.companyContext.contact?.address, 320);
+
+        if (email) contact.email = email;
+        if (phone) contact.phone = phone;
+        if (website) contact.website = website;
+        if (address) contact.address = address;
+
+        const snapshot: CompanySnapshot = {
             companyId: config.company.id.toString(),
             companyName: config.company.name,
-            industry: limitString(config.companyContext.details?.industry),
-            description: limitString(config.companyContext.details?.description, 400),
-            contact: {
-                email: limitString(config.companyContext.contact?.contact_email),
-                phone: limitString(config.companyContext.contact?.phone),
-                website: limitString(config.companyContext.contact?.website),
-                address: limitString(config.companyContext.contact?.address, 320),
-            },
-            hours,
-            info,
-            appointmentTypes,
-            staffMembers,
         };
+
+        const industry = limitString(config.companyContext.details?.industry);
+        const description = limitString(config.companyContext.details?.description, 400);
+
+        if (industry) snapshot.industry = industry;
+        if (description) snapshot.description = description;
+        if (Object.keys(contact).length > 0) snapshot.contact = contact;
+        if (hours.length > 0) snapshot.hours = hours;
+        if (info.length > 0) snapshot.info = info;
+        if (appointmentTypes.length > 0) snapshot.appointmentTypes = appointmentTypes;
+        if (staffMembers.length > 0) snapshot.staffMembers = staffMembers;
+
+        return snapshot;
     }
 
     /** ===== Tools (clean JSON Schema via `parameters`) ===== */
@@ -369,6 +441,104 @@ export class VapiClient {
         ];
     }
 
+    private buildModelMessages(
+      instructions: string,
+      companyContext: CompanySnapshot,
+      config: VapiAssistantConfig
+    ) {
+        const companyPayload: Record<string, unknown> = {
+            id: companyContext.companyId,
+            name: companyContext.companyName,
+        };
+
+        if (companyContext.industry) companyPayload.industry = companyContext.industry;
+        if (companyContext.description) companyPayload.description = companyContext.description;
+        if (companyContext.contact) companyPayload.contact = companyContext.contact;
+        if (companyContext.hours && companyContext.hours.length > 0) {
+            companyPayload.hours = companyContext.hours;
+        }
+        if (companyContext.info && companyContext.info.length > 0) {
+            companyPayload.info = companyContext.info;
+        }
+
+        const scheduling: Record<string, unknown> = {};
+        if (companyContext.appointmentTypes && companyContext.appointmentTypes.length > 0) {
+            scheduling.appointmentTypes = companyContext.appointmentTypes;
+        }
+        if (companyContext.staffMembers && companyContext.staffMembers.length > 0) {
+            scheduling.staffMembers = companyContext.staffMembers;
+        }
+
+        const contextPayload: Record<string, unknown> = {
+            company: companyPayload,
+            replyStyle: {
+                name: config.replyStyle.name,
+                description: config.replyStyle.description,
+            },
+            googleCalendarEnabled: config.hasGoogleIntegration,
+        };
+
+        if (Object.keys(scheduling).length > 0) {
+            contextPayload.scheduling = scheduling;
+        }
+
+        const messageContent = [
+            instructions.trim(),
+            "",
+            "Bedrijfscontext (JSON):",
+            JSON.stringify(contextPayload, null, 2),
+        ]
+          .filter((part) => part.length > 0)
+          .join("\n");
+
+        return [
+            {
+                role: "system",
+                content: messageContent,
+            },
+        ];
+    }
+
+    private buildModelApiTools(config: VapiAssistantConfig) {
+        if (!config.hasGoogleIntegration) return [];
+        if (!this.toolBaseUrl) {
+            console.warn(
+              "[VapiClient] Tool base URL is not configured; skipping API request tools for Google Calendar."
+            );
+            return [];
+        }
+
+        const join = (path: string) =>
+            `${this.toolBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+
+        return [
+            {
+                type: "apiRequest",
+                name: "check_calendar_availability",
+                description:
+                  "Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.",
+                method: "POST",
+                url: join("/google/availability"),
+            },
+            {
+                type: "apiRequest",
+                name: "create_calendar_event",
+                description:
+                  "Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.",
+                method: "POST",
+                url: join("/google/schedule"),
+            },
+            {
+                type: "apiRequest",
+                name: "cancel_calendar_event",
+                description:
+                  "Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.",
+                method: "POST",
+                url: join("/google/cancel"),
+            },
+        ];
+    }
+
     public async openRealtimeSession(
       callSid: string,
       callbacks: VapiRealtimeCallbacks
@@ -381,46 +551,39 @@ export class VapiClient {
         const assistantId = await this.syncAssistant(config);
         const prompt = this.buildSystemPrompt(config);
 
-        const ws = new WebSocket(`${this.realtimeBaseUrl}?assistantId=${assistantId}`, {
-            headers: { Authorization: `Bearer ${this.apiKey}` },
-        });
+        const { socket: ws, url: connectedUrl } = await this.establishRealtimeSocket(
+            assistantId,
+            callSid
+        );
+
+        console.log(
+            `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}`
+        );
 
         const session = new VapiRealtimeSession(ws);
 
-        await new Promise<void>((resolve, reject) => {
-            ws.once("open", () => {
-                console.log(`[${callSid}] [Vapi] realtime session opened.`);
+        // Geen tools meesturen: die zitten al op de assistant
+        const updatePayload: any = {
+            type: "session.update",
+            session: {
+                instructions: prompt,
+                modalities: ["audio"],
+                input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
+                metadata: {
+                    companyId: config.company.id,
+                    companyName: config.company.name,
+                    googleCalendarEnabled: config.hasGoogleIntegration,
+                },
+            },
+        };
 
-                // Geen tools meesturen: die zitten al op de assistant
-                const updatePayload: any = {
-                    type: "session.update",
-                    session: {
-                        instructions: prompt,
-                        modalities: ["audio"],
-                        input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                        output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                        // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
-                        metadata: {
-                            companyId: config.company.id,
-                            companyName: config.company.name,
-                            googleCalendarEnabled: config.hasGoogleIntegration,
-                        },
-                    },
-                };
-
-                try {
-                    ws.send(JSON.stringify(updatePayload));
-                } catch (error) {
-                    console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
-                }
-                resolve();
-            });
-
-            ws.once("error", (err) => {
-                console.error(`[${callSid}] [Vapi] realtime session error before open`, err);
-                reject(err);
-            });
-        });
+        try {
+            ws.send(JSON.stringify(updatePayload));
+        } catch (error) {
+            console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
+        }
 
         ws.on("message", async (raw: WebSocket.RawData) => {
             try {
@@ -442,6 +605,139 @@ export class VapiClient {
         });
 
         return session;
+    }
+
+    private buildRealtimeUrlCandidates(): string[] {
+        const seen = new Set<string>();
+        const candidates: string[] = [];
+
+        const push = (value: string) => {
+            if (!value) return;
+            if (seen.has(value)) return;
+            seen.add(value);
+            candidates.push(value);
+        };
+
+        const defaultBase = "wss://api.vapi.ai/call";
+        const documentedFallback = "wss://api.vapi.ai/realtime";
+
+        push(this.realtimeBaseUrl);
+        if (this.realtimeBaseUrl !== defaultBase) {
+            push(defaultBase);
+        }
+        push(documentedFallback);
+
+        return candidates;
+    }
+
+    private buildRealtimeSocketUrl(baseUrl: string, assistantId: string): string {
+        try {
+            const url = new URL(baseUrl);
+            url.searchParams.set("assistantId", assistantId);
+            return url.toString();
+        } catch (error) {
+            console.error(
+                `[VapiClient] Failed to parse realtime base URL '${baseUrl}'. Falling back to string concatenation.`,
+                error
+            );
+            const separator = baseUrl.includes("?") ? "&" : "?";
+            return `${baseUrl}${separator}assistantId=${encodeURIComponent(assistantId)}`;
+        }
+    }
+
+    private async establishRealtimeSocket(
+        assistantId: string,
+        callSid: string
+    ): Promise<{ socket: WebSocket; url: string }> {
+        const candidates = this.buildRealtimeUrlCandidates();
+        const errors: Error[] = [];
+
+        for (const base of candidates) {
+            const url = this.buildRealtimeSocketUrl(base, assistantId);
+            try {
+                const socket = await this.connectRealtimeSocket(url, callSid);
+                if (base !== this.realtimeBaseUrl) {
+                    console.warn(
+                        `[${callSid}] [Vapi] realtime base '${this.realtimeBaseUrl}' failed, using fallback '${base}'.`
+                    );
+                }
+                return { socket, url };
+            } catch (error) {
+                const err =
+                    error instanceof Error
+                        ? error
+                        : new Error(`Unknown realtime connection error: ${String(error)}`);
+                errors.push(err);
+                console.error(
+                    `[${callSid}] [Vapi] Failed to open realtime socket at ${url}: ${err.message}`
+                );
+            }
+        }
+
+        const aggregate = new Error(
+            `Unable to establish Vapi realtime connection after ${candidates.length} attempts.`
+        );
+        (aggregate as any).causes = errors;
+        throw aggregate;
+    }
+
+    private async connectRealtimeSocket(url: string, callSid: string): Promise<WebSocket> {
+        return new Promise<WebSocket>((resolve, reject) => {
+            const socket = new WebSocket(url, {
+                headers: { Authorization: `Bearer ${this.apiKey}` },
+            });
+
+            let settled = false;
+
+            const cleanup = () => {
+                socket.removeListener("open", onOpen);
+                socket.removeListener("error", onError);
+                socket.removeListener("unexpected-response", onUnexpectedResponse);
+            };
+
+            const onOpen = () => {
+                settled = true;
+                cleanup();
+                resolve(socket);
+            };
+
+            const onError = (err: Error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(err);
+            };
+
+            const onUnexpectedResponse = (_req: any, res: any) => {
+                if (settled) return;
+                const statusCode = res?.statusCode;
+                const statusMessage = res?.statusMessage;
+                const chunks: Buffer[] = [];
+                const finalize = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    const body = Buffer.concat(chunks).toString("utf8");
+                    const errorMessage =
+                        `[${callSid}] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
+                        (statusMessage ? ` ${statusMessage}` : "") +
+                        (body ? ` – ${body}` : "");
+                    try {
+                        socket.close();
+                    } catch {}
+                    reject(new Error(errorMessage));
+                };
+
+                res?.on("data", (chunk: Buffer) => chunks.push(chunk));
+                res?.on("end", finalize);
+                res?.on("close", finalize);
+                res?.on("error", finalize);
+            };
+
+            socket.once("open", onOpen);
+            socket.once("error", onError);
+            socket.once("unexpected-response", onUnexpectedResponse);
+        });
     }
 
     private async handleRealtimeEvent(
@@ -586,7 +882,7 @@ export class VapiClient {
                   name,
                   dateOfBirth
                 );
-                toolResponse = { success };
+                toolResponse = { success, reason };
                 callbacks.onToolStatus?.("calendar-event-cancelled");
             } else {
                 console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
@@ -601,6 +897,32 @@ export class VapiClient {
     }
 
     /** ===== Assistant lifecycle ===== */
+    public async createAssistantWithConfig(config?: VapiAssistantConfig): Promise<string> {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error("Company configuration must be set before creating a Vapi assistant");
+        }
+
+        const payload = this.buildAssistantPayload(effectiveConfig);
+        const assistantId = await this.createAssistant(payload);
+        this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
+        return assistantId;
+    }
+
+    public async updateAssistantWithConfig(
+        assistantId: string,
+        config?: VapiAssistantConfig
+    ): Promise<void> {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error("Company configuration must be set before updating a Vapi assistant");
+        }
+
+        const payload = this.buildAssistantPayload(effectiveConfig);
+        await this.updateAssistant(assistantId, payload);
+        this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
+    }
+
     public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
         const effectiveConfig = config ?? this.currentConfig;
         if (!effectiveConfig) {
@@ -643,8 +965,12 @@ export class VapiClient {
             const createdId = await this.createAssistant(payload);
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
-        } catch (error: any) {
-            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.config.data);
+        } catch (error: unknown) {
+            this.logAxiosError(
+              `[VapiClient] Failed to sync assistant for company ${assistantName}`,
+              error,
+              payload
+            );
             throw error;
         }
     }
@@ -653,31 +979,46 @@ export class VapiClient {
         const instructions = this.buildSystemPrompt(config);
         const companyContext = this.buildCompanySnapshot(config);
         const tools = this.getTools(config.hasGoogleIntegration);
+        const modelMessages = this.buildModelMessages(instructions, companyContext, config);
+        const modelTools = this.buildModelApiTools(config);
 
-        const voice = config.voiceSettings?.voiceId
-          ? {
-              provider: "11labs",
-              voiceId: config.voiceSettings.voiceId,
-              ...(config.voiceSettings.talkingSpeed
-                ? { speed: config.voiceSettings.talkingSpeed }
-                : {}),
-          }
-          : undefined;
+        const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
-        const firstMessage = config.voiceSettings?.welcomePhrase || undefined;
+        const voiceId = config.voiceSettings?.voiceId?.trim();
+        const voice: { provider: string; voiceId?: string } = {
+            provider: "11labs",
+        };
+        if (voiceId) {
+            voice.voiceId = voiceId;
+        }
 
-        return {
+        const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
             instructions,
-            model: { provider: this.modelProvider, model: this.modelName },
-            tools,
-            ...(voice ? { voice } : {}),
-            metadata: this.buildAssistantMetadata(config, companyContext),
-            ...(firstMessage ? { firstMessage } : {}),
-            modalities: ["audio"],
-            // transcriber kan je hier toevoegen wanneer nodig:
-            // transcriber: { provider: "deepgram", model: "nova-2" }
+            transcriber: { provider: "assembly-ai" },
+            model: {
+                provider: this.modelProvider,
+                model: this.modelName,
+                maxTokens: 10000,
+                messages: modelMessages,
+            },
+            voice,
+            firstMessageInterruptionsEnabled: false,
+            firstMessageMode: "assistant-speaks-first",
+            voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
+            endCallMessage: "Fijne dag!",
+            metadata: this.buildAssistantMetadata(config, companyContext, tools),
         };
+
+        if (modelTools.length > 0) {
+            (payload.model as Record<string, unknown>).tools = modelTools;
+        }
+
+        if (firstMessage) {
+            payload.firstMessage = firstMessage;
+        }
+
+        return payload;
     }
 
     private getAssistantName(config: VapiAssistantConfig): string {
@@ -687,7 +1028,8 @@ export class VapiClient {
 
     private buildAssistantMetadata(
       config: VapiAssistantConfig,
-      companyContext: ReturnType<typeof this.buildCompanySnapshot>
+      companyContext: CompanySnapshot,
+      tools?: ReturnType<VapiClient["getTools"]>
     ) {
         const metadata: Record<string, unknown> = {
             companyId: companyContext.companyId,
@@ -703,12 +1045,31 @@ export class VapiClient {
             },
         };
 
+        if (tools && tools.length > 0) {
+            metadata.tools = tools;
+        }
+
         if (config.voiceSettings) {
-            metadata.voiceSettings = {
-                voiceId: config.voiceSettings.voiceId,
-                talkingSpeed: config.voiceSettings.talkingSpeed,
-                welcomePhrase: config.voiceSettings.welcomePhrase,
-            };
+            const voiceMetadata: Record<string, unknown> = {};
+            const trimmedVoiceId = config.voiceSettings.voiceId?.trim();
+            const welcomePhrase = config.voiceSettings.welcomePhrase?.trim();
+
+            if (trimmedVoiceId) {
+                voiceMetadata.voiceId = trimmedVoiceId;
+            }
+
+            if (config.voiceSettings.talkingSpeed !== null &&
+                config.voiceSettings.talkingSpeed !== undefined) {
+                voiceMetadata.talkingSpeed = config.voiceSettings.talkingSpeed;
+            }
+
+            if (welcomePhrase) {
+                voiceMetadata.welcomePhrase = welcomePhrase;
+            }
+
+            if (Object.keys(voiceMetadata).length > 0) {
+                metadata.voiceSettings = voiceMetadata;
+            }
         }
 
         return metadata;
@@ -727,24 +1088,34 @@ export class VapiClient {
             const container = assistant.assistant ?? assistant;
             return container.id ?? container._id ?? null;
         } catch (error) {
-            console.warn(`[VapiClient] Failed to find assistant '${name}':`, error);
+            this.logAxiosError(`[VapiClient] Failed to find assistant '${name}'`, error, undefined, "warn");
             return null;
         }
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post(this.buildApiPath("/assistant"), payload);
-        const data = response.data;
-        const assistant = data?.assistant ?? data?.data ?? data;
-        const id = assistant?.id ?? assistant?._id;
-        if (!id) {
-            throw new Error("Vapi create assistant response did not include an id");
+        try {
+            const response = await this.http.post(this.buildApiPath("/assistant"), payload);
+            const data = response.data;
+            const assistant = data?.assistant ?? data?.data ?? data;
+            const id = assistant?.id ?? assistant?._id;
+            if (!id) {
+                throw new Error("Vapi create assistant response did not include an id");
+            }
+            return id;
+        } catch (error) {
+            this.logAxiosError("[VapiClient] Failed to create assistant", error, payload);
+            throw error;
         }
-        return id;
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        try {
+            await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        } catch (error) {
+            this.logAxiosError(`[VapiClient] Failed to update assistant ${id}`, error, payload);
+            throw error;
+        }
     }
 
     private extractAssistants(data: any): any[] {
@@ -754,6 +1125,48 @@ export class VapiClient {
         if (Array.isArray(data.assistants)) return data.assistants;
         if (Array.isArray(data.items)) return data.items;
         return [];
+    }
+
+    private logAxiosError(
+      context: string,
+      error: unknown,
+      payload?: unknown,
+      level: "error" | "warn" = "error"
+    ) {
+        if (axios.isAxiosError(error)) {
+            const { method, url, data } = error.config ?? {};
+            const response = error.response;
+            const status = response?.status;
+            const statusText = response?.statusText;
+            const responseData = response?.data;
+            const requestId =
+                response?.headers?.["x-request-id"] ||
+                response?.headers?.["x-requestid"] ||
+                response?.headers?.["x-amzn-trace-id"];
+
+            const logger = level === "warn" ? console.warn : console.error;
+            const normalizePayload = (value: unknown) => {
+                if (typeof value !== "string") return value;
+                try {
+                    return JSON.parse(value);
+                } catch {
+                    return value;
+                }
+            };
+
+            logger(context, {
+                status,
+                statusText,
+                requestId,
+                method,
+                url,
+                requestData: normalizePayload(data ?? payload),
+                responseData: normalizePayload(responseData),
+            });
+        } else {
+            const logger = level === "warn" ? console.warn : console.error;
+            logger(context, error);
+        }
     }
 }
 
