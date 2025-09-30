@@ -105,6 +105,7 @@ export class VapiClient {
     private readonly modelProvider: string;
     private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
+    private readonly toolBaseUrl: string;
 
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -125,6 +126,8 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
+
+        this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
@@ -369,6 +372,93 @@ export class VapiClient {
         ];
     }
 
+    private buildModelMessages(
+      instructions: string,
+      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      config: VapiAssistantConfig
+    ) {
+        const contextPayload = {
+            company: {
+                id: companyContext.companyId,
+                name: companyContext.companyName,
+                industry: companyContext.industry,
+                description: companyContext.description,
+                contact: companyContext.contact,
+                hours: companyContext.hours,
+                info: companyContext.info,
+            },
+            scheduling: {
+                appointmentTypes: companyContext.appointmentTypes,
+                staffMembers: companyContext.staffMembers,
+            },
+            replyStyle: {
+                name: config.replyStyle.name,
+                description: config.replyStyle.description,
+            },
+            googleCalendarEnabled: config.hasGoogleIntegration,
+        };
+
+        const messageContent = [
+            instructions.trim(),
+            "",
+            "Bedrijfscontext (JSON):",
+            JSON.stringify(contextPayload, null, 2),
+        ]
+          .filter((part) => part.length > 0)
+          .join("\n");
+
+        return [
+            {
+                content: messageContent,
+            },
+        ];
+    }
+
+    private buildModelApiTools(config: VapiAssistantConfig) {
+        if (!config.hasGoogleIntegration) return [];
+        if (!this.toolBaseUrl) {
+            console.warn(
+              "[VapiClient] Tool base URL is not configured; skipping API request tools for Google Calendar."
+            );
+            return [];
+        }
+
+        const join = (path: string) =>
+            `${this.toolBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+
+        const headers = { "Content-Type": "application/json" };
+
+        return [
+            {
+                type: "apiRequest",
+                name: "check_calendar_availability",
+                description:
+                  "Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.",
+                method: "POST",
+                url: join("/google/availability"),
+                headers,
+            },
+            {
+                type: "apiRequest",
+                name: "create_calendar_event",
+                description:
+                  "Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.",
+                method: "POST",
+                url: join("/google/schedule"),
+                headers,
+            },
+            {
+                type: "apiRequest",
+                name: "cancel_calendar_event",
+                description:
+                  "Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.",
+                method: "POST",
+                url: join("/google/cancel"),
+                headers,
+            },
+        ];
+    }
+
     public async openRealtimeSession(
       callSid: string,
       callbacks: VapiRealtimeCallbacks
@@ -586,7 +676,7 @@ export class VapiClient {
                   name,
                   dateOfBirth
                 );
-                toolResponse = { success };
+                toolResponse = { success, reason };
                 callbacks.onToolStatus?.("calendar-event-cancelled");
             } else {
                 console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
@@ -657,6 +747,8 @@ export class VapiClient {
         const instructions = this.buildSystemPrompt(config);
         const companyContext = this.buildCompanySnapshot(config);
         const tools = this.getTools(config.hasGoogleIntegration);
+        const modelMessages = this.buildModelMessages(instructions, companyContext, config);
+        const modelTools = this.buildModelApiTools(config);
 
         const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
@@ -675,7 +767,12 @@ export class VapiClient {
                 provider: "deepgram",
                 language: "nl"
             },
-            model: { provider: this.modelProvider, model: this.modelName },
+            model: {
+                provider: this.modelProvider,
+                model: this.modelName,
+                maxTokens: 10000,
+                messages: modelMessages,
+            },
             voice,
             firstMessageInterruptionsEnabled: false,
             firstMessageMode: "assistant-speaks-first",
@@ -683,6 +780,9 @@ export class VapiClient {
             endCallMessage: "Fijne dag!",
         };
 
+        if (modelTools.length > 0) {
+            (payload.model as Record<string, unknown>).tools = modelTools;
+        }
         if (firstMessage) {
             payload.firstMessage = firstMessage;
         }
@@ -698,7 +798,6 @@ export class VapiClient {
     private buildAssistantMetadata(
       config: VapiAssistantConfig,
       companyContext: ReturnType<typeof this.buildCompanySnapshot>,
-      systemPrompt?: string,
       tools?: ReturnType<VapiClient["getTools"]>
     ) {
         const metadata: Record<string, unknown> = {
@@ -714,10 +813,6 @@ export class VapiClient {
                 description: config.replyStyle.description,
             },
         };
-
-        if (systemPrompt) {
-            metadata.systemPrompt = systemPrompt;
-        }
 
         if (tools && tools.length > 0) {
             metadata.tools = tools;

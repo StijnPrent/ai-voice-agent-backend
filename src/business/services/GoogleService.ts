@@ -121,7 +121,12 @@ export class GoogleService {
         return availableSlots;
     }
 
-    async cancelEvent(companyId: bigint, name: string, dateOfBirth: string, date: string): Promise<boolean> {
+    async cancelEvent(
+        companyId: bigint,
+        eventId: string,
+        name?: string,
+        dateOfBirth?: string
+    ): Promise<boolean> {
         const model = await this.repo.fetchGoogleTokens(companyId);
         if (!model) {
             throw new Error(`No Google Calendar integration for company ${companyId}`);
@@ -134,22 +139,18 @@ export class GoogleService {
             throw new Error(`Failed to refetch Google integration for company ${companyId} after token refresh.`);
         }
 
-        const timeMin = new Date(date);
-        timeMin.setHours(0, 0, 0, 0);
-
-        const events = await this.gcalClient.listEvents(refreshedModel, redirectUri, timeMin.toISOString(), `name: ${name}`);
-        if (!events.data.items) {
-            return false;
+        if (!eventId) {
+            throw new Error("Missing eventId to cancel");
         }
 
-        for (const event of events.data.items) {
-            if (event.description?.includes(`DOB: ${dateOfBirth}`)) {
-                await this.gcalClient.deleteEvent(refreshedModel, redirectUri, event.id!);
-                return true;
-            }
+        if (name || dateOfBirth) {
+            console.log(
+              `[GoogleService] Cancel request verification data — name: ${name ?? "n/a"}, DOB: ${dateOfBirth ?? "n/a"}`
+            );
         }
 
-        return false;
+        await this.gcalClient.deleteEvent(refreshedModel, redirectUri, eventId);
+        return true;
     }
 
 
