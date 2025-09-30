@@ -105,6 +105,7 @@ export class VapiClient {
     private readonly modelProvider: string;
     private readonly modelName: string;
     private readonly assistantCache = new Map<string, string>();
+    private readonly toolBaseUrl: string;
 
     private company: CompanyModel | null = null;
     private hasGoogleIntegration = false;
@@ -125,6 +126,8 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
+
+        this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
         this.http = axios.create({
             baseURL: apiBaseUrl,
@@ -369,6 +372,93 @@ export class VapiClient {
         ];
     }
 
+    private buildModelMessages(
+      instructions: string,
+      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      config: VapiAssistantConfig
+    ) {
+        const contextPayload = {
+            company: {
+                id: companyContext.companyId,
+                name: companyContext.companyName,
+                industry: companyContext.industry,
+                description: companyContext.description,
+                contact: companyContext.contact,
+                hours: companyContext.hours,
+                info: companyContext.info,
+            },
+            scheduling: {
+                appointmentTypes: companyContext.appointmentTypes,
+                staffMembers: companyContext.staffMembers,
+            },
+            replyStyle: {
+                name: config.replyStyle.name,
+                description: config.replyStyle.description,
+            },
+            googleCalendarEnabled: config.hasGoogleIntegration,
+        };
+
+        const messageContent = [
+            instructions.trim(),
+            "",
+            "Bedrijfscontext (JSON):",
+            JSON.stringify(contextPayload, null, 2),
+        ]
+          .filter((part) => part.length > 0)
+          .join("\n");
+
+        return [
+            {
+                content: messageContent,
+            },
+        ];
+    }
+
+    private buildModelApiTools(config: VapiAssistantConfig) {
+        if (!config.hasGoogleIntegration) return [];
+        if (!this.toolBaseUrl) {
+            console.warn(
+              "[VapiClient] Tool base URL is not configured; skipping API request tools for Google Calendar."
+            );
+            return [];
+        }
+
+        const join = (path: string) =>
+            `${this.toolBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+
+        const headers = { "Content-Type": "application/json" };
+
+        return [
+            {
+                type: "apiRequest",
+                name: "check_calendar_availability",
+                description:
+                  "Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.",
+                method: "POST",
+                url: join("/google/availability"),
+                headers,
+            },
+            {
+                type: "apiRequest",
+                name: "create_calendar_event",
+                description:
+                  "Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.",
+                method: "POST",
+                url: join("/google/schedule"),
+                headers,
+            },
+            {
+                type: "apiRequest",
+                name: "cancel_calendar_event",
+                description:
+                  "Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.",
+                method: "POST",
+                url: join("/google/cancel"),
+                headers,
+            },
+        ];
+    }
+
     public async openRealtimeSession(
       callSid: string,
       callbacks: VapiRealtimeCallbacks
@@ -586,7 +676,7 @@ export class VapiClient {
                   name,
                   dateOfBirth
                 );
-                toolResponse = { success };
+                toolResponse = { success, reason };
                 callbacks.onToolStatus?.("calendar-event-cancelled");
             } else {
                 console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
@@ -643,8 +733,12 @@ export class VapiClient {
             const createdId = await this.createAssistant(payload);
             this.assistantCache.set(cacheKey, createdId);
             return createdId;
-        } catch (error: any) {
-            console.error(`[VapiClient] Failed to sync assistant for company ${assistantName}`, error.config.data);
+        } catch (error: unknown) {
+            this.logAxiosError(
+              `[VapiClient] Failed to sync assistant for company ${assistantName}`,
+              error,
+              payload
+            );
             throw error;
         }
     }
@@ -653,31 +747,46 @@ export class VapiClient {
         const instructions = this.buildSystemPrompt(config);
         const companyContext = this.buildCompanySnapshot(config);
         const tools = this.getTools(config.hasGoogleIntegration);
+        const modelMessages = this.buildModelMessages(instructions, companyContext, config);
+        const modelTools = this.buildModelApiTools(config);
 
-        const voice = config.voiceSettings?.voiceId
-          ? {
-              provider: "11labs",
-              voiceId: config.voiceSettings.voiceId,
-              ...(config.voiceSettings.talkingSpeed
-                ? { speed: config.voiceSettings.talkingSpeed }
-                : {}),
-          }
-          : undefined;
+        const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
-        const firstMessage = config.voiceSettings?.welcomePhrase || undefined;
+        const voiceId = config.voiceSettings?.voiceId?.trim();
+        const voice: { provider: string; voiceId?: string } = {
+            provider: "11labs",
+        };
+        if (voiceId) {
+            voice.voiceId = voiceId;
+        }
 
-        return {
+        const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
             instructions,
-            model: { provider: this.modelProvider, model: this.modelName },
-            tools,
-            ...(voice ? { voice } : {}),
-            metadata: this.buildAssistantMetadata(config, companyContext),
-            ...(firstMessage ? { firstMessage } : {}),
-            modalities: ["audio"],
-            // transcriber kan je hier toevoegen wanneer nodig:
-            // transcriber: { provider: "deepgram", model: "nova-2" }
+            transcriber: { provider: "assembly-ai" },
+            model: {
+                provider: this.modelProvider,
+                model: this.modelName,
+                maxTokens: 10000,
+                messages: modelMessages,
+            },
+            voice,
+            firstMessageInterruptionsEnabled: false,
+            firstMessageMode: "assistant-speaks-first",
+            voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
+            endCallMessage: "Fijne dag!",
+            metadata: this.buildAssistantMetadata(config, companyContext, tools),
         };
+
+        if (modelTools.length > 0) {
+            (payload.model as Record<string, unknown>).tools = modelTools;
+        }
+
+        if (firstMessage) {
+            payload.firstMessage = firstMessage;
+        }
+
+        return payload;
     }
 
     private getAssistantName(config: VapiAssistantConfig): string {
@@ -687,7 +796,8 @@ export class VapiClient {
 
     private buildAssistantMetadata(
       config: VapiAssistantConfig,
-      companyContext: ReturnType<typeof this.buildCompanySnapshot>
+      companyContext: ReturnType<typeof this.buildCompanySnapshot>,
+      tools?: ReturnType<VapiClient["getTools"]>
     ) {
         const metadata: Record<string, unknown> = {
             companyId: companyContext.companyId,
@@ -702,6 +812,10 @@ export class VapiClient {
                 description: config.replyStyle.description,
             },
         };
+
+        if (tools && tools.length > 0) {
+            metadata.tools = tools;
+        }
 
         if (config.voiceSettings) {
             metadata.voiceSettings = {
@@ -727,24 +841,34 @@ export class VapiClient {
             const container = assistant.assistant ?? assistant;
             return container.id ?? container._id ?? null;
         } catch (error) {
-            console.warn(`[VapiClient] Failed to find assistant '${name}':`, error);
+            this.logAxiosError(`[VapiClient] Failed to find assistant '${name}'`, error, undefined, "warn");
             return null;
         }
     }
 
     private async createAssistant(payload: Record<string, unknown>): Promise<string> {
-        const response = await this.http.post(this.buildApiPath("/assistant"), payload);
-        const data = response.data;
-        const assistant = data?.assistant ?? data?.data ?? data;
-        const id = assistant?.id ?? assistant?._id;
-        if (!id) {
-            throw new Error("Vapi create assistant response did not include an id");
+        try {
+            const response = await this.http.post(this.buildApiPath("/assistant"), payload);
+            const data = response.data;
+            const assistant = data?.assistant ?? data?.data ?? data;
+            const id = assistant?.id ?? assistant?._id;
+            if (!id) {
+                throw new Error("Vapi create assistant response did not include an id");
+            }
+            return id;
+        } catch (error) {
+            this.logAxiosError("[VapiClient] Failed to create assistant", error, payload);
+            throw error;
         }
-        return id;
     }
 
     private async updateAssistant(id: string, payload: Record<string, unknown>): Promise<void> {
-        await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        try {
+            await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
+        } catch (error) {
+            this.logAxiosError(`[VapiClient] Failed to update assistant ${id}`, error, payload);
+            throw error;
+        }
     }
 
     private extractAssistants(data: any): any[] {
@@ -754,6 +878,48 @@ export class VapiClient {
         if (Array.isArray(data.assistants)) return data.assistants;
         if (Array.isArray(data.items)) return data.items;
         return [];
+    }
+
+    private logAxiosError(
+      context: string,
+      error: unknown,
+      payload?: unknown,
+      level: "error" | "warn" = "error"
+    ) {
+        if (axios.isAxiosError(error)) {
+            const { method, url, data } = error.config ?? {};
+            const response = error.response;
+            const status = response?.status;
+            const statusText = response?.statusText;
+            const responseData = response?.data;
+            const requestId =
+                response?.headers?.["x-request-id"] ||
+                response?.headers?.["x-requestid"] ||
+                response?.headers?.["x-amzn-trace-id"];
+
+            const logger = level === "warn" ? console.warn : console.error;
+            const normalizePayload = (value: unknown) => {
+                if (typeof value !== "string") return value;
+                try {
+                    return JSON.parse(value);
+                } catch {
+                    return value;
+                }
+            };
+
+            logger(context, {
+                status,
+                statusText,
+                requestId,
+                method,
+                url,
+                requestData: normalizePayload(data ?? payload),
+                responseData: normalizePayload(responseData),
+            });
+        } else {
+            const logger = level === "warn" ? console.warn : console.error;
+            logger(context, error);
+        }
     }
 }
 
