@@ -177,6 +177,10 @@ export class VapiClient {
             schedulingContext,
             voiceSettings,
         };
+
+        if (company.assistantId) {
+            this.assistantCache.set(company.id.toString(), company.assistantId);
+        }
     }
 
     public buildSystemPrompt(config?: VapiAssistantConfig): string {
@@ -687,6 +691,32 @@ export class VapiClient {
     }
 
     /** ===== Assistant lifecycle ===== */
+    public async createAssistantWithConfig(config?: VapiAssistantConfig): Promise<string> {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error("Company configuration must be set before creating a Vapi assistant");
+        }
+
+        const payload = this.buildAssistantPayload(effectiveConfig);
+        const assistantId = await this.createAssistant(payload);
+        this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
+        return assistantId;
+    }
+
+    public async updateAssistantWithConfig(
+        assistantId: string,
+        config?: VapiAssistantConfig
+    ): Promise<void> {
+        const effectiveConfig = config ?? this.currentConfig;
+        if (!effectiveConfig) {
+            throw new Error("Company configuration must be set before updating a Vapi assistant");
+        }
+
+        const payload = this.buildAssistantPayload(effectiveConfig);
+        await this.updateAssistant(assistantId, payload);
+        this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
+    }
+
     public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
         const effectiveConfig = config ?? this.currentConfig;
         if (!effectiveConfig) {
