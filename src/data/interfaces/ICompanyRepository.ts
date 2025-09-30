@@ -11,6 +11,7 @@ export interface ICompanyRepository {
     findByEmail(email: string): Promise<CompanyModel | null>;
     findById(companyId: bigint): Promise<CompanyModel | null>;
     setCalendarConnected(companyId: bigint, connected: boolean): Promise<void>;
+    saveAssistantId(companyId: bigint, assistantId: string): Promise<void>;
 
     // ---------- Company Info ----------
     addInfo(companyId: bigint, value: string): Promise<void>;

@@ -21,6 +21,16 @@ router.post(
     controller.scheduleEvent.bind(controller)
 );
 
+router.post(
+    "/availability",
+    controller.checkAvailability.bind(controller)
+);
+
+router.post(
+    "/cancel",
+    controller.cancelEvent.bind(controller)
+);
+
 router.delete(
     "/disconnect",
     authenticateToken,
