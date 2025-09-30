@@ -667,9 +667,8 @@ export class VapiClient {
         callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
         const transport: Record<string, unknown> = {
-            type: "websocket",
-            provider: this.transportProvider,
             websocket: {
+                provider: this.transportProvider,
                 audio: {
                     encoding: "mulaw",
                     sampleRate: 8000,

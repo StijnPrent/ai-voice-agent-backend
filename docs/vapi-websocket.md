@@ -6,7 +6,7 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 1. Handle the inbound or outbound call with your telephony provider (for example, Twilio).
 2. From your backend, create a call in Vapi:
    - Send `POST /call` with the assistant identifier.
-   - Set `transport.type` to `websocket` (include other transport options such as the audio format if needed).
+   - Provide a `transport.websocket` configuration (include audio settings or metadata as needed).
 3. Vapi responds with a `websocketCallUrl`. This URL is the entry point for the bi-directional audio and event stream.
 
 ## 2. Connect to the WebSocket
