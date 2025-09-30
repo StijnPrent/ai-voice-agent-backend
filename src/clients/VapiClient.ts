@@ -146,7 +146,7 @@ export class VapiClient {
         this.apiPathPrefix = this.normalizePathPrefix(process.env.VAPI_API_PATH_PREFIX ?? "");
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
-        this.transportProvider = "vapi.websocket";
+        this.transportProvider = process.env.VAPI_TRANSPORT_PROVIDER || "vapi.websocket";
 
         this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
@@ -666,12 +666,11 @@ export class VapiClient {
         callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
         const transport: Record<string, unknown> = {
-            websocket: {
-                provider: 'vapi.websocket',
-                audio: {
-                    encoding: "mulaw",
-                    sampleRate: 8000,
-                },
+            provider: this.transportProvider,
+            audioFormat: {
+                format: "pcm_s16le",
+                container: "raw",
+                sampleRate: 16000,
             },
         };
 
@@ -685,7 +684,7 @@ export class VapiClient {
         }
 
         if (Object.keys(metadata).length > 0) {
-            (transport.websocket as Record<string, unknown>).metadata = metadata;
+            transport.metadata = metadata;
         }
 
         const payload = {
