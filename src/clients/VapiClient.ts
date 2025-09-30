@@ -670,14 +670,17 @@ export class VapiClient {
 
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
-            transcriber: { provider: "assembly-ai" },
+            instructions,
+            transcriber: {
+                provider: "deepgram",
+                language: "nl"
+            },
             model: { provider: this.modelProvider, model: this.modelName },
             voice,
             firstMessageInterruptionsEnabled: false,
             firstMessageMode: "assistant-speaks-first",
             voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
             endCallMessage: "Fijne dag!",
-            metadata: this.buildAssistantMetadata(config, companyContext, instructions, tools),
         };
 
         if (firstMessage) {
