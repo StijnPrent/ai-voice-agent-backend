@@ -481,7 +481,7 @@ export class VapiClient {
         if (Object.keys(scheduling).length > 0) {
             contextPayload.scheduling = scheduling;
         }
-        
+
         const messageContent = [
             instructions.trim(),
             "",
@@ -655,7 +655,7 @@ export class VapiClient {
         for (const base of candidates) {
             const url = this.buildRealtimeSocketUrl(base, assistantId);
             try {
-                const socket = await this.connectRealtimeSocket(url, callSid);
+                const socket = await this.connectRealtimeSocket(url, callSid, new Set());
                 if (base !== this.realtimeBaseUrl) {
                     console.warn(
                         `[${callSid}] [Vapi] realtime base '${this.realtimeBaseUrl}' failed, using fallback '${base}'.`
@@ -681,7 +681,18 @@ export class VapiClient {
         throw aggregate;
     }
 
-    private async connectRealtimeSocket(url: string, callSid: string): Promise<WebSocket> {
+    private async connectRealtimeSocket(
+        url: string,
+        callSid: string,
+        visited: Set<string>
+    ): Promise<WebSocket> {
+        if (visited.has(url)) {
+            throw new Error(
+              `[${callSid}] [Vapi] Realtime handshake loop detected when revisiting ${url}`
+            );
+        }
+        visited.add(url);
+
         return new Promise<WebSocket>((resolve, reject) => {
             const socket = new WebSocket(url, {
                 headers: { Authorization: `Bearer ${this.apiKey}` },
@@ -693,6 +704,30 @@ export class VapiClient {
                 socket.removeListener("open", onOpen);
                 socket.removeListener("error", onError);
                 socket.removeListener("unexpected-response", onUnexpectedResponse);
+            };
+
+            const swallowHandshakeError = (err: Error) => {
+                console.warn(
+                    `[${callSid}] [Vapi] realtime socket error after unexpected response: ${err.message}`
+                );
+            };
+
+            const safeShutdown = (action: () => void) => {
+                socket.once("error", swallowHandshakeError);
+                socket.once("close", () => {
+                    socket.removeListener("error", swallowHandshakeError);
+                });
+                try {
+                    action();
+                } catch {}
+            };
+
+            const finalizeWithError = (message: string, body: string) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                safeShutdown(() => socket.close());
+                reject(new Error(message + (body ? ` – ${body}` : "")));
             };
 
             const onOpen = () => {
@@ -713,28 +748,55 @@ export class VapiClient {
                 const statusCode = res?.statusCode;
                 const statusMessage = res?.statusMessage;
                 const chunks: Buffer[] = [];
-                const finalize = () => {
-                    if (settled) return;
-                    settled = true;
-                    const body = Buffer.concat(chunks).toString("utf8");
-                    const errorMessage =
-                        `[${callSid}] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
-                        (statusMessage ? ` ${statusMessage}` : "") +
-                        (body ? ` – ${body}` : "");
-                    const swallowHandshakeError = (err: Error) => {
-                        console.warn(
-                            `[${callSid}] [Vapi] realtime socket error after unexpected response: ${err.message}`
-                        );
-                    };
-                    socket.once("error", swallowHandshakeError);
-                    socket.once("close", () => {
-                        socket.removeListener("error", swallowHandshakeError);
-                    });
+                let finalized = false;
+
+                const attemptFallback = (body: string) => {
+                    const fallbackUrl = this.extractRealtimeUrlFromBody(body);
+                    if (!fallbackUrl || visited.has(fallbackUrl)) {
+                        return false;
+                    }
+
+                    console.warn(
+                        `[${callSid}] [Vapi] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
+                            (statusMessage ? ` ${statusMessage}` : "") +
+                            ` while connecting to ${url}. Trying fallback websocket ${fallbackUrl}`
+                    );
+
                     cleanup();
-                    try {
-                        socket.close();
-                    } catch {}
-                    reject(new Error(errorMessage));
+                    safeShutdown(() => socket.terminate());
+
+                    this.connectRealtimeSocket(fallbackUrl, callSid, visited)
+                        .then((nextSocket) => {
+                            if (settled) {
+                                nextSocket.close();
+                                return;
+                            }
+                            settled = true;
+                            resolve(nextSocket);
+                        })
+                        .catch((fallbackError) => {
+                            if (settled) return;
+                            settled = true;
+                            reject(fallbackError);
+                        });
+
+                    return true;
+                };
+
+                const finalize = () => {
+                    if (finalized || settled) return;
+                    finalized = true;
+                    const body = Buffer.concat(chunks).toString("utf8");
+
+                    if (attemptFallback(body)) {
+                        return;
+                    }
+
+                    const message =
+                        `[${callSid}] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
+                        (statusMessage ? ` ${statusMessage}` : "");
+
+                    finalizeWithError(message, body);
                 };
 
                 res?.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -747,6 +809,41 @@ export class VapiClient {
             socket.once("error", onError);
             socket.once("unexpected-response", onUnexpectedResponse);
         });
+    }
+
+    private extractRealtimeUrlFromBody(body: string): string | null {
+        if (!body) return null;
+        const trimmed = body.trim();
+        if (!trimmed) return null;
+
+        const visit = (value: unknown): string | null => {
+            if (typeof value === "string") {
+                return value.startsWith("wss://") ? value : null;
+            }
+
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    const found = visit(item);
+                    if (found) return found;
+                }
+            } else if (value && typeof value === "object") {
+                for (const key of Object.keys(value)) {
+                    const found = visit((value as Record<string, unknown>)[key]);
+                    if (found) return found;
+                }
+            }
+
+            return null;
+        };
+
+        try {
+            const parsed = JSON.parse(trimmed);
+            const fromJson = visit(parsed);
+            if (fromJson) return fromJson;
+        } catch {}
+
+        const regexMatch = trimmed.match(/wss:\/\/[^"\s]+/i);
+        return regexMatch ? regexMatch[0] : null;
     }
 
     private async handleRealtimeEvent(
