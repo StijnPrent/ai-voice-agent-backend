@@ -471,46 +471,39 @@ export class VapiClient {
         const assistantId = await this.syncAssistant(config);
         const prompt = this.buildSystemPrompt(config);
 
-        const ws = new WebSocket(`${this.realtimeBaseUrl}?assistantId=${assistantId}`, {
-            headers: { Authorization: `Bearer ${this.apiKey}` },
-        });
+        const { socket: ws, url: connectedUrl } = await this.establishRealtimeSocket(
+            assistantId,
+            callSid
+        );
+
+        console.log(
+            `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}`
+        );
 
         const session = new VapiRealtimeSession(ws);
 
-        await new Promise<void>((resolve, reject) => {
-            ws.once("open", () => {
-                console.log(`[${callSid}] [Vapi] realtime session opened.`);
+        // Geen tools meesturen: die zitten al op de assistant
+        const updatePayload: any = {
+            type: "session.update",
+            session: {
+                instructions: prompt,
+                modalities: ["audio"],
+                input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
+                metadata: {
+                    companyId: config.company.id,
+                    companyName: config.company.name,
+                    googleCalendarEnabled: config.hasGoogleIntegration,
+                },
+            },
+        };
 
-                // Geen tools meesturen: die zitten al op de assistant
-                const updatePayload: any = {
-                    type: "session.update",
-                    session: {
-                        instructions: prompt,
-                        modalities: ["audio"],
-                        input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                        output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                        // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
-                        metadata: {
-                            companyId: config.company.id,
-                            companyName: config.company.name,
-                            googleCalendarEnabled: config.hasGoogleIntegration,
-                        },
-                    },
-                };
-
-                try {
-                    ws.send(JSON.stringify(updatePayload));
-                } catch (error) {
-                    console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
-                }
-                resolve();
-            });
-
-            ws.once("error", (err) => {
-                console.error(`[${callSid}] [Vapi] realtime session error before open`, err);
-                reject(err);
-            });
-        });
+        try {
+            ws.send(JSON.stringify(updatePayload));
+        } catch (error) {
+            console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
+        }
 
         ws.on("message", async (raw: WebSocket.RawData) => {
             try {
@@ -532,6 +525,139 @@ export class VapiClient {
         });
 
         return session;
+    }
+
+    private buildRealtimeUrlCandidates(): string[] {
+        const seen = new Set<string>();
+        const candidates: string[] = [];
+
+        const push = (value: string) => {
+            if (!value) return;
+            if (seen.has(value)) return;
+            seen.add(value);
+            candidates.push(value);
+        };
+
+        const defaultBase = "wss://api.vapi.ai/call";
+        const documentedFallback = "wss://api.vapi.ai/realtime";
+
+        push(this.realtimeBaseUrl);
+        if (this.realtimeBaseUrl !== defaultBase) {
+            push(defaultBase);
+        }
+        push(documentedFallback);
+
+        return candidates;
+    }
+
+    private buildRealtimeSocketUrl(baseUrl: string, assistantId: string): string {
+        try {
+            const url = new URL(baseUrl);
+            url.searchParams.set("assistantId", assistantId);
+            return url.toString();
+        } catch (error) {
+            console.error(
+                `[VapiClient] Failed to parse realtime base URL '${baseUrl}'. Falling back to string concatenation.`,
+                error
+            );
+            const separator = baseUrl.includes("?") ? "&" : "?";
+            return `${baseUrl}${separator}assistantId=${encodeURIComponent(assistantId)}`;
+        }
+    }
+
+    private async establishRealtimeSocket(
+        assistantId: string,
+        callSid: string
+    ): Promise<{ socket: WebSocket; url: string }> {
+        const candidates = this.buildRealtimeUrlCandidates();
+        const errors: Error[] = [];
+
+        for (const base of candidates) {
+            const url = this.buildRealtimeSocketUrl(base, assistantId);
+            try {
+                const socket = await this.connectRealtimeSocket(url, callSid);
+                if (base !== this.realtimeBaseUrl) {
+                    console.warn(
+                        `[${callSid}] [Vapi] realtime base '${this.realtimeBaseUrl}' failed, using fallback '${base}'.`
+                    );
+                }
+                return { socket, url };
+            } catch (error) {
+                const err =
+                    error instanceof Error
+                        ? error
+                        : new Error(`Unknown realtime connection error: ${String(error)}`);
+                errors.push(err);
+                console.error(
+                    `[${callSid}] [Vapi] Failed to open realtime socket at ${url}: ${err.message}`
+                );
+            }
+        }
+
+        const aggregate = new Error(
+            `Unable to establish Vapi realtime connection after ${candidates.length} attempts.`
+        );
+        (aggregate as any).causes = errors;
+        throw aggregate;
+    }
+
+    private async connectRealtimeSocket(url: string, callSid: string): Promise<WebSocket> {
+        return new Promise<WebSocket>((resolve, reject) => {
+            const socket = new WebSocket(url, {
+                headers: { Authorization: `Bearer ${this.apiKey}` },
+            });
+
+            let settled = false;
+
+            const cleanup = () => {
+                socket.removeListener("open", onOpen);
+                socket.removeListener("error", onError);
+                socket.removeListener("unexpected-response", onUnexpectedResponse);
+            };
+
+            const onOpen = () => {
+                settled = true;
+                cleanup();
+                resolve(socket);
+            };
+
+            const onError = (err: Error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(err);
+            };
+
+            const onUnexpectedResponse = (_req: any, res: any) => {
+                if (settled) return;
+                const statusCode = res?.statusCode;
+                const statusMessage = res?.statusMessage;
+                const chunks: Buffer[] = [];
+                const finalize = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    const body = Buffer.concat(chunks).toString("utf8");
+                    const errorMessage =
+                        `[${callSid}] Unexpected realtime handshake response ${statusCode ?? "unknown"}` +
+                        (statusMessage ? ` ${statusMessage}` : "") +
+                        (body ? ` – ${body}` : "");
+                    try {
+                        socket.close();
+                    } catch {}
+                    reject(new Error(errorMessage));
+                };
+
+                res?.on("data", (chunk: Buffer) => chunks.push(chunk));
+                res?.on("end", finalize);
+                res?.on("close", finalize);
+                res?.on("error", finalize);
+            };
+
+            socket.once("open", onOpen);
+            socket.once("error", onError);
+            socket.once("unexpected-response", onUnexpectedResponse);
+        });
     }
 
     private async handleRealtimeEvent(
