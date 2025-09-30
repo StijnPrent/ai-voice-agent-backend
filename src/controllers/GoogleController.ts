@@ -59,17 +59,77 @@ export class GoogleController {
      */
     async scheduleEvent(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const { companyId, event } = req.body as { companyId: bigint; event: calendar_v3.Schema$Event };
+        const { companyId, event } = req.body as {
+            companyId: string | number | bigint;
+            event: calendar_v3.Schema$Event;
+        };
         if (!companyId || !event) {
             res.status(400).send("Missing companyId or event");
+            return;
         }
 
         try {
-            const scheduled = await service.scheduleEvent(companyId, event);
+            const scheduled = await service.scheduleEvent(BigInt(companyId), event);
             res.json(scheduled);
         } catch (err) {
             console.error("❌ scheduleEvent failed:", err);
             res.status(500).send("Error scheduling event");
+        }
+    }
+
+    async checkAvailability(req: Request, res: Response): Promise<void> {
+        const service = container.resolve(GoogleService);
+        const { companyId, date, openHour, closeHour } = req.body as {
+            companyId: string | number | bigint;
+            date: string;
+            openHour?: number | string;
+            closeHour?: number | string;
+        };
+
+        if (!companyId || !date) {
+            res.status(400).send("Missing companyId or date");
+            return;
+        }
+
+        const parsedOpen = Number(openHour ?? 9);
+        const parsedClose = Number(closeHour ?? 17);
+        const safeOpen = Number.isFinite(parsedOpen) ? parsedOpen : 9;
+        const safeClose = Number.isFinite(parsedClose) ? parsedClose : 17;
+
+        try {
+            const availableSlots = await service.getAvailableSlots(
+                BigInt(companyId),
+                date,
+                safeOpen,
+                safeClose
+            );
+            res.json({ availableSlots });
+        } catch (err) {
+            console.error("❌ checkAvailability failed:", err);
+            res.status(500).send("Error fetching availability");
+        }
+    }
+
+    async cancelEvent(req: Request, res: Response): Promise<void> {
+        const service = container.resolve(GoogleService);
+        const { companyId, eventId, name, dateOfBirth } = req.body as {
+            companyId: string | number | bigint;
+            eventId: string;
+            name?: string;
+            dateOfBirth?: string;
+        };
+
+        if (!companyId || !eventId) {
+            res.status(400).send("Missing companyId or eventId");
+            return;
+        }
+
+        try {
+            const success = await service.cancelEvent(BigInt(companyId), eventId, name, dateOfBirth);
+            res.json({ success });
+        } catch (err) {
+            console.error("❌ cancelEvent failed:", err);
+            res.status(500).send("Error cancelling event");
         }
     }
 
