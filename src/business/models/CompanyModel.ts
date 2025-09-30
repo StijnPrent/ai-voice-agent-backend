@@ -6,6 +6,7 @@ export class CompanyModel {
         private _twilioNumber: string,
         private _createdAt: Date,
         private _updatedAt: Date,
+        private _assistantId: string | null = null,
     ) {}
 
     public toJSON(): Record<string, any> {
@@ -16,6 +17,7 @@ export class CompanyModel {
             twilioNumber: this.twilioNumber,
             createdAt: this.createdAt.toISOString(),
             updatedAt: this.updatedAt.toISOString(),
+            assistantId: this.assistantId,
         };
     }
 
@@ -41,5 +43,9 @@ export class CompanyModel {
 
     public get updatedAt(): Date {
         return this._updatedAt;
+    }
+
+    public get assistantId(): string | null {
+        return this._assistantId ?? null;
     }
 }

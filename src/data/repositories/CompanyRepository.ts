@@ -30,7 +30,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.twilio_number = ?
@@ -39,19 +39,22 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         const rows = await this.execute<RowDataPacket[]>(sql, [twilioNumber]);
         if (rows.length === 0) return null;
         const r = rows[0];
+        const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+
         return new CompanyModel(
             BigInt(r.id),
             r.name,
             r.email,
             r.twilio_number,
             r.created_at,
-            r.updated_at
+            r.updated_at,
+            assistantId
         );
     }
 
     public async findByEmail(email: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.email = ?
@@ -60,19 +63,22 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         const rows = await this.execute<RowDataPacket[]>(sql, [email]);
         if (rows.length === 0) return null;
         const r = rows[0];
+        const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+
         return new CompanyModel(
             BigInt(r.id),
             r.name,
             r.email,
             r.twilio_number,
             r.created_at,
-            r.updated_at
+            r.updated_at,
+            assistantId
         );
     }
 
     public async findById(companyId: bigint): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.id = ?
@@ -81,14 +87,26 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
         if (rows.length === 0) return null;
         const r = rows[0];
+        const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+
         return new CompanyModel(
             BigInt(r.id),
             r.name,
             r.email,
             r.twilio_number,
             r.created_at,
-            r.updated_at
+            r.updated_at,
+            assistantId
         );
+    }
+
+    public async saveAssistantId(companyId: bigint, assistantId: string): Promise<void> {
+        const sql = `
+            UPDATE company
+            SET vapi_assistant_id = ?, updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [assistantId, companyId]);
     }
 
     public async setCalendarConnected(companyId: bigint, connected: boolean): Promise<void> {

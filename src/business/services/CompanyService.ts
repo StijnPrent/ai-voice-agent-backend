@@ -37,7 +37,8 @@ export class CompanyService {
             email,
             sanitizedTwilio,
             new Date(),
-            new Date()
+            new Date(),
+            null
         );
         await this.companyRepo.createCompany(company);
 
