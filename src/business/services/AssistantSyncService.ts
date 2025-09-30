@@ -1,4 +1,5 @@
 // src/business/services/AssistantSyncService.ts
+import axios from "axios";
 import { inject, injectable } from "tsyringe";
 import { VapiAssistantConfig, VapiClient } from "../../clients/VapiClient";
 import { ICompanyRepository } from "../../data/interfaces/ICompanyRepository";
@@ -23,7 +24,28 @@ export class AssistantSyncService {
                 console.warn(`[AssistantSyncService] Skipping sync for ${companyId}: missing configuration.`);
                 return;
             }
-            await this.vapiClient.syncAssistant(config);
+            const existingAssistantId = config.company.assistantId;
+
+            if (!existingAssistantId) {
+                const createdId = await this.vapiClient.createAssistantWithConfig(config);
+                await this.companyRepository.saveAssistantId(companyId, createdId);
+                return;
+            }
+
+            try {
+                await this.vapiClient.updateAssistantWithConfig(existingAssistantId, config);
+            } catch (error) {
+                if (axios.isAxiosError(error) && error.response?.status === 404) {
+                    console.warn(
+                        `[AssistantSyncService] Assistant ${existingAssistantId} not found for company ${companyId}; recreating.`
+                    );
+                    const recreatedId = await this.vapiClient.createAssistantWithConfig(config);
+                    await this.companyRepository.saveAssistantId(companyId, recreatedId);
+                    return;
+                }
+
+                throw error;
+            }
         } catch (error) {
             console.error(`[AssistantSyncService] Failed to sync assistant for company ${companyId}`, error);
         }

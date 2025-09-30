@@ -41,6 +41,21 @@ export class VoiceService {
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
+        ws.on("error", (error) => {
+            console.error(`[${callSid}] Twilio stream websocket error`, error);
+        });
+
+        ws.on("close", (code, reason) => {
+            const rawReason = Buffer.isBuffer(reason)
+                ? reason.toString("utf8")
+                : typeof reason === "string"
+                    ? reason
+                    : "";
+            const reasonText = rawReason.trim();
+            const formattedReason = reasonText ? ` (${reasonText})` : "";
+            console.log(`[${callSid}] Twilio stream websocket closed with code ${code}${formattedReason}`);
+        });
+
         try {
             const company = await this.companyService.findByTwilioNumber(to);
             this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
