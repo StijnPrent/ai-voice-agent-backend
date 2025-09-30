@@ -147,7 +147,7 @@ export class VapiClient {
         this.modelProvider = process.env.VAPI_MODEL_PROVIDER || "openai";
         this.modelName = process.env.VAPI_MODEL_NAME || "gpt-4o-mini";
         const configuredTransportProvider = process.env.VAPI_TRANSPORT_PROVIDER?.trim();
-        this.transportProvider = configuredTransportProvider || "vapi.websocket";
+        this.transportProvider = "vapi.websocket";
 
         this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || "").replace(/\/$/, "");
 
