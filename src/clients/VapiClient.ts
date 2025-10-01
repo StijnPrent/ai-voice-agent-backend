@@ -548,7 +548,18 @@ export class VapiClient {
             throw new Error("Company must be configured before opening a Vapi session");
         }
 
-        const assistantId = await this.syncAssistant(config);
+        const assistantId =
+          this.company?.assistantId ??
+          this.assistantCache.get(this.company!.id.toString()) ??
+          (await this.findAssistantIdByName(this.getAssistantName(config))) ??
+          null;
+
+        if (!assistantId) {
+            throw new Error(
+              `[Vapi] No assistant found for company '${this.getAssistantName(config)}'. ` +
+              `Create/update it first via the admin endpoint.`
+            );
+        }
         const prompt = this.buildSystemPrompt(config);
 
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
