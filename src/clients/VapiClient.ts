@@ -1,6 +1,6 @@
 // src/clients/VapiClient.ts
 import axios, { AxiosInstance } from "axios";
-import WebSocket from "ws";
+import WebSocket, { RawData } from "ws";
 import { inject, injectable } from "tsyringe";
 import { CompanyModel } from "../business/models/CompanyModel";
 import { ReplyStyleModel } from "../business/models/ReplyStyleModel";
@@ -600,7 +600,13 @@ export class VapiClient {
         }
 
         ws.on("message", async (raw, isBinary) => {
-            if (isBinary) return; // ignore audio frames
+            if (isBinary) {
+                const buffer = this.normalizeBinaryAudioFrame(raw);
+                if (buffer?.length && callbacks.onAudio) {
+                    callbacks.onAudio(buffer.toString("base64"));
+                }
+                return;
+            }
 
             const s = typeof raw === "string" ? raw : raw.toString("utf8");
             if (!s.trim().startsWith("{") && !s.trim().startsWith("[")) return;
@@ -995,6 +1001,31 @@ export class VapiClient {
                 break;
             }
         }
+    }
+
+    private normalizeBinaryAudioFrame(data: RawData): Buffer | null {
+        if (!data) return null;
+
+        if (Buffer.isBuffer(data)) {
+            return data;
+        }
+
+        if (Array.isArray(data)) {
+            const buffers = data
+                .map((item) => this.normalizeBinaryAudioFrame(item as RawData))
+                .filter((value): value is Buffer => Boolean(value));
+            return buffers.length ? Buffer.concat(buffers) : null;
+        }
+
+        if (ArrayBuffer.isView(data)) {
+            return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+        }
+
+        if (data instanceof ArrayBuffer) {
+            return Buffer.from(data);
+        }
+
+        return null;
     }
 
     private normalizeToolCall(raw: any): NormalizedToolCall | null {
