@@ -572,51 +572,29 @@ export class VapiClient {
         }
 
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
-            assistantId,
-            callSid
+          assistantId,
+          callSid
         );
 
-        const candidates = [primaryUrl, ...fallbackUrls].filter((url, index, arr) => {
-            return typeof url === "string" && url.startsWith("ws") && arr.indexOf(url) === index;
-        });
+        const candidates = [primaryUrl, ...fallbackUrls].filter((url, index, arr) =>
+          typeof url === "string" && url.startsWith("ws") && arr.indexOf(url) === index
+        );
 
         if (candidates.length === 0) {
             throw new Error("Vapi did not return a websocket URL for the realtime session");
         }
 
         const { socket: ws, url: connectedUrl } = await this.establishRealtimeSocket(
-            candidates,
-            callSid
+          candidates,
+          callSid
         );
 
         console.log(
-            `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}` +
-                (callId ? ` (callId=${callId})` : "")
+          `[${callSid}] [Vapi] realtime session opened via ${connectedUrl}` +
+          (callId ? ` (callId=${callId})` : "")
         );
 
         const session = new VapiRealtimeSession(ws);
-
-        // Geen tools meesturen: die zitten al op de assistant
-        const updatePayload: any = {
-            type: "session.update",
-            session: {
-                modalities: ["audio"],
-                input_audio_format:  { encoding: "mulaw", sample_rate: 8000 },
-                output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                // metadata is fine to keep if you want it for logs/analytics
-                metadata: {
-                    companyId: config.company.id.toString(),
-                    companyName: config.company.name,
-                    googleCalendarEnabled: config.hasGoogleIntegration,
-                },
-            },
-        };
-
-        try {
-            ws.send(JSON.stringify(updatePayload));
-        } catch (error) {
-            console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
-        }
 
         ws.on("message", async (raw, isBinary) => {
             if (isBinary) {
@@ -692,7 +670,7 @@ export class VapiClient {
 
     private async createWebsocketCall(
       assistantId: string,
-      callSid: string
+      _callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
 
         const transport = {
@@ -704,30 +682,15 @@ export class VapiClient {
             },
         };
 
-        // <-- move metadata OUT of transport and to the top-level payload
-        const metadata: Record<string, unknown> = { callSid };
-        if (this.company) {
-            metadata.companyId = this.company.id.toString();
-            metadata.companyName = this.company.name;
-        }
+        // ⬇️ Minimal payload, nothing else
+        const payload = { assistantId, transport };
 
-        const payload = {
-            assistantId,
-            transport,
-            metadata,              // <-- top-level
-            // (optional) voicemailDetection, analysisPlan, etc. also go top-level
-        };
-
-        try {
-            const response = await this.http.post(this.buildApiPath("/call"), payload);
-            const info = this.extractWebsocketCallInfo(response.data);
-            if (!info) throw new Error("Vapi create call response did not include a websocket URL");
-            return info;
-        } catch (error) {
-            this.logAxiosError("[VapiClient] Failed to create websocket call", error, payload);
-            throw error;
-        }
+        const response = await this.http.post(this.buildApiPath("/call"), payload);
+        const info = this.extractWebsocketCallInfo(response.data);
+        if (!info) throw new Error("Vapi create call response did not include a websocket URL");
+        return info;
     }
+
 
     private extractWebsocketCallInfo(
         data: any
