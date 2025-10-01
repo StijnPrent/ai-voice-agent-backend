@@ -599,12 +599,16 @@ export class VapiClient {
             console.error(`[${callSid}] [Vapi] Failed to send session update`, error);
         }
 
-        ws.on("message", async (raw: WebSocket.RawData) => {
+        ws.on("message", async (raw, isBinary) => {
+            if (isBinary) return; // ignore audio frames
+
+            const s = typeof raw === "string" ? raw : raw.toString("utf8");
+            if (!s.trim().startsWith("{") && !s.trim().startsWith("[")) return;
+
             try {
-                const event = JSON.parse(raw.toString());
-                await this.handleRealtimeEvent(event, session, callbacks);
-            } catch (error) {
-                console.error(`[${callSid}] [Vapi] Failed to process event`, error);
+                await this.handleRealtimeEvent(JSON.parse(s), session, callbacks);
+            } catch (e) {
+                console.error(`[${callSid}] [Vapi] Bad JSON frame`, s.slice(0, 120), e);
             }
         });
 
