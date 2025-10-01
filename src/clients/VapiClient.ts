@@ -555,12 +555,21 @@ export class VapiClient {
           null;
 
         if (!assistantId) {
-            throw new Error(
-              `[Vapi] No assistant found for company '${this.getAssistantName(config)}'. ` +
-              `Create/update it first via the admin endpoint.`
-            );
+            throw new Error(`[Vapi] No assistant found for company '${this.getAssistantName(config)}'. Create/update it first via the admin endpoint.`);
         }
-        const prompt = this.buildSystemPrompt(config);
+
+        try {
+            const res = await this.http.get(this.buildApiPath(`/assistant/${assistantId}`));
+            const a = res.data?.assistant ?? res.data; // API sometimes nests under `assistant`
+            const voice = a?.voice ?? a?.tts ?? null;
+            const transcriber = a?.transcriber ?? null;
+            console.log("[Vapi] Using stored assistant config:", {
+                voice,
+                transcriber,
+            });
+        } catch (e) {
+            console.warn("[Vapi] Could not fetch assistant for sanity check", e);
+        }
 
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
             assistantId,
@@ -591,11 +600,10 @@ export class VapiClient {
         const updatePayload: any = {
             type: "session.update",
             session: {
-                instructions: prompt,
                 modalities: ["audio"],
-                input_audio_format: { encoding: "mulaw", sample_rate: 8000 },
+                input_audio_format:  { encoding: "mulaw", sample_rate: 8000 },
                 output_audio_format: { encoding: "mulaw", sample_rate: 8000 },
-                // voice uit assistant gebruiken; stuur alleen override als je live wil afwijken
+                // metadata is fine to keep if you want it for logs/analytics
                 metadata: {
                     companyId: config.company.id.toString(),
                     companyName: config.company.name,
@@ -1238,12 +1246,20 @@ export class VapiClient {
 
         const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
+        const voiceId = config.voiceSettings?.voiceId?.trim();
+        let voice: { provider: string; voiceId?: string; modelId?: string; language?: string } | undefined;
+        if (voiceId) {
+            voice = {
+                provider: "elevenlabs",
+                voiceId,
+                modelId: "eleven_multilingual_v2",
+                language: "nl-NL",
+            };
+        }
+
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
-            transcriber: {
-                provider: "deepgram",
-                language: "nl"
-            },
+            transcriber: { provider: "deepgram", language: "nl" },
             model: {
                 provider: this.modelProvider,
                 model: this.modelName,
@@ -1256,21 +1272,11 @@ export class VapiClient {
             endCallMessage: "Fijne dag!",
         };
 
-        const voiceId = config.voiceSettings?.voiceId?.trim();
-        if (voiceId) {
-            payload.voice = {
-                provider: "11labs",
-                voiceId,
-            };
-        }
-
         if (modelTools.length > 0) {
             (payload.model as Record<string, unknown>).tools = modelTools;
         }
-
-        if (firstMessage) {
-            payload.firstMessage = firstMessage;
-        }
+        if (firstMessage) payload.firstMessage = firstMessage;
+        if (voice) payload.voice = voice;
 
         return payload;
     }
