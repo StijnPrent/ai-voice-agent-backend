@@ -1238,14 +1238,6 @@ export class VapiClient {
 
         const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
 
-        const voiceId = config.voiceSettings?.voiceId?.trim();
-        const voice: { provider: string; voiceId?: string } = {
-            provider: "11labs",
-        };
-        if (voiceId) {
-            voice.voiceId = voiceId;
-        }
-
         const payload: Record<string, unknown> = {
             name: this.getAssistantName(config),
             transcriber: {
@@ -1258,12 +1250,19 @@ export class VapiClient {
                 maxTokens: 10000,
                 messages: modelMessages,
             },
-            voice,
             firstMessageInterruptionsEnabled: false,
             firstMessageMode: "assistant-speaks-first",
             voicemailMessage: "sorry er is helaas niemand anders beschikbaar op het moment",
             endCallMessage: "Fijne dag!",
         };
+
+        const voiceId = config.voiceSettings?.voiceId?.trim();
+        if (voiceId) {
+            payload.voice = {
+                provider: "11labs",
+                voiceId,
+            };
+        }
 
         if (modelTools.length > 0) {
             (payload.model as Record<string, unknown>).tools = modelTools;
