@@ -108,6 +108,7 @@ class VapiRealtimeSession {
 
     public close(code?: number, reason?: string) {
         if (this.closed) return;
+        console.log(`[VapiRealtimeSession] Closing websocket with code ${code} and reason ${reason}`);
         this.closed = true;
         try {
             this.socket.close(code, reason);
