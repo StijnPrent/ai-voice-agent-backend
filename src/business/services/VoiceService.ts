@@ -116,7 +116,6 @@ export class VoiceService {
         this.vapiSession.sendAudioChunk(pcmBuffer.toString("base64"));
 
         const energy = this.computeEnergy(pcmBuffer);
-        console.log(`[${this.callSid}] Audio chunk energy: ${energy}`);
 
         if (energy > ENERGY_THRESHOLD) {
             this.userSpeaking = true;
