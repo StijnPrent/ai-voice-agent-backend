@@ -421,7 +421,7 @@ export class VapiClient {
                 type: "function",
                 name: "create_calendar_event",
                 description:
-                  "Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en geboortedatum ter verificatie.",
+                  "Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.",
                 parameters: createCalendarParameters
             },
             {
@@ -435,7 +435,7 @@ export class VapiClient {
                 type: "function",
                 name: "cancel_calendar_event",
                 description:
-                  "Annuleer een bestaand event in Google Agenda na verificatie met naam + geboortedatum.",
+                  "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.",
                 parameters: cancelCalendarParameters
             }
         ];
