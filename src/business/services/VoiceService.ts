@@ -106,13 +106,16 @@ export class VoiceService {
             return;
         }
 
-        // Decode the base64 payload into a buffer
-        const buffer = Buffer.from(payload, "base64");
+        // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
+        const muLawBuffer = Buffer.from(payload, "base64");
 
-        // Send the raw audio data to Vapi
-        this.vapiSession.sendAudioChunk(payload);
+        // Convert the audio to 16-bit PCM, which is what Vapi expects
+        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
 
-        const energy = this.computeEnergy(buffer);
+        // Send the converted audio data to Vapi
+        this.vapiSession.sendAudioChunk(pcmBuffer.toString("base64"));
+
+        const energy = this.computeEnergy(pcmBuffer);
         console.log(`[${this.callSid}] Audio chunk energy: ${energy}`);
 
         if (energy > ENERGY_THRESHOLD) {
@@ -175,12 +178,42 @@ export class VoiceService {
         );
     }
 
+    private muLawToPcm16(muLawBuffer: Buffer): Buffer {
+        const pcmBuffer = Buffer.alloc(muLawBuffer.length * 2);
+
+        for (let i = 0; i < muLawBuffer.length; i++) {
+            const decoded = this.decodeMuLawSample(muLawBuffer[i]);
+            pcmBuffer.writeInt16LE(decoded, i * 2);
+        }
+
+        return pcmBuffer;
+    }
+
+    private decodeMuLawSample(muLawByte: number): number {
+        // Invert all bits
+        const value = ~muLawByte & 0xff;
+
+        const sign = value & 0x80 ? -1 : 1;
+        const exponent = (value >> 4) & 0x07;
+        const mantissa = value & 0x0f;
+
+        // Reconstruct the magnitude (see ITU-T G.711 spec)
+        let magnitude = ((mantissa << 3) + 0x84) << exponent;
+        magnitude -= 0x84;
+
+        return sign * magnitude;
+    }
+
     private computeEnergy(buf: Buffer): number {
+        if (buf.length === 0) return 0;
+
         let sum = 0;
-        for (let i = 0; i < buf.length; i++) {
-            const sample = buf[i] - 128;
+        const samples = buf.length / 2;
+        for (let i = 0; i < samples; i++) {
+            const sample = buf.readInt16LE(i * 2);
             sum += sample * sample;
         }
-        return Math.sqrt(sum / buf.length);
+
+        return Math.sqrt(sum / samples);
     }
 }
