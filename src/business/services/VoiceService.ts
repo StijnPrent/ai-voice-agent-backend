@@ -103,19 +103,25 @@ export class VoiceService {
             return;
         }
 
+        // Decode the base64 payload into a buffer
+        const buffer = Buffer.from(payload, "base64");
+
+        // Send the raw audio data to Vapi
         this.vapiSession.sendAudioChunk(payload);
 
-        const buffer = Buffer.from(payload, "base64");
         const energy = this.computeEnergy(buffer);
+        console.log(`[${this.callSid}] Audio chunk energy: ${energy}`);
 
         if (energy > ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
         } else if (this.userSpeaking) {
             this.silenceFrames += 1;
+            console.log(`[${this.callSid}] Silence frames: ${this.silenceFrames}`);
             if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
                 this.userSpeaking = false;
                 this.silenceFrames = 0;
+                console.log(`[${this.callSid}] Committing user audio`);
                 this.vapiSession.commitUserAudio();
             }
         }
