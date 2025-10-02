@@ -560,8 +560,7 @@ export class VapiClient {
 
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
           assistantId,
-          callSid,
-          config.voiceSettings
+          callSid
         );
 
         const candidates = [primaryUrl, ...fallbackUrls].filter((url, index, arr) =>
@@ -658,8 +657,7 @@ export class VapiClient {
 
     private async createWebsocketCall(
       assistantId: string,
-      _callSid: string,
-      voiceSettings?: VoiceSettingModel | null
+      _callSid: string
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
 
         const transport = {
@@ -671,16 +669,8 @@ export class VapiClient {
             },
         };
 
-        const payload: Record<string, unknown> = { assistantId, transport };
-        const voiceId = voiceSettings?.voiceId?.trim();
-        if (voiceId) {
-            payload.voice = {
-                provider: "elevenlabs",
-                voiceId: voiceId,
-                modelId: "eleven_multilingual_v2",
-                language: "nl-NL",
-            };
-        }
+        // ⬇️ Minimal payload, nothing else
+        const payload = { assistantId, transport };
 
         const response = await this.http.post(this.buildApiPath("/call"), payload);
         const info = this.extractWebsocketCallInfo(response.data);
@@ -1141,8 +1131,8 @@ export class VapiClient {
         }
 
         const payload = this.buildAssistantPayload(effectiveConfig);
+        this.assistantCache.delete(effectiveConfig.company.id.toString());
         await this.updateAssistant(assistantId, payload);
-        this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
     }
 
     public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
