@@ -560,7 +560,8 @@ export class VapiClient {
 
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
           assistantId,
-          callSid
+          callSid,
+          config.voiceSettings
         );
 
         const candidates = [primaryUrl, ...fallbackUrls].filter((url, index, arr) =>
@@ -657,7 +658,8 @@ export class VapiClient {
 
     private async createWebsocketCall(
       assistantId: string,
-      _callSid: string
+      _callSid: string,
+      voiceSettings?: VoiceSettingModel | null
     ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
 
         const transport = {
@@ -669,11 +671,18 @@ export class VapiClient {
             },
         };
 
-        // ⬇️ Minimal payload, nothing else
-        const payload = { assistantId, transport };
+        const payload: Record<string, unknown> = { assistantId, transport };
+        const voiceId = voiceSettings?.voiceId?.trim();
+        if (voiceId) {
+            payload.voice = {
+                provider: "elevenlabs",
+                voiceId: voiceId,
+                modelId: "eleven_multilingual_v2",
+                language: "nl-NL",
+            };
+        }
 
         const response = await this.http.post(this.buildApiPath("/call"), payload);
-        console.log(response)
         const info = this.extractWebsocketCallInfo(response.data);
         if (!info) throw new Error("Vapi create call response did not include a websocket URL");
         return info;

@@ -27,18 +27,18 @@ export class VoiceRepository extends BaseRepository implements IVoiceRepository 
     public async updateVoiceSettings(companyId: bigint, settings: VoiceSettingModel): Promise<void> {
         const sql = `
             UPDATE voice_settings
-            SET welcome_phrase = ?, talking_speed = ?, updated_at = NOW()
+            SET welcome_phrase = ?, talking_speed = ?, voice_id = ?, updated_at = NOW()
             WHERE company_id = ?
         `;
-        await this.execute(sql, [settings.welcomePhrase, settings.talkingSpeed, companyId]);
+        await this.execute(sql, [settings.welcomePhrase, settings.talkingSpeed, settings.voiceId, companyId]);
     }
     
     public async insertVoiceSettings(companyId: bigint, settings: VoiceSettingModel): Promise<void> {
         const sql = `
-            INSERT INTO voice_settings (company_id, welcome_phrase, talking_speed, created_at, updated_at)
-            VALUES (?, ?, ?, NOW(), NOW())
+            INSERT INTO voice_settings (company_id, welcome_phrase, talking_speed, voice_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NOW(), NOW())
         `;
-        await this.execute(sql, [companyId, settings.welcomePhrase, settings.talkingSpeed]);
+        await this.execute(sql, [companyId, settings.welcomePhrase, settings.talkingSpeed, settings.voiceId]);
     }
 
     public async fetchReplyStyle(companyId: bigint): Promise<ReplyStyleModel> {
