@@ -558,19 +558,6 @@ export class VapiClient {
             throw new Error(`[Vapi] No assistant found for company '${this.getAssistantName(config)}'. Create/update it first via the admin endpoint.`);
         }
 
-        try {
-            const res = await this.http.get(this.buildApiPath(`/assistant/${assistantId}`));
-            const a = res.data?.assistant ?? res.data; // API sometimes nests under `assistant`
-            const voice = a?.voice ?? a?.tts ?? null;
-            const transcriber = a?.transcriber ?? null;
-            console.log("[Vapi] Using stored assistant config:", {
-                voice,
-                transcriber,
-            });
-        } catch (e) {
-            console.warn("[Vapi] Could not fetch assistant for sanity check", e);
-        }
-
         const { primaryUrl, fallbackUrls, callId } = await this.createWebsocketCall(
           assistantId,
           callSid
@@ -686,6 +673,7 @@ export class VapiClient {
         const payload = { assistantId, transport };
 
         const response = await this.http.post(this.buildApiPath("/call"), payload);
+        console.log(response)
         const info = this.extractWebsocketCallInfo(response.data);
         if (!info) throw new Error("Vapi create call response did not include a websocket URL");
         return info;
