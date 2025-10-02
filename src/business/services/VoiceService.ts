@@ -90,6 +90,8 @@ export class VoiceService {
                 onSessionClosed: () => console.log(`[${callSid}] [Vapi] session closed`),
             });
 
+            console.log(`[${callSid}] Vapi session created`);
+
             // Trigger the welcome line by forcing an initial response turn
             this.vapiSession.commitUserAudio();
         } catch (error) {
@@ -100,6 +102,7 @@ export class VoiceService {
 
     public sendAudio(payload: string) {
         if (!this.vapiSession) {
+            console.log(`[${this.callSid}] Vapi session is null, not sending audio`);
             return;
         }
 
