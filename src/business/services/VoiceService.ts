@@ -56,6 +56,63 @@ export class VoiceService {
             console.log(`[${callSid}] Twilio stream websocket closed with code ${code}${formattedReason}`);
         });
 
+        ws.on("message", (data, isBinary) => {
+            try {
+                if (isBinary) return; // Twilio sends JSON text frames
+
+                const s = typeof data === "string" ? data : data.toString("utf8");
+                if (!s.trim().startsWith("{")) return; // ignore noise/keepalives
+
+                const msg = JSON.parse(s);
+                const ev = msg.event;
+
+                switch (ev) {
+                    case "start": {
+                        // Twilio will include its streamSid here too — keep it in sync
+                        const sid = msg.start?.streamSid || msg.streamSid;
+                        if (sid) this.streamSid = sid;
+                        console.log(`[${this.callSid}] Twilio stream started (streamSid=${this.streamSid})`);
+                        break;
+                    }
+
+                    case "media": {
+                        const payload = msg.media?.payload;
+                        if (payload && typeof payload === "string") {
+                            // Forward original 8k μ-law base64 to Vapi
+                            this.sendAudio(payload);
+                        }
+                        break;
+                    }
+
+                    case "mark": {
+                        const name = msg.mark?.name || "";
+                        this.handleMark(name);
+                        break;
+                    }
+
+                    case "stop": {
+                        console.log(`[${this.callSid}] Twilio stream STOP received`);
+                        this.stopStreaming();
+                        break;
+                    }
+
+                  // Optional: DTMF, etc.
+                    case "dtmf":
+                    case "clear": {
+                        break;
+                    }
+
+                    default: {
+                        // Some Twilio keepalives show up as {"event":"..."} — safe to ignore
+                        // console.debug(`[${this.callSid}] Twilio event ${ev}`);
+                        break;
+                    }
+                }
+            } catch (err) {
+                console.error(`[${this.callSid}] Failed to handle Twilio message`, err);
+            }
+        });
+
         try {
             const company = await this.companyService.findByTwilioNumber(to);
             this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
