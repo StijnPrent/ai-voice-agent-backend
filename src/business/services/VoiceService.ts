@@ -8,8 +8,8 @@ import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
 
-const ENERGY_THRESHOLD = 180;
-const SILENCE_FRAMES_REQUIRED = 8;
+const ENERGY_THRESHOLD = 100;
+const SILENCE_FRAMES_REQUIRED = 25;
 
 @injectable()
 export class VoiceService {
