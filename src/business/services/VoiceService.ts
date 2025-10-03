@@ -109,11 +109,13 @@ export class VoiceService {
         // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
         const muLawBuffer = Buffer.from(payload, "base64");
 
-        // Convert the audio to 16-bit PCM, which is what Vapi expects
-        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
+        // Forward the original mu-law audio payload to Vapi. The realtime session
+        // is configured for `mulaw` in `VapiClient.createWebsocketCall`, so the
+        // payload must remain in that format.
+        this.vapiSession.sendAudioChunk(payload);
 
-        // Send the converted audio data to Vapi
-        this.vapiSession.sendAudioChunk(pcmBuffer.toString("base64"));
+        // Convert to PCM only for energy analysis used in the silence detector.
+        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
 
         const energy = this.computeEnergy(pcmBuffer);
 
