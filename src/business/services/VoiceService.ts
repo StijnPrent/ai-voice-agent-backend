@@ -124,7 +124,6 @@ export class VoiceService {
             this.silenceFrames = 0;
         } else if (this.userSpeaking) {
             this.silenceFrames += 1;
-            console.log(`[${this.callSid}] Silence frames: ${this.silenceFrames}`);
             if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
                 this.userSpeaking = false;
                 this.silenceFrames = 0;
