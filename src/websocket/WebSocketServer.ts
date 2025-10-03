@@ -48,32 +48,41 @@ export class WebSocketServer {
     private handleConnection(ws: WebSocket, to: string) {
         console.log(`🔌 New WebSocket connection for ${to}`);
 
-        ws.on("message", async (message: string) => {
-            const data = JSON.parse(message);
+        const handleStartEvent = async (rawMessage: WebSocket.RawData) => {
+            let messageString: string;
 
-            switch (data.event) {
-                case "start":
-                    console.log(`[${data.start.callSid}] Received start event`);
-                    // Pass the streamSid and the 'to' number to the voice service
-                    await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid, to);
-                    break;
-
-                case "media":
-                    // Send the raw payload to the voice service
-                    this.voiceService.sendAudio(data.media.payload);
-                    break;
-
-                case "mark":
-                    // Handle playback completion events
-                    this.voiceService.handleMark(data.mark.name);
-                    break;
-
-                case "stop":
-                    console.log(`[${data.stop.callSid}] Received stop event`);
-                    this.voiceService.stopStreaming();
-                    break;
+            if (typeof rawMessage === "string") {
+                messageString = rawMessage;
+            } else if (Buffer.isBuffer(rawMessage)) {
+                messageString = rawMessage.toString("utf8");
+            } else if (Array.isArray(rawMessage)) {
+                messageString = Buffer.concat(rawMessage).toString("utf8");
+            } else if (rawMessage instanceof ArrayBuffer) {
+                messageString = Buffer.from(rawMessage).toString("utf8");
+            } else {
+                messageString = String(rawMessage);
             }
-        });
+
+            if (!messageString) {
+                return;
+            }
+
+            let data: any;
+            try {
+                data = JSON.parse(messageString);
+            } catch (error) {
+                console.error("❌ Failed to parse Twilio start event", error);
+                return;
+            }
+
+            if (data.event === "start") {
+                ws.removeListener("message", handleStartEvent);
+                console.log(`[${data.start.callSid}] Received start event`);
+                await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid, to, data);
+            }
+        };
+
+        ws.on("message", handleStartEvent);
 
         ws.on("close", () => {
             console.log("🔌 Connection closed");
