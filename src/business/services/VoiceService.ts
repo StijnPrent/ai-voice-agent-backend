@@ -18,6 +18,36 @@ export class VoiceService {
     private streamSid: string | null = null;
     private voiceSettings: VoiceSettingModel | null = null;
     private vapiSession: VapiRealtimeSession | null = null;
+    private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
+        let messageString: string;
+
+        if (typeof rawMessage === "string") {
+            messageString = rawMessage;
+        } else if (Buffer.isBuffer(rawMessage)) {
+            messageString = rawMessage.toString("utf8");
+        } else if (Array.isArray(rawMessage)) {
+            messageString = Buffer.concat(rawMessage).toString("utf8");
+        } else if (rawMessage instanceof ArrayBuffer) {
+            messageString = Buffer.from(rawMessage).toString("utf8");
+        } else {
+            messageString = String(rawMessage);
+        }
+
+        const trimmedMessage = messageString.trim();
+        if (!trimmedMessage) {
+            return;
+        }
+
+        let parsed: TwilioMediaStreamEvent;
+        try {
+            parsed = JSON.parse(trimmedMessage);
+        } catch (error) {
+            console.error(`[${this.callSid ?? "unknown"}] Failed to parse Twilio stream message`, error);
+            return;
+        }
+
+        this.handleTwilioStreamEvent(parsed);
+    };
 
     private assistantSpeaking = false;
     private userSpeaking = false;
@@ -31,7 +61,13 @@ export class VoiceService {
         @inject(SchedulingService) private readonly schedulingService: SchedulingService
     ) {}
 
-    public async startStreaming(ws: WebSocket, callSid: string, streamSid: string, to: string) {
+    public async startStreaming(
+        ws: WebSocket,
+        callSid: string,
+        streamSid: string,
+        to: string,
+        initialEvent?: TwilioMediaStreamEvent
+    ) {
         this.ws = ws;
         this.callSid = callSid;
         this.streamSid = streamSid;
@@ -41,6 +77,7 @@ export class VoiceService {
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
+        ws.on("message", this.handleTwilioStreamMessage);
         ws.on("error", (error) => {
             console.error(`[${callSid}] Twilio stream websocket error`, error);
         });
@@ -55,6 +92,10 @@ export class VoiceService {
             const formattedReason = reasonText ? ` (${reasonText})` : "";
             console.log(`[${callSid}] Twilio stream websocket closed with code ${code}${formattedReason}`);
         });
+
+        if (initialEvent) {
+            this.handleTwilioStreamEvent(initialEvent);
+        }
 
         try {
             const company = await this.companyService.findByTwilioNumber(to);
@@ -109,11 +150,13 @@ export class VoiceService {
         // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
         const muLawBuffer = Buffer.from(payload, "base64");
 
-        // Convert the audio to 16-bit PCM, which is what Vapi expects
-        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
+        // Forward the original mu-law audio payload to Vapi. The realtime session
+        // is configured for `mulaw` in `VapiClient.createWebsocketCall`, so the
+        // payload must remain in that format.
+        this.vapiSession.sendAudioChunk(payload);
 
-        // Send the converted audio data to Vapi
-        this.vapiSession.sendAudioChunk(pcmBuffer.toString("base64"));
+        // Convert to PCM only for energy analysis used in the silence detector.
+        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
 
         const energy = this.computeEnergy(pcmBuffer);
 
@@ -139,6 +182,9 @@ export class VoiceService {
     public stopStreaming() {
         console.log(`[${this.callSid}] Stopping Vapi voice session`);
         try {
+            if (this.ws) {
+                this.ws.removeListener("message", this.handleTwilioStreamMessage);
+            }
             this.vapiSession?.close();
         } catch (error) {
             console.error("[VoiceService] Failed to close Vapi session", error);
@@ -215,4 +261,67 @@ export class VoiceService {
 
         return Math.sqrt(sum / samples);
     }
+
+    private handleTwilioStreamEvent(event: TwilioMediaStreamEvent) {
+        switch (event.event) {
+            case "start": {
+                if (event.start?.callSid) {
+                    this.callSid = event.start.callSid;
+                }
+                if (event.start?.streamSid) {
+                    this.streamSid = event.start.streamSid;
+                }
+                const callId = this.callSid ?? "unknown";
+                console.log(
+                    `[${callId}] Twilio media stream started${
+                        this.streamSid ? ` (streamSid ${this.streamSid})` : ""
+                    }`
+                );
+                break;
+            }
+            case "media": {
+                const payload = event.media?.payload;
+                if (payload) {
+                    this.sendAudio(payload);
+                }
+                break;
+            }
+            case "mark": {
+                const markName = event.mark?.name;
+                if (markName) {
+                    this.handleMark(markName);
+                }
+                break;
+            }
+            case "stop": {
+                console.log(`[${this.callSid ?? "unknown"}] Twilio sent stop event`);
+                this.stopStreaming();
+                break;
+            }
+            case "keepalive":
+            case "connected":
+                // Ignore keepalive/connection acknowledgements.
+                break;
+            default: {
+                console.log(`[${this.callSid ?? "unknown"}] Ignoring unhandled Twilio event type: ${event.event}`);
+            }
+        }
+    }
 }
+
+type TwilioMediaStreamEvent = {
+    event: string;
+    start?: {
+        callSid?: string;
+        streamSid?: string;
+    };
+    media?: {
+        payload?: string;
+    };
+    mark?: {
+        name?: string;
+    };
+    stop?: {
+        callSid?: string;
+    };
+};

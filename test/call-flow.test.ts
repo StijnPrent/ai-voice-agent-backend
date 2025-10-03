@@ -33,6 +33,7 @@ describe('WebSocketServer Call Flow', () => {
         mockWs.on = jest.fn();
         mockWs.send = jest.fn();
         mockWs.close = jest.fn();
+        mockWs.removeListener = jest.fn();
 
         // Mock the server's upgrade handler to emit our mock client
         const mockWss = {
@@ -72,35 +73,41 @@ describe('WebSocketServer Call Flow', () => {
             start: { callSid: 'call123', streamSid: 'stream456' }
         };
         await messageCallback(JSON.stringify(startEvent));
-        expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(mockWs, 'call123', 'stream456', '+18565020784');
+        expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(
+            mockWs,
+            'call123',
+            'stream456',
+            '+18565020784',
+            startEvent
+        );
+        expect(mockWs.removeListener).toHaveBeenCalledWith('message', messageCallback);
 
-        // 3. Simulate 'media' event from Twilio
+        // After handing over to the voice service, the WebSocketServer should not
+        // directly invoke downstream handlers for additional events.
         const mediaEvent = {
             event: 'media',
             media: { payload: 'audio_data_base64' }
         };
         await messageCallback(JSON.stringify(mediaEvent));
-        expect(mockVoiceService.sendAudio).toHaveBeenCalledWith('audio_data_base64');
+        expect(mockVoiceService.sendAudio).not.toHaveBeenCalled();
 
-        // 4. Simulate 'mark' event from Twilio
         const markEvent = {
             event: 'mark',
             mark: { name: 'mark1' }
         };
         await messageCallback(JSON.stringify(markEvent));
-        expect(mockVoiceService.handleMark).toHaveBeenCalledWith('mark1');
+        expect(mockVoiceService.handleMark).not.toHaveBeenCalled();
 
-        // 5. Simulate 'stop' event from Twilio
         const stopEvent = {
             event: 'stop',
             stop: { callSid: 'call123' }
         };
         await messageCallback(JSON.stringify(stopEvent));
-        expect(mockVoiceService.stopStreaming).toHaveBeenCalled();
+        expect(mockVoiceService.stopStreaming).not.toHaveBeenCalled();
 
         // 6. Simulate connection close
         const closeCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'close')[1];
         await closeCallback();
-        expect(mockVoiceService.stopStreaming).toHaveBeenCalledTimes(2); // Called for stop and close
+        expect(mockVoiceService.stopStreaming).toHaveBeenCalledTimes(1);
     });
 });
