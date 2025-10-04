@@ -8,8 +8,8 @@ import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
 
-const ENERGY_THRESHOLD = 180;
-const SILENCE_FRAMES_REQUIRED = 8;
+const ENERGY_THRESHOLD = 100;
+const SILENCE_FRAMES_REQUIRED = 25;
 
 @injectable()
 export class VoiceService {
@@ -165,7 +165,6 @@ export class VoiceService {
             this.silenceFrames = 0;
         } else if (this.userSpeaking) {
             this.silenceFrames += 1;
-            console.log(`[${this.callSid}] Silence frames: ${this.silenceFrames}`);
             if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
                 this.userSpeaking = false;
                 this.silenceFrames = 0;
