@@ -12,7 +12,6 @@ const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
 const SILENCE_FRAMES_REQUIRED = 20;
 const MAX_FRAMES_BEFORE_FORCED_COMMIT = 400;
-
 const MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT = 12;
 const MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT = 225;
 
@@ -43,6 +42,16 @@ export class VoiceService {
             return;
         }
 
+        this.twilioMessagesReceived += 1;
+        if (
+            this.twilioMessagesReceived <= 5 ||
+            this.twilioMessagesReceived % 100 === 0
+        ) {
+            console.log(
+                `[${this.callSid ?? "unknown"}] Twilio message #${this.twilioMessagesReceived} received`
+            );
+        }
+
         let parsed: TwilioMediaStreamEvent;
         try {
             parsed = JSON.parse(trimmedMessage);
@@ -60,6 +69,15 @@ export class VoiceService {
     private framesSinceLastCommit = 0;
     private activeSpeechFrames = 0;
     private cumulativeSpeechEnergy = 0;
+
+    private lastUserEnergy = 0;
+
+    private twilioMessagesReceived = 0;
+    private twilioMediaEvents = 0;
+    private twilioMarksReceived = 0;
+    private totalAudioChunksForwardedToVapi = 0;
+    private totalPcmBytesForwardedToVapi = 0;
+    private totalAssistantAudioChunks = 0;
 
     constructor(
         @inject(VapiClient) private readonly vapiClient: VapiClient,
@@ -81,6 +99,12 @@ export class VoiceService {
         this.streamSid = streamSid;
         this.assistantSpeaking = false;
         this.resetSpeechTracking();
+        this.twilioMessagesReceived = 0;
+        this.twilioMediaEvents = 0;
+        this.twilioMarksReceived = 0;
+        this.totalAudioChunksForwardedToVapi = 0;
+        this.totalPcmBytesForwardedToVapi = 0;
+        this.totalAssistantAudioChunks = 0;
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
@@ -135,10 +159,14 @@ export class VoiceService {
                     }
                 },
                 onSessionError: (err) => console.error(`[${callSid}] [Vapi] session error`, err),
-                onSessionClosed: () => console.log(`[${callSid}] [Vapi] session closed`),
+                onSessionClosed: () => {
+                    console.log(`[${callSid}] [Vapi] session closed`);
+                    this.logSessionSnapshot("vapi session closed");
+                },
             });
 
             console.log(`[${callSid}] Vapi session created`);
+            this.logSessionSnapshot("vapi session created");
 
             // Trigger the welcome line by forcing an initial response turn
             this.vapiSession.commitUserAudio();
@@ -149,8 +177,10 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
+        const callId = this.callSid ?? "unknown";
+
         if (!this.vapiSession) {
-            console.log(`[${this.callSid}] Vapi session is null, not sending audio`);
+            console.log(`[${callId}] Vapi session is null, not sending audio`);
             return;
         }
 
@@ -165,12 +195,24 @@ export class VoiceService {
         const pcmBase64 = pcmBuffer.toString("base64");
         this.vapiSession.sendAudioChunk(pcmBase64);
 
+        this.totalAudioChunksForwardedToVapi += 1;
+        this.totalPcmBytesForwardedToVapi += pcmBuffer.length;
+
         const energy = this.computeEnergy(pcmBuffer);
+        this.lastUserEnergy = energy;
+
+        if (
+            this.totalAudioChunksForwardedToVapi <= 3 ||
+            this.totalAudioChunksForwardedToVapi % 50 === 0
+        ) {
+            console.log(
+                `[${callId}] Forwarded audio chunk #${this.totalAudioChunksForwardedToVapi} to Vapi (pcmBytes=${pcmBuffer.length}, energy=${energy.toFixed(2)})`
+            );
+        }
 
         if (!this.userSpeaking && energy >= SPEECH_ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
-
             this.framesSinceLastCommit = 0;
             this.activeSpeechFrames = 0;
             this.cumulativeSpeechEnergy = 0;
@@ -205,7 +247,9 @@ export class VoiceService {
     }
 
     public stopStreaming() {
-        console.log(`[${this.callSid}] Stopping Vapi voice session`);
+        const callId = this.callSid ?? "unknown";
+        console.log(`[${callId}] Stopping Vapi voice session`);
+        this.logSessionSnapshot("twilio stop");
         try {
             if (this.ws) {
                 this.ws.removeListener("message", this.handleTwilioStreamMessage);
@@ -235,12 +279,15 @@ export class VoiceService {
         const frames = this.activeSpeechFrames;
         const averageEnergy = frames > 0 ? this.cumulativeSpeechEnergy / frames : 0;
 
+        console.log(
+            `[${callId}] Evaluating user audio segment due to ${reason} (${this.formatSegmentDebugInfo(frames, averageEnergy)})`
+        );
         if (
             frames < MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT ||
             averageEnergy < MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT
         ) {
             console.log(
-                `[${callId}] Skipping user audio commit due to ${reason}; insufficient speech captured (frames=${frames}, avgEnergy=${averageEnergy.toFixed(2)})`
+                `[${callId}] Skipping user audio commit due to ${reason}; insufficient speech captured (${this.formatSegmentDebugInfo(frames, averageEnergy)})`
             );
             this.resetSpeechTracking();
             return;
@@ -265,10 +312,11 @@ export class VoiceService {
         }
 
         console.log(
-            `[${callId}] Committing user audio due to ${reason} (energy=${energy.toFixed(2)}, frames=${frames}, avgEnergy=${averageEnergy.toFixed(2)})`
+            `[${callId}] Committing user audio due to ${reason} (energy=${energy.toFixed(2)}). Segment stats: ${this.formatSegmentDebugInfo(frames, averageEnergy)}`
         );
 
         this.vapiSession.commitUserAudio();
+        this.logSessionSnapshot(`user commit (${reason})`);
         this.resetSpeechTracking();
     }
 
@@ -278,6 +326,7 @@ export class VoiceService {
         this.framesSinceLastCommit = 0;
         this.activeSpeechFrames = 0;
         this.cumulativeSpeechEnergy = 0;
+        this.lastUserEnergy = 0;
     }
 
     private forwardAudioToTwilio(audioPayload: string) {
@@ -295,12 +344,40 @@ export class VoiceService {
             );
         }
 
+        this.totalAssistantAudioChunks += 1;
+        const callId = this.callSid ?? "unknown";
+        if (this.totalAssistantAudioChunks <= 3 || this.totalAssistantAudioChunks % 50 === 0) {
+            console.log(
+                `[${callId}] Forwarding assistant audio chunk #${this.totalAssistantAudioChunks} to Twilio (payloadBytes=${Buffer.from(audioPayload, "base64").length})`
+            );
+        }
+
         this.ws.send(
             JSON.stringify({
                 event: "media",
                 streamSid: this.streamSid,
                 media: { payload: audioPayload },
             })
+        );
+    }
+
+    private formatSegmentDebugInfo(frames: number, averageEnergy: number): string {
+        const parts = [
+            `frames=${frames}`,
+            `avgEnergy=${averageEnergy.toFixed(2)}`,
+            `framesSinceLastCommit=${this.framesSinceLastCommit}`,
+            `silenceFrames=${this.silenceFrames}`,
+            `lastUserEnergy=${this.lastUserEnergy.toFixed(2)}`,
+            `chunksToVapi=${this.totalAudioChunksForwardedToVapi}`,
+        ];
+
+        return parts.join(", ");
+    }
+
+    private logSessionSnapshot(context: string) {
+        const callId = this.callSid ?? "unknown";
+        console.log(
+            `[${callId}] Session snapshot (${context}): twilioMessages=${this.twilioMessagesReceived}, mediaEvents=${this.twilioMediaEvents}, marks=${this.twilioMarksReceived}, chunksToVapi=${this.totalAudioChunksForwardedToVapi}, pcmBytesToVapi=${this.totalPcmBytesForwardedToVapi}, assistantChunks=${this.totalAssistantAudioChunks}, userSpeaking=${this.userSpeaking}, assistantSpeaking=${this.assistantSpeaking}`
         );
     }
 
@@ -361,13 +438,17 @@ export class VoiceService {
                 break;
             }
             case "media": {
+                this.twilioMediaEvents += 1;
                 const payload = event.media?.payload;
                 if (payload) {
                     this.sendAudio(payload);
+                } else {
+                    console.warn(`[${this.callSid ?? "unknown"}] Twilio media event missing payload`);
                 }
                 break;
             }
             case "mark": {
+                this.twilioMarksReceived += 1;
                 const markName = event.mark?.name;
                 if (markName) {
                     this.handleMark(markName);
