@@ -24,19 +24,14 @@ export class VoiceService {
 
         if (typeof rawMessage === "string") {
             messageString = rawMessage;
-            console.log("Message is string:", messageString);
         } else if (Buffer.isBuffer(rawMessage)) {
             messageString = rawMessage.toString("utf8");
-            console.log("Message is Buffer:", messageString);
         } else if (Array.isArray(rawMessage)) {
             messageString = Buffer.concat(rawMessage).toString("utf8");
-            console.log("Message is Array of Buffers:", messageString);
         } else if (rawMessage instanceof ArrayBuffer) {
             messageString = Buffer.from(rawMessage).toString("utf8");
-            console.log("Message is ArrayBuffer:", messageString);
         } else {
             messageString = String(rawMessage);
-            console.log("Message is of unknown type, converted to string:", messageString);
         }
 
         const trimmedMessage = messageString.trim();
