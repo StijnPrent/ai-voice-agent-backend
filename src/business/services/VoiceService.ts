@@ -12,6 +12,7 @@ const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
 const SILENCE_FRAMES_REQUIRED = 20;
 const MAX_FRAMES_BEFORE_FORCED_COMMIT = 400;
+
 const MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT = 12;
 const MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT = 225;
 
@@ -24,7 +25,6 @@ export class VoiceService {
     private vapiSession: VapiRealtimeSession | null = null;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
-        console.log("Received Twilio stream message:", rawMessage);
 
         if (typeof rawMessage === "string") {
             messageString = rawMessage;
@@ -170,6 +170,7 @@ export class VoiceService {
         if (!this.userSpeaking && energy >= SPEECH_ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
+
             this.framesSinceLastCommit = 0;
             this.activeSpeechFrames = 0;
             this.cumulativeSpeechEnergy = 0;
