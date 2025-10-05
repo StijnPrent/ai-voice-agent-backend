@@ -24,7 +24,6 @@ export class VoiceService {
     private vapiSession: VapiRealtimeSession | null = null;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
-        console.log("Received Twilio stream message:", rawMessage);
 
         if (typeof rawMessage === "string") {
             messageString = rawMessage;
@@ -70,6 +69,7 @@ export class VoiceService {
     private framesSinceLastCommit = 0;
     private activeSpeechFrames = 0;
     private cumulativeSpeechEnergy = 0;
+
     private lastUserEnergy = 0;
 
     private twilioMessagesReceived = 0;
@@ -282,7 +282,6 @@ export class VoiceService {
         console.log(
             `[${callId}] Evaluating user audio segment due to ${reason} (${this.formatSegmentDebugInfo(frames, averageEnergy)})`
         );
-
         if (
             frames < MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT ||
             averageEnergy < MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT
