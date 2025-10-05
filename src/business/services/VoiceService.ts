@@ -164,8 +164,6 @@ export class VoiceService {
 
         const energy = this.computeEnergy(pcmBuffer);
 
-        this.framesSinceLastCommit += 1;
-
         if (!this.userSpeaking && energy >= SPEECH_ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
@@ -176,6 +174,7 @@ export class VoiceService {
         }
 
         if (this.userSpeaking) {
+            this.framesSinceLastCommit += 1;
             if (energy <= SILENCE_ENERGY_THRESHOLD) {
                 this.silenceFrames += 1;
                 if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
@@ -184,6 +183,11 @@ export class VoiceService {
             } else {
                 this.silenceFrames = 0;
             }
+            if (this.framesSinceLastCommit >= MAX_FRAMES_BEFORE_FORCED_COMMIT) {
+                this.commitUserAudio("timeout", energy);
+            }
+        } else {
+            this.framesSinceLastCommit = 0;
         }
 
         if (this.framesSinceLastCommit >= MAX_FRAMES_BEFORE_FORCED_COMMIT) {
