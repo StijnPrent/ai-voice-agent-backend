@@ -85,6 +85,7 @@ class VapiRealtimeSession {
     }
 
     public commitUserAudio() {
+        console.log("[VapiRealtimeSession] Committing user audio");
         if (this.closed) return;
         this.socket.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
         this.socket.send(JSON.stringify({ type: "response.create", response: {} }));

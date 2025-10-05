@@ -148,7 +148,6 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
-        console.log(`[${this.callSid}] Received audio payload of length ${payload.length}`);
         if (!this.vapiSession) {
             console.log(`[${this.callSid}] Vapi session is null, not sending audio`);
             return;
@@ -163,7 +162,6 @@ export class VoiceService {
 
         // Vapi expects base64-encoded PCM16 audio frames.
         const pcmBase64 = pcmBuffer.toString("base64");
-        console.log(`[${this.callSid}] Forwarding PCM audio of length ${pcmBuffer.length} (${pcmBase64.length} base64 chars) to Vapi`);
         this.vapiSession.sendAudioChunk(pcmBase64);
 
         const energy = this.computeEnergy(pcmBuffer);
@@ -270,10 +268,8 @@ export class VoiceService {
     }
 
     private handleTwilioStreamEvent(event: TwilioMediaStreamEvent) {
-        console.log(`[${this.callSid ?? "unknown"}] Handling Twilio stream event: ${event.event}`);
         switch (event.event) {
             case "start": {
-                console.log(`[${this.callSid ?? "unknown"}] Twilio sent start event`);
                 if (event.start?.callSid) {
                     this.callSid = event.start.callSid;
                 }
@@ -289,7 +285,6 @@ export class VoiceService {
                 break;
             }
             case "media": {
-                console.log(`[${this.callSid ?? "unknown"}] Twilio sent media event`);
                 const payload = event.media?.payload;
                 if (payload) {
                     this.sendAudio(payload);
@@ -297,7 +292,6 @@ export class VoiceService {
                 break;
             }
             case "mark": {
-                console.log(`[${this.callSid ?? "unknown"}] Twilio sent mark event`);
                 const markName = event.mark?.name;
                 if (markName) {
                     this.handleMark(markName);
@@ -305,7 +299,6 @@ export class VoiceService {
                 break;
             }
             case "stop": {
-                console.log(`[${this.callSid ?? "unknown"}] Twilio sent stop event`);
                 this.stopStreaming();
                 break;
             }
