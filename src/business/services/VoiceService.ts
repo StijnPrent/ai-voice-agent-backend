@@ -8,8 +8,12 @@ import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
 
-const ENERGY_THRESHOLD = 100;
-const SILENCE_FRAMES_REQUIRED = 25;
+const SPEECH_ENERGY_THRESHOLD = 325;
+const SILENCE_ENERGY_THRESHOLD = 175;
+const SILENCE_FRAMES_REQUIRED = 20;
+const MAX_FRAMES_BEFORE_FORCED_COMMIT = 400;
+const MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT = 12;
+const MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT = 225;
 
 @injectable()
 export class VoiceService {
@@ -53,6 +57,9 @@ export class VoiceService {
     private assistantSpeaking = false;
     private userSpeaking = false;
     private silenceFrames = 0;
+    private framesSinceLastCommit = 0;
+    private activeSpeechFrames = 0;
+    private cumulativeSpeechEnergy = 0;
 
     constructor(
         @inject(VapiClient) private readonly vapiClient: VapiClient,
@@ -73,8 +80,7 @@ export class VoiceService {
         this.callSid = callSid;
         this.streamSid = streamSid;
         this.assistantSpeaking = false;
-        this.userSpeaking = false;
-        this.silenceFrames = 0;
+        this.resetSpeechTracking();
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
@@ -161,17 +167,35 @@ export class VoiceService {
 
         const energy = this.computeEnergy(pcmBuffer);
 
-        if (energy > ENERGY_THRESHOLD) {
+        if (!this.userSpeaking && energy >= SPEECH_ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
-        } else if (this.userSpeaking) {
-            this.silenceFrames += 1;
-            if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
-                this.userSpeaking = false;
+            this.framesSinceLastCommit = 0;
+            this.activeSpeechFrames = 0;
+            this.cumulativeSpeechEnergy = 0;
+            const callId = this.callSid ?? "unknown";
+            console.log(
+                `[${callId}] Detected user speech start (energy=${energy.toFixed(2)})`
+            );
+        }
+
+        if (this.userSpeaking) {
+            this.framesSinceLastCommit += 1;
+            if (energy <= SILENCE_ENERGY_THRESHOLD) {
+                this.silenceFrames += 1;
+                if (this.silenceFrames >= SILENCE_FRAMES_REQUIRED) {
+                    this.finalizeUserSpeechSegment("silence", energy);
+                }
+            } else {
                 this.silenceFrames = 0;
-                console.log(`[${this.callSid}] Committing user audio`);
-                this.vapiSession.commitUserAudio();
+                this.activeSpeechFrames += 1;
+                this.cumulativeSpeechEnergy += energy;
             }
+            if (this.framesSinceLastCommit >= MAX_FRAMES_BEFORE_FORCED_COMMIT) {
+                this.finalizeUserSpeechSegment("timeout", energy);
+            }
+        } else {
+            this.framesSinceLastCommit = 0;
         }
     }
 
@@ -195,8 +219,64 @@ export class VoiceService {
         this.streamSid = null;
         this.voiceSettings = null;
         this.assistantSpeaking = false;
+        this.resetSpeechTracking();
+    }
+
+    private finalizeUserSpeechSegment(
+        reason: "silence" | "timeout",
+        trailingEnergy: number
+    ) {
+        if (!this.userSpeaking) {
+            return;
+        }
+
+        const callId = this.callSid ?? "unknown";
+        const frames = this.activeSpeechFrames;
+        const averageEnergy = frames > 0 ? this.cumulativeSpeechEnergy / frames : 0;
+
+        if (
+            frames < MIN_ACTIVE_SPEECH_FRAMES_FOR_COMMIT ||
+            averageEnergy < MIN_AVERAGE_SPEECH_ENERGY_FOR_COMMIT
+        ) {
+            console.log(
+                `[${callId}] Skipping user audio commit due to ${reason}; insufficient speech captured (frames=${frames}, avgEnergy=${averageEnergy.toFixed(2)})`
+            );
+            this.resetSpeechTracking();
+            return;
+        }
+
+        this.commitUserAudio(reason, trailingEnergy, frames, averageEnergy);
+    }
+
+    private commitUserAudio(
+        reason: "silence" | "timeout",
+        energy: number,
+        frames: number,
+        averageEnergy: number
+    ) {
+        const callId = this.callSid ?? "unknown";
+
+        if (!this.vapiSession) {
+            console.warn(
+                `[${callId}] Cannot commit user audio (${reason}); Vapi session is not available`
+            );
+            return;
+        }
+
+        console.log(
+            `[${callId}] Committing user audio due to ${reason} (energy=${energy.toFixed(2)}, frames=${frames}, avgEnergy=${averageEnergy.toFixed(2)})`
+        );
+
+        this.vapiSession.commitUserAudio();
+        this.resetSpeechTracking();
+    }
+
+    private resetSpeechTracking() {
         this.userSpeaking = false;
         this.silenceFrames = 0;
+        this.framesSinceLastCommit = 0;
+        this.activeSpeechFrames = 0;
+        this.cumulativeSpeechEnergy = 0;
     }
 
     private forwardAudioToTwilio(audioPayload: string) {
