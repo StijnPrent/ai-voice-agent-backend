@@ -22,7 +22,6 @@ export class VoiceService {
     private vapiSession: VapiRealtimeSession | null = null;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
-        console.log("Received Twilio stream message:", rawMessage);
 
         if (typeof rawMessage === "string") {
             messageString = rawMessage;
@@ -189,6 +188,10 @@ export class VoiceService {
             }
         } else {
             this.framesSinceLastCommit = 0;
+        }
+
+        if (this.framesSinceLastCommit >= MAX_FRAMES_BEFORE_FORCED_COMMIT) {
+            this.commitUserAudio("timeout", energy);
         }
     }
 
