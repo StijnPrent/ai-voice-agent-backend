@@ -192,14 +192,12 @@ export class VoiceService {
         this.vapiSession.sendAudioChunk(payload);
 
         this.totalAudioChunksForwardedToVapi += 1;
-        this.totalMuLawBytesForwardedToVapi += muLawBuffer.length;
 
         // Convert to PCM so we can reuse the samples for silence detection and
         // energy tracking without mutating the forwarded payload.
         const pcmBuffer = this.muLawToPcm16(muLawBuffer);
 
         this.totalAudioChunksForwardedToVapi += 1;
-        this.totalPcmBytesForwardedToVapi += pcmBuffer.length;
 
         const energy = this.computeEnergy(pcmBuffer);
         this.lastUserEnergy = energy;
