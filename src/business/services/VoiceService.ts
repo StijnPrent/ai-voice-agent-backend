@@ -69,14 +69,13 @@ export class VoiceService {
     private framesSinceLastCommit = 0;
     private activeSpeechFrames = 0;
     private cumulativeSpeechEnergy = 0;
-
     private lastUserEnergy = 0;
 
     private twilioMessagesReceived = 0;
     private twilioMediaEvents = 0;
     private twilioMarksReceived = 0;
     private totalAudioChunksForwardedToVapi = 0;
-    private totalPcmBytesForwardedToVapi = 0;
+    private totalMuLawBytesForwardedToVapi = 0;
     private totalAssistantAudioChunks = 0;
 
     constructor(
@@ -103,7 +102,7 @@ export class VoiceService {
         this.twilioMediaEvents = 0;
         this.twilioMarksReceived = 0;
         this.totalAudioChunksForwardedToVapi = 0;
-        this.totalPcmBytesForwardedToVapi = 0;
+        this.totalMuLawBytesForwardedToVapi = 0;
         this.totalAssistantAudioChunks = 0;
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
@@ -187,13 +186,17 @@ export class VoiceService {
         // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
         const muLawBuffer = Buffer.from(payload, "base64");
 
-        // Convert to PCM so we can both forward the correct format to Vapi and
-        // reuse the samples for the silence detector.
-        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
+        // Forward the original mu-law audio. The Vapi realtime transport is
+        // configured for mu-law, so re-encoding to PCM would distort the
+        // payload and result in silence on the assistant side.
+        this.vapiSession.sendAudioChunk(payload);
 
-        // Vapi expects base64-encoded PCM16 audio frames.
-        const pcmBase64 = pcmBuffer.toString("base64");
-        this.vapiSession.sendAudioChunk(pcmBase64);
+        this.totalAudioChunksForwardedToVapi += 1;
+        this.totalMuLawBytesForwardedToVapi += muLawBuffer.length;
+
+        // Convert to PCM so we can reuse the samples for silence detection and
+        // energy tracking without mutating the forwarded payload.
+        const pcmBuffer = this.muLawToPcm16(muLawBuffer);
 
         this.totalAudioChunksForwardedToVapi += 1;
         this.totalPcmBytesForwardedToVapi += pcmBuffer.length;
@@ -206,7 +209,7 @@ export class VoiceService {
             this.totalAudioChunksForwardedToVapi % 50 === 0
         ) {
             console.log(
-                `[${callId}] Forwarded audio chunk #${this.totalAudioChunksForwardedToVapi} to Vapi (pcmBytes=${pcmBuffer.length}, energy=${energy.toFixed(2)})`
+                `[${callId}] Forwarded audio chunk #${this.totalAudioChunksForwardedToVapi} to Vapi (muLawBytes=${muLawBuffer.length}, energy=${energy.toFixed(2)})`
             );
         }
 
@@ -377,7 +380,7 @@ export class VoiceService {
     private logSessionSnapshot(context: string) {
         const callId = this.callSid ?? "unknown";
         console.log(
-            `[${callId}] Session snapshot (${context}): twilioMessages=${this.twilioMessagesReceived}, mediaEvents=${this.twilioMediaEvents}, marks=${this.twilioMarksReceived}, chunksToVapi=${this.totalAudioChunksForwardedToVapi}, pcmBytesToVapi=${this.totalPcmBytesForwardedToVapi}, assistantChunks=${this.totalAssistantAudioChunks}, userSpeaking=${this.userSpeaking}, assistantSpeaking=${this.assistantSpeaking}`
+            `[${callId}] Session snapshot (${context}): twilioMessages=${this.twilioMessagesReceived}, mediaEvents=${this.twilioMediaEvents}, marks=${this.twilioMarksReceived}, chunksToVapi=${this.totalAudioChunksForwardedToVapi}, muLawBytesToVapi=${this.totalMuLawBytesForwardedToVapi}, assistantChunks=${this.totalAssistantAudioChunks}, userSpeaking=${this.userSpeaking}, assistantSpeaking=${this.assistantSpeaking}`
         );
     }
 
