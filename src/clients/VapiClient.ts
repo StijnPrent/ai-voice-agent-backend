@@ -73,24 +73,16 @@ export type NormalizedToolCall = {
 class VapiRealtimeSession {
   private closed = false;
 
-  constructor(private readonly socket: WebSocket) {
-  }
+  constructor(private readonly socket: WebSocket) {}
 
-  public sendAudioChunk(audioBase64: string) {
+  public sendAudioChunkBinary(chunk: Buffer) {
     if (this.closed) return;
-    this.socket.send(
-      JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: audioBase64,
-      }),
-    );
+    if (!chunk?.length) return;
+    this.socket.send(chunk);
   }
 
   public commitUserAudio() {
-    console.log('[VapiRealtimeSession] Committing user audio');
-    if (this.closed) return;
-    this.socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-    this.socket.send(JSON.stringify({ type: 'response.create', response: {} }));
+    // No-op: Vapi's websocket transport consumes raw binary frames only.
   }
 
   public sendToolResponse(toolCallId: string, payload: unknown) {
@@ -587,17 +579,16 @@ export class VapiClient {
 
     const session = new VapiRealtimeSession(ws);
 
-    ws.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        modalities: ['audio', 'text'],         // you want to speak & get TTS back
-        input_audio_format: {                   // what YOU will send
-          type: 'linear16',
-          sample_rate_hz: 16000,
-          channels: 1,
-        },
-      },
-    }));
+    const keepAlive = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      try {
+        ws.ping();
+      } catch (error) {
+        console.warn(`[${callSid}] [Vapi] Failed to send websocket ping`, error);
+      }
+    }, 15000);
 
     ws.on('message', async (raw, isBinary) => {
       if (isBinary) {
@@ -620,6 +611,7 @@ export class VapiClient {
 
     ws.on('close', (code) => {
       console.log(`[${callSid}] [Vapi] realtime session closed with code ${code}`);
+      clearInterval(keepAlive);
       callbacks.onSessionClosed?.();
     });
 

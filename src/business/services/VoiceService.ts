@@ -186,18 +186,15 @@ export class VoiceService {
         // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
         const muLawBuffer = Buffer.from(payload, "base64");
 
-        // Forward the original mu-law audio. The Vapi realtime transport is
-        // configured for mu-law, so re-encoding to PCM would distort the
-        // payload and result in silence on the assistant side.
-        this.vapiSession.sendAudioChunk(payload);
+        // Forward the original mu-law audio bytes directly to Vapi.
+        this.vapiSession.sendAudioChunkBinary(muLawBuffer);
 
         this.totalAudioChunksForwardedToVapi += 1;
+        this.totalMuLawBytesForwardedToVapi += muLawBuffer.length;
 
         // Convert to PCM so we can reuse the samples for silence detection and
         // energy tracking without mutating the forwarded payload.
         const pcmBuffer = this.muLawToPcm16(muLawBuffer);
-
-        this.totalAudioChunksForwardedToVapi += 1;
 
         const energy = this.computeEnergy(pcmBuffer);
         this.lastUserEnergy = energy;
