@@ -12,7 +12,6 @@ import { AppointmentTypeModel } from '../business/models/AppointmentTypeModel';
 import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import { GoogleService } from '../business/services/GoogleService';
-import { summarizeSlots } from '../utils/tts/SummerizeSlots';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -73,24 +72,16 @@ export type NormalizedToolCall = {
 class VapiRealtimeSession {
   private closed = false;
 
-  constructor(private readonly socket: WebSocket) {
-  }
+  constructor(private readonly socket: WebSocket) {}
 
-  public sendAudioChunk(audioBase64: string) {
+  public sendAudioChunkBinary(chunk: Buffer) {
     if (this.closed) return;
-    this.socket.send(
-      JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: audioBase64,
-      }),
-    );
+    if (!chunk?.length) return;
+    this.socket.send(chunk);
   }
 
   public commitUserAudio() {
-    console.log('[VapiRealtimeSession] Committing user audio');
-    if (this.closed) return;
-    this.socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-    this.socket.send(JSON.stringify({ type: 'response.create', response: {} }));
+    // No-op: Vapi's websocket transport consumes raw binary frames only.
   }
 
   public sendToolResponse(toolCallId: string, payload: unknown) {
@@ -515,30 +506,81 @@ export class VapiClient {
     const join = (path: string) =>
       `${this.toolBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 
+    const sharedHeaders = {
+      type: 'object',
+      properties: {
+        'content-type': { type: 'string', value: 'application/json' },
+        'x-internal-api-key': {
+          type: 'string',
+          value: process.env.INTERNAL_API_KEY ?? '',
+        },
+      },
+    } as const;
+
     return [
       {
         type: 'apiRequest',
+        function: { name: 'api_request_tool' },
         name: 'check_calendar_availability',
         description:
           'Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.',
         method: 'POST',
         url: join('/google/availability'),
+        headers: sharedHeaders,
+        body: {
+          type: 'object',
+          properties: {
+            date: { type: 'string', description: 'YYYY-MM-DD' },
+          },
+          required: ['date'],
+        },
+        timeoutSeconds: 45,
       },
       {
         type: 'apiRequest',
+        function: { name: 'api_request_tool' },
         name: 'create_calendar_event',
         description:
           'Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.',
         method: 'POST',
         url: join('/google/schedule'),
+        headers: sharedHeaders,
+        body: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string' },
+            location: { type: 'string' },
+            description: { type: 'string' },
+            start: { type: 'string', description: 'ISO 8601' },
+            end: { type: 'string', description: 'ISO 8601' },
+            name: { type: 'string' },
+            attendeeEmail: { type: 'string' },
+            dateOfBirth: { type: 'string', description: 'DD-MM-YYYY' },
+          },
+          required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
+        },
+        timeoutSeconds: 45,
       },
       {
         type: 'apiRequest',
+        function: { name: 'api_request_tool' },
         name: 'cancel_calendar_event',
         description:
           'Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.',
         method: 'POST',
         url: join('/google/cancel'),
+        headers: sharedHeaders,
+        body: {
+          type: 'object',
+          properties: {
+            eventId: { type: 'string' },
+            name: { type: 'string' },
+            dateOfBirth: { type: 'string' },
+            reason: { type: 'string' },
+          },
+          required: ['eventId', 'name', 'dateOfBirth'],
+        },
+        timeoutSeconds: 45,
       },
     ];
   }
@@ -587,17 +629,16 @@ export class VapiClient {
 
     const session = new VapiRealtimeSession(ws);
 
-    ws.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        modalities: ['audio', 'text'],         // you want to speak & get TTS back
-        input_audio_format: {                   // what YOU will send
-          type: 'linear16',
-          sample_rate_hz: 16000,
-          channels: 1,
-        },
-      },
-    }));
+    const keepAlive = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      try {
+        ws.ping();
+      } catch (error) {
+        console.warn(`[${callSid}] [Vapi] Failed to send websocket ping`, error);
+      }
+    }, 15000);
 
     ws.on('message', async (raw, isBinary) => {
       if (isBinary) {
@@ -620,6 +661,7 @@ export class VapiClient {
 
     ws.on('close', (code) => {
       console.log(`[${callSid}] [Vapi] realtime session closed with code ${code}`);
+      clearInterval(keepAlive);
       callbacks.onSessionClosed?.();
     });
 
@@ -1061,69 +1103,26 @@ export class VapiClient {
       return;
     }
 
-    let toolResponse: Record<string, unknown> = {};
-
-    try {
-      if (call.name === 'create_calendar_event') {
-        const { summary, location, description, start, end, name, dateOfBirth } =
-          call.args as Record<string, string>;
-        const event = {
-          summary,
-          location,
-          description: `Appointment for ${name} (DOB: ${dateOfBirth}). ${description ?? ''}`,
-          start: { dateTime: start, timeZone: 'Europe/Amsterdam' },
-          end: { dateTime: end, timeZone: 'Europe/Amsterdam' },
-          transparency: 'opaque',
-          status: 'confirmed',
-        };
-        await this.googleService.scheduleEvent(this.company.id, event);
-        toolResponse = { success: true, event_summary: summary };
-        callbacks.onToolStatus?.('calendar-event-created');
-      } else if (call.name === 'check_calendar_availability') {
-        const { date } = call.args as Record<string, string>;
-        const dayOfWeek = new Date(date).getDay();
-        const hoursForDay = this.companyContext?.hours.find(
-          (h) => h.dayOfWeek === (dayOfWeek === 0 ? 7 : dayOfWeek),
-        );
-
-        let openHour = 9;
-        let closeHour = 17;
-        if (hoursForDay?.isOpen && hoursForDay.openTime && hoursForDay.closeTime) {
-          const [oH] = hoursForDay.openTime.split(':').map(Number);
-          const [cH] = hoursForDay.closeTime.split(':').map(Number);
-          openHour = oH;
-          closeHour = cH;
-        }
-
-        const availableSlots = await this.googleService.getAvailableSlots(
-          this.company.id,
-          date,
-          openHour,
-          closeHour,
-        );
-        const summary = summarizeSlots(availableSlots, openHour, closeHour);
-        toolResponse = { availableSlots, summary };
-        callbacks.onToolStatus?.('calendar-availability-checked');
-      } else if (call.name === 'cancel_calendar_event') {
-        const { name, dateOfBirth, eventId, reason } = call.args as Record<string, string>;
-        const success = await this.googleService.cancelEvent(
-          this.company.id,
-          eventId,
-          name,
-          dateOfBirth,
-        );
-        toolResponse = { success, reason };
-        callbacks.onToolStatus?.('calendar-event-cancelled');
-      } else {
-        console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
-        toolResponse = { error: `Unsupported tool: ${call.name}` };
-      }
-    } catch (error) {
-      console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
-      toolResponse = { error: (error as Error).message };
+    const apiRequestHandledTools = new Set([
+      'create_calendar_event',
+      'check_calendar_availability',
+      'cancel_calendar_event',
+    ]);
+    if (apiRequestHandledTools.has(call.name)) {
+      console.info(
+        `[VapiClient] Tool call '${call.name}' is configured as an apiRequest tool; skipping manual execution.`,
+      );
+      session.sendToolResponse(call.id, { handledBy: 'apiRequest' });
+      return;
     }
 
-    session.sendToolResponse(call.id, toolResponse);
+    try {
+      console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
+      session.sendToolResponse(call.id, { error: `Unsupported tool: ${call.name}` });
+    } catch (error) {
+      console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
+      session.sendToolResponse(call.id, { error: (error as Error).message });
+    }
   }
 
   /** ===== Assistant lifecycle ===== */
