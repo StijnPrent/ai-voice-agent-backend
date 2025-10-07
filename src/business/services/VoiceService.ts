@@ -7,6 +7,7 @@ import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
+import { UsageService } from "./UsageService";
 
 const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
@@ -22,6 +23,9 @@ export class VoiceService {
     private streamSid: string | null = null;
     private voiceSettings: VoiceSettingModel | null = null;
     private vapiSession: VapiRealtimeSession | null = null;
+    private callStartedAt: Date | null = null;
+    private activeCompanyId: bigint | null = null;
+    private usageRecorded = false;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
 
@@ -83,7 +87,8 @@ export class VoiceService {
         @inject(CompanyService) private readonly companyService: CompanyService,
         @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
         @inject(IntegrationService) private readonly integrationService: IntegrationService,
-        @inject(SchedulingService) private readonly schedulingService: SchedulingService
+        @inject(SchedulingService) private readonly schedulingService: SchedulingService,
+        @inject(UsageService) private readonly usageService: UsageService
     ) {}
 
     public async startStreaming(
@@ -104,6 +109,9 @@ export class VoiceService {
         this.totalAudioChunksForwardedToVapi = 0;
         this.totalMuLawBytesForwardedToVapi = 0;
         this.totalAssistantAudioChunks = 0;
+        this.callStartedAt = new Date();
+        this.activeCompanyId = null;
+        this.usageRecorded = false;
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
@@ -129,6 +137,7 @@ export class VoiceService {
 
         try {
             const company = await this.companyService.findByTwilioNumber(to);
+            this.activeCompanyId = company.id;
             this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
             const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
             const companyContext = await this.companyService.getCompanyContext(company.id);
@@ -248,6 +257,22 @@ export class VoiceService {
         const callId = this.callSid ?? "unknown";
         console.log(`[${callId}] Stopping Vapi voice session`);
         this.logSessionSnapshot("twilio stop");
+
+        if (!this.usageRecorded && this.activeCompanyId && this.callStartedAt && this.callSid) {
+            this.usageRecorded = true;
+            const companyId = this.activeCompanyId;
+            const callSid = this.callSid;
+            const startedAt = this.callStartedAt;
+            const endedAt = new Date();
+            void this.usageService
+                .recordCall(companyId, callSid, startedAt, endedAt)
+                .catch((error) =>
+                    console.error(
+                        `[${callSid}] Failed to record usage for company ${companyId.toString()}`,
+                        error
+                    )
+                );
+        }
         try {
             if (this.ws) {
                 this.ws.removeListener("message", this.handleTwilioStreamMessage);
@@ -261,6 +286,8 @@ export class VoiceService {
         this.callSid = null;
         this.streamSid = null;
         this.voiceSettings = null;
+        this.callStartedAt = null;
+        this.activeCompanyId = null;
         this.assistantSpeaking = false;
         this.resetSpeechTracking();
     }
