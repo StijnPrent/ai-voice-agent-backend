@@ -57,7 +57,10 @@ describe('WebSocketServer Call Flow', () => {
                 host: 'localhost'
             }
         } as IncomingMessage;
-        const mockSocket = new Duplex() as Duplex;
+        const mockSocket = {
+            write: jest.fn(),
+            destroy: jest.fn(),
+        } as unknown as Duplex;
         const mockHead = Buffer.alloc(0);
         webSocketServer.handleUpgrade(mockRequest, mockSocket, mockHead);
 
@@ -77,7 +80,7 @@ describe('WebSocketServer Call Flow', () => {
             mockWs,
             'call123',
             'stream456',
-            '+18565020784',
+            '+1234567890',
             startEvent
         );
         expect(mockWs.removeListener).toHaveBeenCalledWith('message', messageCallback);
@@ -109,5 +112,58 @@ describe('WebSocketServer Call Flow', () => {
         const closeCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'close')[1];
         await closeCallback();
         expect(mockVoiceService.stopStreaming).toHaveBeenCalledTimes(1);
+    });
+
+    it("should reject connections without a valid 'to' parameter", () => {
+        const mockRequest = {
+            url: '/ws',
+            headers: {
+                host: 'localhost'
+            }
+        } as IncomingMessage;
+        const mockSocket = {
+            write: jest.fn(),
+            destroy: jest.fn(),
+        } as unknown as Duplex;
+        const mockHead = Buffer.alloc(0);
+
+        webSocketServer.handleUpgrade(mockRequest, mockSocket, mockHead);
+
+        expect(mockSocket.write).toHaveBeenCalledWith("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        expect(mockSocket.destroy).toHaveBeenCalled();
+        expect((webSocketServer as any).wss.handleUpgrade).not.toHaveBeenCalled();
+    });
+
+    it('should accept the first valid number when multiple to parameters are provided', async () => {
+        const mockRequest = {
+            url: '/ws?to=&to=+1987654321',
+            headers: {
+                host: 'localhost'
+            }
+        } as IncomingMessage;
+        const mockSocket = {
+            write: jest.fn(),
+            destroy: jest.fn(),
+        } as unknown as Duplex;
+        const mockHead = Buffer.alloc(0);
+
+        webSocketServer.handleUpgrade(mockRequest, mockSocket, mockHead);
+
+        expect((webSocketServer as any).wss.handleUpgrade).toHaveBeenCalled();
+        const messageCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'message')[1];
+        const startEvent = {
+            event: 'start',
+            start: { callSid: 'call123', streamSid: 'stream456' }
+        };
+
+        await messageCallback(JSON.stringify(startEvent));
+
+        expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(
+            mockWs,
+            'call123',
+            'stream456',
+            '+1987654321',
+            startEvent
+        );
     });
 });
