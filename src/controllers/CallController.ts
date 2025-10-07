@@ -20,13 +20,21 @@ export class CallController {
             }
 
             const rawLimit = req.query.limit;
-            const parsedLimit =
-                typeof rawLimit === "string" && rawLimit.trim().length
-                    ? Number(rawLimit)
-                    : Array.isArray(rawLimit)
-                        ? Number(rawLimit.find((value) => value && value.trim().length) ?? NaN)
-                        : NaN;
-            const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+
+            let parsedLimit: number;
+            if (typeof rawLimit === "string") {
+                parsedLimit = rawLimit.trim().length ? Number(rawLimit) : NaN;
+            } else if (Array.isArray(rawLimit)) {
+                const first = rawLimit.find(
+                  (v): v is string => typeof v === "string" && v.trim().length > 0
+                );
+                parsedLimit = first ? Number(first) : NaN;
+            } else {
+                parsedLimit = NaN;
+            }
+
+            const limit =
+              Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
 
             const numbers = await this.callLogService.getCallerNumbers(companyId, limit);
             res.json({ phoneNumbers: numbers });
@@ -35,6 +43,7 @@ export class CallController {
             res.status(500).json({ message: "Failed to fetch caller numbers." });
         }
     }
+
 
     public async getCallDetails(req: AuthenticatedRequest, res: Response) {
         try {
