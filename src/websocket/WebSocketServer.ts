@@ -30,7 +30,7 @@ export class WebSocketServer {
         console.log("🔍 Upgrade request.url:", request.url);
         console.log("Headers:", JSON.stringify(request.headers, null, 2));
         console.log("Raw head buffer length:", head.length);
-        const { pathname, query } = parse(request.url!, true);
+        const { pathname } = parse(request.url!, true);
 
         if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {
@@ -46,11 +46,12 @@ export class WebSocketServer {
     /**
      * Handel een nieuwe WebSocket-verbinding van Twilio af.
      */
-    private handleConnection(ws: WebSocket, toFromQuery?: string) {
+    private handleConnection(ws: WebSocket) {
         console.log("🔌 New WebSocket connection");
 
         // we will require `to` before starting the stream
         let resolvedTo: string | undefined;
+        let resolvedFrom: string | undefined;
 
         const handleStartEvent = async (rawMessage: WebSocket.RawData) => {
             const messageString =
@@ -82,7 +83,11 @@ export class WebSocketServer {
             resolvedTo =
               (typeof cp.to === "string" && cp.to.trim()) ||
               (typeof data.start?.to === "string" && data.start.to.trim()) ||
-              (typeof toFromQuery === "string" && toFromQuery.trim()) ||
+              undefined;
+
+            resolvedFrom =
+              (typeof cp.from === "string" && cp.from.trim()) ||
+              (typeof data.start?.from === "string" && data.start.from.trim()) ||
               undefined;
 
             if (!resolvedTo) {
@@ -96,7 +101,7 @@ export class WebSocketServer {
             console.log(`[${callSid}] start received — to=${resolvedTo}, streamSid=${streamSid}`);
 
             // Now start, with a guaranteed non-empty `to`
-            await this.voiceService.startStreaming(ws, callSid, streamSid, resolvedTo, data);
+            await this.voiceService.startStreaming(ws, callSid, streamSid, resolvedTo, resolvedFrom, data);
 
             // From here you can attach your normal handlers for 'media', etc.
             ws.on("message", (buf) => {

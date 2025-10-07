@@ -52,7 +52,7 @@ describe('WebSocketServer Call Flow', () => {
     it('should handle the full call flow via WebSocket events', async () => {
         // 1. Simulate connection upgrade
         const mockRequest = {
-            url: '/ws?to=+1234567890',
+            url: '/ws',
             headers: {
                 host: 'localhost'
             }
@@ -73,7 +73,14 @@ describe('WebSocketServer Call Flow', () => {
         // 2. Simulate 'start' event from Twilio
         const startEvent = {
             event: 'start',
-            start: { callSid: 'call123', streamSid: 'stream456' }
+            start: {
+                callSid: 'call123',
+                streamSid: 'stream456',
+                customParameters: {
+                    to: '+1234567890',
+                    from: '+10987654321',
+                },
+            }
         };
         await messageCallback(JSON.stringify(startEvent));
         expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(
@@ -81,6 +88,7 @@ describe('WebSocketServer Call Flow', () => {
             'call123',
             'stream456',
             '+1234567890',
+            '+10987654321',
             startEvent
         );
         expect(mockWs.removeListener).toHaveBeenCalledWith('message', messageCallback);
@@ -114,7 +122,7 @@ describe('WebSocketServer Call Flow', () => {
         expect(mockVoiceService.stopStreaming).toHaveBeenCalledTimes(1);
     });
 
-    it("should reject connections without a valid 'to' parameter", () => {
+    it("should reject connections without a valid 'to' parameter", async () => {
         const mockRequest = {
             url: '/ws',
             headers: {
@@ -129,9 +137,18 @@ describe('WebSocketServer Call Flow', () => {
 
         webSocketServer.handleUpgrade(mockRequest, mockSocket, mockHead);
 
-        expect(mockSocket.write).toHaveBeenCalledWith("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-        expect(mockSocket.destroy).toHaveBeenCalled();
-        expect((webSocketServer as any).wss.handleUpgrade).not.toHaveBeenCalled();
+        expect((webSocketServer as any).wss.handleUpgrade).toHaveBeenCalled();
+
+        const messageCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'message')[1];
+        const startEvent = {
+            event: 'start',
+            start: { callSid: 'call123', streamSid: 'stream456' }
+        };
+
+        await messageCallback(JSON.stringify(startEvent));
+
+        expect(mockWs.close).toHaveBeenCalledWith(1008, "Missing required 'to' parameter");
+        expect(mockVoiceService.startStreaming).not.toHaveBeenCalled();
     });
 
     it('should accept the first valid number when multiple to parameters are provided', async () => {
@@ -153,7 +170,13 @@ describe('WebSocketServer Call Flow', () => {
         const messageCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'message')[1];
         const startEvent = {
             event: 'start',
-            start: { callSid: 'call123', streamSid: 'stream456' }
+            start: {
+                callSid: 'call123',
+                streamSid: 'stream456',
+                customParameters: {
+                    to: '+1987654321',
+                }
+            }
         };
 
         await messageCallback(JSON.stringify(startEvent));
@@ -163,6 +186,7 @@ describe('WebSocketServer Call Flow', () => {
             'call123',
             'stream456',
             '+1987654321',
+            undefined,
             startEvent
         );
     });

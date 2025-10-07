@@ -588,7 +588,7 @@ export class VapiClient {
   public async openRealtimeSession(
     callSid: string,
     callbacks: VapiRealtimeCallbacks,
-  ): Promise<VapiRealtimeSession> {
+  ): Promise<{ session: VapiRealtimeSession; callId: string | null }> {
     const config = this.currentConfig;
     if (!config || !this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
       throw new Error('Company must be configured before opening a Vapi session');
@@ -670,7 +670,7 @@ export class VapiClient {
       callbacks.onSessionError?.(error as Error);
     });
 
-    return session;
+    return { session, callId: callId ?? null };
   }
 
   private async establishRealtimeSocket(
@@ -1394,6 +1394,17 @@ export class VapiClient {
       const logger = level === 'warn' ? console.warn : console.error;
       logger(context, error);
     }
+  }
+
+  public async fetchCallDetails(callId: string): Promise<any> {
+    const normalized = (callId ?? '').toString().trim();
+    if (!normalized) {
+      throw new Error('A valid Vapi call ID is required to fetch call details.');
+    }
+
+    const path = this.buildApiPath(`/call/${encodeURIComponent(normalized)}`);
+    const response = await this.http.get(path);
+    return response.data;
   }
 }
 
