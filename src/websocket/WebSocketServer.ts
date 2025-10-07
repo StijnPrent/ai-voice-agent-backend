@@ -31,45 +31,11 @@ export class WebSocketServer {
         console.log("Headers:", JSON.stringify(request.headers, null, 2));
         console.log("Raw head buffer length:", head.length);
         const { pathname, query } = parse(request.url!, true);
-        const rawTo = query?.to;
-
-        let to: string | null = null;
-        if (typeof rawTo === "string") {
-            to = rawTo;
-        } else if (Array.isArray(rawTo)) {
-            to = rawTo[0] ?? null;
-        }
-
-        if (!to) {
-            console.warn("❌ Missing 'to' parameter on upgrade request; rejecting connection.");
-            socket.destroy();
-            return;
-        }
 
         if (pathname === "/ws") {
-            const toParam = query?.to;
-            let to: string | undefined;
-
-            if (Array.isArray(toParam)) {
-                to = toParam.find((value): value is string => typeof value === "string" && value.trim().length > 0);
-            } else if (typeof toParam === "string" && toParam.trim().length > 0) {
-                to = toParam.trim();
-            }
-
-            if (!to) {
-                console.error("❌ Missing or invalid 'to' parameter in WebSocket upgrade request", { to: toParam });
-                try {
-                    socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-                } catch (error) {
-                    console.error("❌ Failed to write 400 response for invalid 'to' parameter", error);
-                }
-                socket.destroy();
-                return;
-            }
-
             this.wss.handleUpgrade(request, socket, head, (ws) => {
                 this.wss.emit("connection", ws, request);
-                this.handleConnection(ws, to);
+                this.handleConnection(ws);
             });
         } else {
             // Belangrijk: vernietig de socket als het pad niet overeenkomt.
@@ -80,41 +46,62 @@ export class WebSocketServer {
     /**
      * Handel een nieuwe WebSocket-verbinding van Twilio af.
      */
-    private handleConnection(ws: WebSocket, to: string) {
-        console.log(`🔌 New WebSocket connection for ${to}`);
+    private handleConnection(ws: WebSocket, toFromQuery?: string) {
+        console.log("🔌 New WebSocket connection");
+
+        // we will require `to` before starting the stream
+        let resolvedTo: string | undefined;
 
         const handleStartEvent = async (rawMessage: WebSocket.RawData) => {
-            let messageString: string;
+            const messageString =
+              typeof rawMessage === "string" ? rawMessage
+                : Buffer.isBuffer(rawMessage) ? rawMessage.toString("utf8")
+                  : Array.isArray(rawMessage) ? Buffer.concat(rawMessage).toString("utf8")
+                    : rawMessage instanceof ArrayBuffer ? Buffer.from(rawMessage).toString("utf8")
+                      : String(rawMessage);
 
-            if (typeof rawMessage === "string") {
-                messageString = rawMessage;
-            } else if (Buffer.isBuffer(rawMessage)) {
-                messageString = rawMessage.toString("utf8");
-            } else if (Array.isArray(rawMessage)) {
-                messageString = Buffer.concat(rawMessage).toString("utf8");
-            } else if (rawMessage instanceof ArrayBuffer) {
-                messageString = Buffer.from(rawMessage).toString("utf8");
-            } else {
-                messageString = String(rawMessage);
-            }
-
-            if (!messageString) {
-                return;
-            }
+            if (!messageString) return;
 
             let data: any;
             try {
                 data = JSON.parse(messageString);
-            } catch (error) {
-                console.error("❌ Failed to parse Twilio start event", error);
+            } catch (err) {
+                console.error("❌ Failed to parse message:", err);
                 return;
             }
 
-            if (data.event === "start") {
-                ws.removeListener("message", handleStartEvent);
-                console.log(`[${data.start.callSid}] Received start event`);
-                await this.voiceService.startStreaming(ws, data.start.callSid, data.start.streamSid, to, data);
+            if (data.event !== "start") return;
+
+            ws.removeListener("message", handleStartEvent);
+
+            const cp = data.start?.customParameters ?? {};
+            const callSid: string = data.start?.callSid;
+            const streamSid: string = data.start?.streamSid;
+
+            // ✅ Resolve `to` strictly (Twilio sends it in start.customParameters)
+            resolvedTo =
+              (typeof cp.to === "string" && cp.to.trim()) ||
+              (typeof data.start?.to === "string" && data.start.to.trim()) ||
+              (typeof toFromQuery === "string" && toFromQuery.trim()) ||
+              undefined;
+
+            if (!resolvedTo) {
+                // Hard fail: policy violation (1008) so Twilio sees a clear rejection
+                const reason = "Missing required 'to' parameter";
+                console.error(`❌ ${reason} (callSid=${callSid || "?"})`);
+                try { ws.close(1008, reason); } catch {}
+                return;
             }
+
+            console.log(`[${callSid}] start received — to=${resolvedTo}, streamSid=${streamSid}`);
+
+            // Now start, with a guaranteed non-empty `to`
+            await this.voiceService.startStreaming(ws, callSid, streamSid, resolvedTo, data);
+
+            // From here you can attach your normal handlers for 'media', etc.
+            ws.on("message", (buf) => {
+                // handle subsequent media/stop events...
+            });
         };
 
         ws.on("message", handleStartEvent);
