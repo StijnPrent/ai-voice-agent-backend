@@ -13,6 +13,7 @@ import outlookRoute from "./routes/OutlookRoute";
 import integrationRoute from "./routes/IntegrationRoute";
 import updateRoute from "./routes/UpdateRoute";
 import schedulingRoute from "./routes/SchedulingRoute";
+import usageRoute from "./routes/UsageRoute";
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/outlook", outlookRoute)
 app.use("/integrations", integrationRoute)
 app.use("/updates", updateRoute)
 app.use("/scheduling", schedulingRoute)
+app.use("/usage", usageRoute)
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);

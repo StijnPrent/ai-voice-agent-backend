@@ -232,7 +232,7 @@ export class VapiClient {
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        'Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool \'check_calendar_availability\' voordat je een tijdstip voorstelt en vraag om naam en geboortedatum voordat je \'create_calendar_event\' of \'cancel_calendar_event\' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden.',
+        'Het bedrijf heeft een Google Agenda integratie, maar automatische agendatools zijn tijdelijk uitgeschakeld. Verzamel alle benodigde gegevens en leg uit dat een medewerker de afspraak handmatig zal bevestigen.',
       );
     } else {
       instructions.push(
@@ -375,65 +375,13 @@ export class VapiClient {
   /** ===== Tools (clean JSON Schema via `parameters`) ===== */
   public getTools(hasGoogleIntegration?: boolean) {
     const enabled = hasGoogleIntegration ?? this.hasGoogleIntegration;
-    if (!enabled) return [];
+    if (enabled) {
+      console.warn(
+        '[VapiClient] Google Calendar function tools are temporarily disabled; returning an empty tool list.',
+      );
+    }
 
-    const createCalendarParameters = {
-      type: 'object',
-      properties: {
-        summary: { type: 'string', description: 'Titel van de afspraak' },
-        location: { type: 'string', description: 'Locatie van de afspraak' },
-        description: { type: 'string', description: 'Aanvullende details' },
-        start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
-        end: { type: 'string', description: 'Einde in ISO 8601' },
-        name: { type: 'string', description: 'Volledige naam van de klant' },
-        attendeeEmail: { type: 'string', description: 'E-mailadres van de klant' },
-        dateOfBirth: { type: 'string', description: 'Geboortedatum DD-MM-YYYY' },
-      },
-      required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-    };
-
-    const checkAvailabilityParameters = {
-      type: 'object',
-      properties: {
-        date: { type: 'string', description: 'Datum (YYYY-MM-DD) om te controleren' },
-      },
-      required: ['date'],
-    };
-
-    const cancelCalendarParameters = {
-      type: 'object',
-      properties: {
-        eventId: { type: 'string', description: 'ID van het te annuleren event' },
-        name: { type: 'string', description: 'Naam van de klant (verificatie)' },
-        dateOfBirth: { type: 'string', description: 'Geboortedatum DD-MM-YYYY (verificatie)' },
-        reason: { type: 'string', description: 'Reden van annulering' },
-      },
-      required: ['eventId', 'name', 'dateOfBirth'],
-    };
-
-    return [
-      {
-        type: 'function',
-        name: 'create_calendar_event',
-        description:
-          'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
-        parameters: createCalendarParameters,
-      },
-      {
-        type: 'function',
-        name: 'check_calendar_availability',
-        description:
-          'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
-        parameters: checkAvailabilityParameters,
-      },
-      {
-        type: 'function',
-        name: 'cancel_calendar_event',
-        description:
-          'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
-        parameters: cancelCalendarParameters,
-      },
-    ];
+    return [];
   }
 
   private buildModelMessages(
@@ -495,94 +443,13 @@ export class VapiClient {
   }
 
   private buildModelApiTools(config: VapiAssistantConfig) {
-    if (!config.hasGoogleIntegration) return [];
-    if (!this.toolBaseUrl) {
+    if (config.hasGoogleIntegration) {
       console.warn(
-        '[VapiClient] Tool base URL is not configured; skipping API request tools for Google Calendar.',
+        '[VapiClient] Google Calendar API request tools are temporarily disabled; returning an empty tool list.',
       );
-      return [];
     }
 
-    const join = (path: string) =>
-      `${this.toolBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
-
-    const sharedHeaders = {
-      type: 'object',
-      properties: {
-        'content-type': { type: 'string', value: 'application/json' },
-        'x-internal-api-key': {
-          type: 'string',
-          value: process.env.INTERNAL_API_KEY ?? '',
-        },
-      },
-    } as const;
-
-    return [
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'check_calendar_availability',
-        description:
-          'Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.',
-        method: 'POST',
-        url: join('/google/availability'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            date: { type: 'string', description: 'YYYY-MM-DD' },
-          },
-          required: ['date'],
-        },
-        timeoutSeconds: 45,
-      },
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'create_calendar_event',
-        description:
-          'Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.',
-        method: 'POST',
-        url: join('/google/schedule'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            summary: { type: 'string' },
-            location: { type: 'string' },
-            description: { type: 'string' },
-            start: { type: 'string', description: 'ISO 8601' },
-            end: { type: 'string', description: 'ISO 8601' },
-            name: { type: 'string' },
-            attendeeEmail: { type: 'string' },
-            dateOfBirth: { type: 'string', description: 'DD-MM-YYYY' },
-          },
-          required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-        },
-        timeoutSeconds: 45,
-      },
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'cancel_calendar_event',
-        description:
-          'Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.',
-        method: 'POST',
-        url: join('/google/cancel'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            eventId: { type: 'string' },
-            name: { type: 'string' },
-            dateOfBirth: { type: 'string' },
-            reason: { type: 'string' },
-          },
-          required: ['eventId', 'name', 'dateOfBirth'],
-        },
-        timeoutSeconds: 45,
-      },
-    ];
+    return [];
   }
 
   public async openRealtimeSession(
