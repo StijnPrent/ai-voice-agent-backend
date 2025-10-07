@@ -6,6 +6,7 @@ import { inject, singleton } from "tsyringe";
 import WebSocket from "ws";
 import { VoiceService } from "../business/services/VoiceService";
 import { parse } from "url";
+import { ParsedUrlQuery } from "querystring";
 
 @singleton()
 export class WebSocketServer {
@@ -32,10 +33,21 @@ export class WebSocketServer {
         console.log("Raw head buffer length:", head.length);
         const { pathname, query } = parse(request.url!, true);
 
+        const toParam = this.extractQueryParam(query as ParsedUrlQuery | undefined, "to");
+        if (pathname === "/ws" && !toParam) {
+            try {
+                socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+            } catch (error) {
+                console.error("Failed to write 400 response for missing 'to' parameter", error);
+            }
+            socket.destroy();
+            return;
+        }
+
         if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {
                 this.wss.emit("connection", ws, request);
-                this.handleConnection(ws);
+                this.handleConnection(ws, query as ParsedUrlQuery | undefined);
             });
         } else {
             // Belangrijk: vernietig de socket als het pad niet overeenkomt.
@@ -46,11 +58,12 @@ export class WebSocketServer {
     /**
      * Handel een nieuwe WebSocket-verbinding van Twilio af.
      */
-    private handleConnection(ws: WebSocket, toFromQuery?: string) {
+    private handleConnection(ws: WebSocket, queryParams?: ParsedUrlQuery) {
         console.log("🔌 New WebSocket connection");
 
         // we will require `to` before starting the stream
         let resolvedTo: string | undefined;
+        let resolvedFrom: string | undefined;
 
         const handleStartEvent = async (rawMessage: WebSocket.RawData) => {
             const messageString =
@@ -82,7 +95,13 @@ export class WebSocketServer {
             resolvedTo =
               (typeof cp.to === "string" && cp.to.trim()) ||
               (typeof data.start?.to === "string" && data.start.to.trim()) ||
-              (typeof toFromQuery === "string" && toFromQuery.trim()) ||
+              this.extractQueryParam(queryParams, "to") ||
+              undefined;
+
+            resolvedFrom =
+              (typeof cp.from === "string" && cp.from.trim()) ||
+              (typeof data.start?.from === "string" && data.start.from.trim()) ||
+              this.extractQueryParam(queryParams, "from") ||
               undefined;
 
             if (!resolvedTo) {
@@ -96,7 +115,7 @@ export class WebSocketServer {
             console.log(`[${callSid}] start received — to=${resolvedTo}, streamSid=${streamSid}`);
 
             // Now start, with a guaranteed non-empty `to`
-            await this.voiceService.startStreaming(ws, callSid, streamSid, resolvedTo, data);
+            await this.voiceService.startStreaming(ws, callSid, streamSid, resolvedTo, resolvedFrom, data);
 
             // From here you can attach your normal handlers for 'media', etc.
             ws.on("message", (buf) => {
@@ -115,5 +134,27 @@ export class WebSocketServer {
             console.error("❌ WebSocket error:", err);
             this.voiceService.stopStreaming();
         });
+    }
+
+    private extractQueryParam(queryParams: ParsedUrlQuery | undefined, key: string): string | undefined {
+        if (!queryParams) {
+            return undefined;
+        }
+
+        const value = queryParams[key];
+        if (Array.isArray(value)) {
+            for (const candidate of value) {
+                if (typeof candidate === "string" && candidate.trim()) {
+                    return candidate.trim();
+                }
+            }
+            return undefined;
+        }
+
+        if (typeof value === "string" && value.trim()) {
+            return value.trim();
+        }
+
+        return undefined;
     }
 }

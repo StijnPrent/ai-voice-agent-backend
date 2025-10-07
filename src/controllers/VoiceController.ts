@@ -15,7 +15,15 @@ export class VoiceController {
         const websocketUrl = serverUrl.replace(/^http/, "ws");
 
         const to = req.body.To;
-        const websocketUrlWithParams = `${websocketUrl}/ws?to=${encodeURIComponent(to)}`;
+        const from = req.body.From;
+        const params = new URLSearchParams();
+        if (typeof to === "string" && to.length > 0) {
+            params.set("to", to);
+        }
+        if (typeof from === "string" && from.length > 0) {
+            params.set("from", from);
+        }
+        const websocketUrlWithParams = `${websocketUrl}/ws?${params.toString()}`;
         console.log(`📞 Initiating stream to: ${websocketUrlWithParams}`);
 
         // Start de stream

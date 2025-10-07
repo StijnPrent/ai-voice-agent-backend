@@ -8,6 +8,7 @@ import { VoiceSettingModel } from "../models/VoiceSettingsModel";
 import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
 import { UsageService } from "./UsageService";
+import { CallLogService } from "./CallLogService";
 
 const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
@@ -23,8 +24,10 @@ export class VoiceService {
     private streamSid: string | null = null;
     private voiceSettings: VoiceSettingModel | null = null;
     private vapiSession: VapiRealtimeSession | null = null;
+    private vapiCallId: string | null = null;
     private callStartedAt: Date | null = null;
     private activeCompanyId: bigint | null = null;
+    private callerNumber: string | null = null;
     private usageRecorded = false;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
@@ -88,7 +91,8 @@ export class VoiceService {
         @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
         @inject(IntegrationService) private readonly integrationService: IntegrationService,
         @inject(SchedulingService) private readonly schedulingService: SchedulingService,
-        @inject(UsageService) private readonly usageService: UsageService
+        @inject(UsageService) private readonly usageService: UsageService,
+        @inject(CallLogService) private readonly callLogService: CallLogService
     ) {}
 
     public async startStreaming(
@@ -96,6 +100,7 @@ export class VoiceService {
         callSid: string,
         streamSid: string,
         to: string,
+        from: string | undefined,
         initialEvent?: TwilioMediaStreamEvent
     ) {
         this.ws = ws;
@@ -111,7 +116,9 @@ export class VoiceService {
         this.totalAssistantAudioChunks = 0;
         this.callStartedAt = new Date();
         this.activeCompanyId = null;
+        this.callerNumber = this.extractSanitizedPhoneNumber(from) ?? this.extractFromNumber(initialEvent);
         this.usageRecorded = false;
+        this.vapiCallId = null;
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
@@ -157,7 +164,7 @@ export class VoiceService {
                 this.ws.send(JSON.stringify({ event: "clear", streamSid: this.streamSid }));
             }
 
-            this.vapiSession = await this.vapiClient.openRealtimeSession(callSid, {
+            const { session, callId } = await this.vapiClient.openRealtimeSession(callSid, {
                 onAudio: (audioPayload) => this.forwardAudioToTwilio(audioPayload),
                 onText: (text) => console.log(`[${callSid}] [Vapi] text:`, text),
                 onToolStatus: (status) => {
@@ -172,6 +179,9 @@ export class VoiceService {
                     this.logSessionSnapshot("vapi session closed");
                 },
             });
+
+            this.vapiSession = session;
+            this.vapiCallId = callId ?? null;
 
             console.log(`[${callSid}] Vapi session created`);
             this.logSessionSnapshot("vapi session created");
@@ -258,20 +268,34 @@ export class VoiceService {
         console.log(`[${callId}] Stopping Vapi voice session`);
         this.logSessionSnapshot("twilio stop");
 
-        if (!this.usageRecorded && this.activeCompanyId && this.callStartedAt && this.callSid) {
-            this.usageRecorded = true;
+        if (this.activeCompanyId && this.callStartedAt && this.callSid) {
             const companyId = this.activeCompanyId;
             const callSid = this.callSid;
             const startedAt = this.callStartedAt;
             const endedAt = new Date();
-            void this.usageService
-                .recordCall(companyId, callSid, startedAt, endedAt)
+            const fromNumber = this.callerNumber;
+            const vapiCallId = this.vapiCallId;
+
+            void this.callLogService
+                .recordCallSession(companyId, callSid, fromNumber, vapiCallId, startedAt, endedAt)
                 .catch((error) =>
                     console.error(
-                        `[${callSid}] Failed to record usage for company ${companyId.toString()}`,
+                        `[${callSid}] Failed to record call session for company ${companyId.toString()}`,
                         error
                     )
                 );
+
+            if (!this.usageRecorded) {
+                this.usageRecorded = true;
+                void this.usageService
+                    .recordCall(companyId, callSid, startedAt, endedAt)
+                    .catch((error) =>
+                        console.error(
+                            `[${callSid}] Failed to record usage for company ${companyId.toString()}`,
+                            error
+                        )
+                    );
+            }
         }
         try {
             if (this.ws) {
@@ -288,6 +312,8 @@ export class VoiceService {
         this.voiceSettings = null;
         this.callStartedAt = null;
         this.activeCompanyId = null;
+        this.callerNumber = null;
+        this.vapiCallId = null;
         this.assistantSpeaking = false;
         this.resetSpeechTracking();
     }
@@ -386,6 +412,47 @@ export class VoiceService {
         );
     }
 
+    private extractFromNumber(event?: TwilioMediaStreamEvent): string | null {
+        if (!event?.start) {
+            return null;
+        }
+
+        const start = event.start as Record<string, unknown> & {
+            customParameters?: Record<string, unknown>;
+        };
+
+        const candidates: NullableString[] = [
+            start.customParameters?.["from"] as NullableString,
+            start["from"] as NullableString,
+            start.customParameters?.["caller"] as NullableString,
+            start["caller"] as NullableString,
+        ];
+
+        for (const candidate of candidates) {
+            const sanitized = this.extractSanitizedPhoneNumber(
+                typeof candidate === "string" ? candidate : null
+            );
+            if (sanitized) {
+                return sanitized;
+            }
+        }
+
+        return null;
+    }
+
+    private extractSanitizedPhoneNumber(value: NullableString): string | null {
+        if (typeof value !== "string") {
+            return null;
+        }
+
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+
+        return trimmed;
+    }
+
     private formatSegmentDebugInfo(frames: number, averageEnergy: number): string {
         const parts = [
             `frames=${frames}`,
@@ -454,6 +521,9 @@ export class VoiceService {
                 if (event.start?.streamSid) {
                     this.streamSid = event.start.streamSid;
                 }
+                if (!this.callerNumber) {
+                    this.callerNumber = this.extractFromNumber(event);
+                }
                 const callId = this.callSid ?? "unknown";
                 console.log(
                     `[${callId}] Twilio media stream started${
@@ -500,6 +570,9 @@ type TwilioMediaStreamEvent = {
     start?: {
         callSid?: string;
         streamSid?: string;
+        from?: string;
+        to?: string;
+        customParameters?: Record<string, unknown>;
     };
     media?: {
         payload?: string;
@@ -511,3 +584,5 @@ type TwilioMediaStreamEvent = {
         callSid?: string;
     };
 };
+
+type NullableString = string | null | undefined;
