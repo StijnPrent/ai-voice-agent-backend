@@ -42,10 +42,10 @@ server.on('upgrade', (request, socket, head) => {
     webSocketServer.handleUpgrade(request, socket, head);
 });
 
+const PORT = process.env.PORT || 3003;
+
 //health check endpoint
 app.get('/health', (req, res) => {
-    res.status(200).send('OK');
+    res.status(200).send(`${PORT}`);
 });
-
-const PORT = process.env.PORT || 3003;
 server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
