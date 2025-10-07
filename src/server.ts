@@ -43,4 +43,9 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 const PORT = process.env.PORT || 3003;
+
+//health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).send(`${PORT}`);
+});
 server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
