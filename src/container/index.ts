@@ -28,6 +28,9 @@ import { AssistantSyncService } from "../business/services/AssistantSyncService"
 import { UsageService } from "../business/services/UsageService";
 import { IUsageRepository } from "../data/interfaces/IUsageRepository";
 import { UsageRepository } from "../data/repositories/UsageRepository";
+import { CallLogService } from "../business/services/CallLogService";
+import { ICallLogRepository } from "../data/interfaces/ICallLogRepository";
+import { CallLogRepository } from "../data/repositories/CallLogRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -52,6 +55,7 @@ container.register(UpdateService, { useClass: UpdateService });
 container.register(SchedulingService, { useClass: SchedulingService });
 container.register(AssistantSyncService, { useClass: AssistantSyncService });
 container.register(UsageService, { useClass: UsageService });
+container.register(CallLogService, { useClass: CallLogService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -80,4 +84,7 @@ container.register<ISchedulingRepository>("ISchedulingRepository", {
 })
 container.register<IUsageRepository>("IUsageRepository", {
     useClass: UsageRepository,
+})
+container.register<ICallLogRepository>("ICallLogRepository", {
+    useClass: CallLogRepository,
 })

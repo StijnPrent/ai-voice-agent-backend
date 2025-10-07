@@ -80,7 +80,8 @@ describe('WebSocketServer Call Flow', () => {
             mockWs,
             'call123',
             'stream456',
-            '+1234567890',
+            '1234567890',
+            undefined,
             startEvent
         );
         expect(mockWs.removeListener).toHaveBeenCalledWith('message', messageCallback);
@@ -162,7 +163,8 @@ describe('WebSocketServer Call Flow', () => {
             mockWs,
             'call123',
             'stream456',
-            '+1987654321',
+            '1987654321',
+            undefined,
             startEvent
         );
     });
