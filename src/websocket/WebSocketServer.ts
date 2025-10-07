@@ -29,9 +29,28 @@ export class WebSocketServer {
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         console.log("🔍 Upgrade request.url:", request.url);
         const { pathname, query } = parse(request.url!, true);
-        const to = '+18565020784'
 
         if (pathname === "/ws") {
+            const toParam = query?.to;
+            let to: string | undefined;
+
+            if (Array.isArray(toParam)) {
+                to = toParam.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+            } else if (typeof toParam === "string" && toParam.trim().length > 0) {
+                to = toParam.trim();
+            }
+
+            if (!to) {
+                console.error("❌ Missing or invalid 'to' parameter in WebSocket upgrade request", { to: toParam });
+                try {
+                    socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                } catch (error) {
+                    console.error("❌ Failed to write 400 response for invalid 'to' parameter", error);
+                }
+                socket.destroy();
+                return;
+            }
+
             this.wss.handleUpgrade(request, socket, head, (ws) => {
                 this.wss.emit("connection", ws, request);
                 this.handleConnection(ws, to);
