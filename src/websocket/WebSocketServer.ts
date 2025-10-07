@@ -28,6 +28,8 @@ export class WebSocketServer {
      */
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         console.log("🔍 Upgrade request.url:", request.url);
+        console.log("Headers:", JSON.stringify(request.headers, null, 2));
+        console.log("Raw head buffer length:", head.length);
         const { pathname, query } = parse(request.url!, true);
         const rawTo = query?.to;
 
