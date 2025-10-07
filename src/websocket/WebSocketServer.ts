@@ -29,7 +29,20 @@ export class WebSocketServer {
     handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
         console.log("🔍 Upgrade request.url:", request.url);
         const { pathname, query } = parse(request.url!, true);
-        const to = '+18565020784'
+        const rawTo = query?.to;
+
+        let to: string | null = null;
+        if (typeof rawTo === "string") {
+            to = rawTo;
+        } else if (Array.isArray(rawTo)) {
+            to = rawTo[0] ?? null;
+        }
+
+        if (!to) {
+            console.warn("❌ Missing 'to' parameter on upgrade request; rejecting connection.");
+            socket.destroy();
+            return;
+        }
 
         if (pathname === "/ws") {
             this.wss.handleUpgrade(request, socket, head, (ws) => {

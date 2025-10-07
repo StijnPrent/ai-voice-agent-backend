@@ -78,6 +78,7 @@ export class CompanyService {
         connected: boolean
     ): Promise<void> {
         await this.companyRepo.setCalendarConnected(companyId, connected);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     // Company Info
