@@ -1217,7 +1217,7 @@ export class VapiClient {
     let voice: { provider: string; voiceId?: string; modelId?: string; language?: string } | undefined;
     if (voiceId) {
       voice = {
-        provider: 'elevenlabs',
+        provider: '11labs',
         voiceId,
         modelId: 'eleven_multilingual_v2',
         language: 'nl-NL',
