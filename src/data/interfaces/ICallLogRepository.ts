@@ -21,4 +21,6 @@ export interface ICallLogRepository {
     getDistinctCallerNumbers(companyId: bigint, limit: number): Promise<string[]>;
 
     getCallBySid(companyId: bigint, callSid: string): Promise<CallLogRecord | null>;
+
+    getCallsByPhoneNumber(companyId: bigint, phoneNumber: string): Promise<CallLogRecord[]>;
 }

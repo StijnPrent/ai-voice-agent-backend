@@ -18,6 +18,12 @@ export type CallDetailsResponse = {
     messages: CallTranscriptMessage[];
 };
 
+export type CallSummaryResponse = {
+    callSid: string;
+    phoneNumber: string | null;
+    startedAt: Date;
+};
+
 @injectable()
 export class CallLogService {
     constructor(
@@ -45,6 +51,27 @@ export class CallLogService {
 
     public async getCallerNumbers(companyId: bigint, limit?: number): Promise<string[]> {
         return this.callLogRepository.getDistinctCallerNumbers(companyId, limit ?? 50);
+    }
+
+    public async getCallsByPhoneNumber(
+        companyId: bigint,
+        phoneNumber: string
+    ): Promise<CallSummaryResponse[]> {
+        const trimmedPhoneNumber = phoneNumber.trim();
+        if (!trimmedPhoneNumber) {
+            return [];
+        }
+
+        const records = await this.callLogRepository.getCallsByPhoneNumber(
+            companyId,
+            trimmedPhoneNumber
+        );
+
+        return records.map((record) => ({
+            callSid: record.callSid,
+            phoneNumber: record.fromNumber,
+            startedAt: record.startedAt,
+        }));
     }
 
     public async getCallDetails(companyId: bigint, callSid: string): Promise<CallDetailsResponse> {

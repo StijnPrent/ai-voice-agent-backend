@@ -78,4 +78,27 @@ export class CallLogRepository extends BaseRepository implements ICallLogReposit
             endedAt: (row.ended_at as Date | null) ?? null,
         };
     }
+
+    public async getCallsByPhoneNumber(
+        companyId: bigint,
+        phoneNumber: string
+    ): Promise<CallLogRecord[]> {
+        const sql = `
+            SELECT company_id, call_sid, from_number, vapi_call_id, started_at, ended_at
+            FROM company_call_sessions
+            WHERE company_id = ?
+              AND from_number = ?
+            ORDER BY started_at DESC
+        `;
+
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, phoneNumber]);
+        return rows.map((row) => ({
+            companyId: BigInt(row.company_id),
+            callSid: row.call_sid as string,
+            fromNumber: (row.from_number as string | null) ?? null,
+            vapiCallId: (row.vapi_call_id as string | null) ?? null,
+            startedAt: row.started_at as Date,
+            endedAt: (row.ended_at as Date | null) ?? null,
+        }));
+    }
 }

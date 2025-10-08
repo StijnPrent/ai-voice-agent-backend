@@ -44,6 +44,30 @@ export class CallController {
         }
     }
 
+    public async getCallsByPhoneNumber(req: AuthenticatedRequest, res: Response) {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Missing authenticated company." });
+                return;
+            }
+
+            const rawPhoneNumber = req.query.phoneNumber;
+            const phoneNumber = typeof rawPhoneNumber === "string" ? rawPhoneNumber.trim() : "";
+
+            if (!phoneNumber) {
+                res.status(400).json({ message: "phoneNumber query parameter is required." });
+                return;
+            }
+
+            const calls = await this.callLogService.getCallsByPhoneNumber(companyId, phoneNumber);
+            res.json({ calls });
+        } catch (error) {
+            console.error("Failed to fetch calls by phone number", error);
+            res.status(500).json({ message: "Failed to fetch calls by phone number." });
+        }
+    }
+
 
     public async getCallDetails(req: AuthenticatedRequest, res: Response) {
         try {
