@@ -532,121 +532,46 @@ export class VapiClient {
   }
 
   private buildModelApiTools(config: VapiAssistantConfig) {
-    if (!this.toolBaseUrl) {
-      console.warn(
-        '[VapiClient] Tool base URL is not configured; skipping API request tools.',
-      );
+    if (!this.toolBaseUrl?.startsWith('https://')) {
+      console.warn('[VapiClient] Skipping apiRequest tools: VAPI_TOOL_BASE_URL must be https.');
       return [];
     }
 
-    const join = (path: string) =>
-      `${this.toolBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+    const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
 
-    const sharedHeaders = {
-      type: 'object',
-      properties: {
-        'content-type': { type: 'string', value: 'application/json' },
-        'x-internal-api-key': {
-          type: 'string',
-          value: process.env.INTERNAL_API_KEY ?? '',
-        },
-      },
-    } as const;
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    };
+    if (process.env.INTERNAL_API_KEY) {
+      headers['x-internal-api-key'] = process.env.INTERNAL_API_KEY!;
+    }
 
     const tools: any[] = [
       {
         type: 'apiRequest',
-        function: { name: 'api_request_tool' },
         name: 'transfer_call',
-        description:
-          'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
+        description: 'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
         method: 'POST',
         url: join('/voice/transfer'),
-        headers: sharedHeaders,
+        headers,
         body: {
-          type: 'object',
-          properties: {
-            phoneNumber: { type: 'string', description: 'Telefoonnummer of SIP-adres' },
-            callSid: { type: 'string', description: 'Optioneel actief callSid' },
-            callerId: { type: 'string', description: 'Optioneel caller ID' },
-            reason: { type: 'string', description: 'Reden voor de overdracht' },
+          type: 'jsonSchema',
+          jsonSchema: {
+            type: 'object',
+            properties: {
+              phoneNumber: { type: 'string', description: 'Telefoonnummer of SIP-adres' },
+              callSid: { type: 'string', description: 'Optioneel: actief callSid' },
+              callerId: { type: 'string', description: 'Caller ID om mee te bellen' },
+              reason: { type: 'string', description: 'Korte reden van doorverbinden' },
+            },
+            required: ['phoneNumber'],
+            additionalProperties: false,
           },
-          required: ['phoneNumber'],
         },
         timeoutSeconds: 20,
       },
+      // (Calendar tools can be appended here using the same headers/jsonSchema pattern)
     ];
-
-    if (!config.hasGoogleIntegration) {
-      return tools;
-    }
-
-    tools.push(
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'check_calendar_availability',
-        description:
-          'Controleer beschikbare tijden in Google Agenda door een datum en openingstijden te versturen.',
-        method: 'POST',
-        url: join('/google/availability'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            date: { type: 'string', description: 'YYYY-MM-DD' },
-          },
-          required: ['date'],
-        },
-        timeoutSeconds: 45,
-      },
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'create_calendar_event',
-        description:
-          'Maak een afspraak in Google Agenda. Verstuur klantgegevens, datum en tijd als JSON body.',
-        method: 'POST',
-        url: join('/google/schedule'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            summary: { type: 'string' },
-            location: { type: 'string' },
-            description: { type: 'string' },
-            start: { type: 'string', description: 'ISO 8601' },
-            end: { type: 'string', description: 'ISO 8601' },
-            name: { type: 'string' },
-            attendeeEmail: { type: 'string' },
-            dateOfBirth: { type: 'string', description: 'DD-MM-YYYY' },
-          },
-          required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-        },
-        timeoutSeconds: 45,
-      },
-      {
-        type: 'apiRequest',
-        function: { name: 'api_request_tool' },
-        name: 'cancel_calendar_event',
-        description:
-          'Annuleer een bestaande afspraak in Google Agenda met het event ID en verificatiegegevens.',
-        method: 'POST',
-        url: join('/google/cancel'),
-        headers: sharedHeaders,
-        body: {
-          type: 'object',
-          properties: {
-            eventId: { type: 'string' },
-            name: { type: 'string' },
-            dateOfBirth: { type: 'string' },
-            reason: { type: 'string' },
-          },
-          required: ['eventId', 'name', 'dateOfBirth'],
-        },
-        timeoutSeconds: 45,
-      },
-    );
 
     return tools;
   }
@@ -1172,18 +1097,6 @@ export class VapiClient {
     if (googleTools.has(call.name) && !this.hasGoogleIntegration) {
       console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
       session.sendToolResponse(call.id, { error: 'Google integration not available' });
-      return;
-    }
-
-    const apiRequestHandledTools = new Set([
-      ...googleTools,
-      'transfer_call',
-    ]);
-    if (apiRequestHandledTools.has(call.name)) {
-      console.info(
-        `[VapiClient] Tool call '${call.name}' is configured as an apiRequest tool; skipping manual execution.`,
-      );
-      session.sendToolResponse(call.id, { handledBy: 'apiRequest' });
       return;
     }
 
