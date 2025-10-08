@@ -222,6 +222,7 @@ export class VapiClient {
       'Praat natuurlijk en menselijk en help de beller snel verder.',
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
+      'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
     if (effectiveConfig.voiceSettings?.welcomePhrase) {
@@ -239,6 +240,10 @@ export class VapiClient {
         'Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden.',
       );
     }
+
+    instructions.push(
+      "Gebruik de tool 'transfer_call' zodra de beller aangeeft te willen worden doorverbonden. Voeg een korte reden toe en gebruik bij voorkeur het algemene bedrijfsnummer uit de context, tenzij de beller een ander nummer opgeeft.",
+    );
 
     instructions.push('Bedrijfscontext (JSON):', contextJson);
     return instructions.join('\n\n');
@@ -375,7 +380,37 @@ export class VapiClient {
   /** ===== Tools (clean JSON Schema via `parameters`) ===== */
   public getTools(hasGoogleIntegration?: boolean) {
     const enabled = hasGoogleIntegration ?? this.hasGoogleIntegration;
-    if (!enabled) return [];
+
+    const tools: any[] = [
+      {
+        type: 'function',
+        name: 'transfer_call',
+        description:
+          'Verbind de beller door naar een medewerker of collega wanneer menselijke hulp nodig is.',
+        parameters: {
+          type: 'object',
+          properties: {
+            phoneNumber: {
+              type: 'string',
+              description: 'Telefoonnummer of SIP-adres van de medewerker die de call moet overnemen.',
+            },
+            callSid: {
+              type: 'string',
+              description: 'Optioneel: het huidige callSid als je dit weet.',
+            },
+            reason: {
+              type: 'string',
+              description: 'Korte toelichting waarom er wordt doorverbonden.',
+            },
+          },
+          required: ['phoneNumber'],
+        },
+      },
+    ];
+
+    if (!enabled) {
+      return tools;
+    }
 
     const createCalendarParameters = {
       type: 'object',
@@ -411,7 +446,7 @@ export class VapiClient {
       required: ['eventId', 'name', 'dateOfBirth'],
     };
 
-    return [
+    tools.push(
       {
         type: 'function',
         name: 'create_calendar_event',
@@ -433,7 +468,9 @@ export class VapiClient {
           'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
         parameters: cancelCalendarParameters,
       },
-    ];
+    );
+
+    return tools;
   }
 
   private buildModelMessages(
@@ -495,10 +532,9 @@ export class VapiClient {
   }
 
   private buildModelApiTools(config: VapiAssistantConfig) {
-    if (!config.hasGoogleIntegration) return [];
     if (!this.toolBaseUrl) {
       console.warn(
-        '[VapiClient] Tool base URL is not configured; skipping API request tools for Google Calendar.',
+        '[VapiClient] Tool base URL is not configured; skipping API request tools.',
       );
       return [];
     }
@@ -517,7 +553,35 @@ export class VapiClient {
       },
     } as const;
 
-    return [
+    const tools: any[] = [
+      {
+        type: 'apiRequest',
+        function: { name: 'api_request_tool' },
+        name: 'transfer_call',
+        description:
+          'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
+        method: 'POST',
+        url: join('/voice/transfer'),
+        headers: sharedHeaders,
+        body: {
+          type: 'object',
+          properties: {
+            phoneNumber: { type: 'string', description: 'Telefoonnummer of SIP-adres' },
+            callSid: { type: 'string', description: 'Optioneel actief callSid' },
+            callerId: { type: 'string', description: 'Optioneel caller ID' },
+            reason: { type: 'string', description: 'Reden voor de overdracht' },
+          },
+          required: ['phoneNumber'],
+        },
+        timeoutSeconds: 20,
+      },
+    ];
+
+    if (!config.hasGoogleIntegration) {
+      return tools;
+    }
+
+    tools.push(
       {
         type: 'apiRequest',
         function: { name: 'api_request_tool' },
@@ -582,7 +646,9 @@ export class VapiClient {
         },
         timeoutSeconds: 45,
       },
-    ];
+    );
+
+    return tools;
   }
 
   public async openRealtimeSession(
@@ -1097,16 +1163,21 @@ export class VapiClient {
       return;
     }
 
-    if (!this.hasGoogleIntegration) {
+    const googleTools = new Set([
+      'create_calendar_event',
+      'check_calendar_availability',
+      'cancel_calendar_event',
+    ]);
+
+    if (googleTools.has(call.name) && !this.hasGoogleIntegration) {
       console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
       session.sendToolResponse(call.id, { error: 'Google integration not available' });
       return;
     }
 
     const apiRequestHandledTools = new Set([
-      'create_calendar_event',
-      'check_calendar_availability',
-      'cancel_calendar_event',
+      ...googleTools,
+      'transfer_call',
     ]);
     if (apiRequestHandledTools.has(call.name)) {
       console.info(

@@ -45,7 +45,7 @@ container.register("OutlookCalendarClient", {
 });
 
 // Register business services
-container.register(VoiceService, { useClass: VoiceService });
+container.registerSingleton(VoiceService, VoiceService);
 container.register(GoogleService, { useClass: GoogleService });
 container.register("OutlookService", { useClass: OutlookService });
 container.register(CompanyService, { useClass: CompanyService });
