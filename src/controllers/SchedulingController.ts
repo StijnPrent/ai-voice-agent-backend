@@ -4,10 +4,22 @@ import { SchedulingService } from "../business/services/SchedulingService";
 import { AuthenticatedRequest } from "../middleware/auth";
 import {AppointmentTypeModel} from "../business/models/AppointmentTypeModel";
 import {StaffMemberModel} from "../business/models/StaffMemberModel";
+import { AssistantSyncError } from "../business/errors/AssistantSyncError";
 
 export class SchedulingController {
     private get service(): SchedulingService {
         return container.resolve(SchedulingService);
+    }
+
+    private handleError(res: Response, err: unknown, defaultMessage: string): void {
+        if (err instanceof AssistantSyncError) {
+            console.error(err);
+            res.status(err.statusCode).json({ messages: err.messages });
+            return;
+        }
+
+        console.error(err);
+        res.status(500).send(defaultMessage);
     }
 
     // ---------- Appointment Types ----------
@@ -22,8 +34,7 @@ export class SchedulingController {
             const payload = list.map(model => model.toJSON());
             res.json(payload);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching appointment types");
+            this.handleError(res, err, "Error fetching appointment types");
         }
     }
 
@@ -38,8 +49,7 @@ export class SchedulingController {
             const data = await this.service.addAppointmentType(companyId, name, duration, price, category, description);
             res.status(201).send(data);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding appointment type");
+            this.handleError(res, err, "Error adding appointment type");
         }
     }
 
@@ -60,8 +70,7 @@ export class SchedulingController {
             );
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating appointment type");
+            this.handleError(res, err, "Error updating appointment type");
         }
     }
 
@@ -76,8 +85,7 @@ export class SchedulingController {
             await this.service.deleteAppointmentType(companyId, Number(id));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error deleting appointment type");
+            this.handleError(res, err, "Error deleting appointment type");
         }
     }
 
@@ -93,8 +101,7 @@ export class SchedulingController {
             const payload = list.map(model => model.toJSON());
             res.json(payload);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching staff members");
+            this.handleError(res, err, "Error fetching staff members");
         }
     }
 
@@ -117,8 +124,7 @@ export class SchedulingController {
 
             res.status(201).send(data);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding staff member");
+            this.handleError(res, err, "Error adding staff member");
         }
     }
 
@@ -140,8 +146,7 @@ export class SchedulingController {
 
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating staff member");
+            this.handleError(res, err, "Error updating staff member");
         }
     }
 
@@ -156,8 +161,7 @@ export class SchedulingController {
             await this.service.deleteStaffMember(companyId, Number(id));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error deleting staff member");
+            this.handleError(res, err, "Error deleting staff member");
         }
     }
 }
