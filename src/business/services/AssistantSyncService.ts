@@ -6,6 +6,7 @@ import { ICompanyRepository } from "../../data/interfaces/ICompanyRepository";
 import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { ISchedulingRepository } from "../../data/interfaces/ISchedulingRepository";
 import { IntegrationService } from "./IntegrationService";
+import { AssistantSyncError } from "../errors/AssistantSyncError";
 
 @injectable()
 export class AssistantSyncService {
@@ -48,6 +49,12 @@ export class AssistantSyncService {
             }
         } catch (error) {
             console.error(`[AssistantSyncService] Failed to sync assistant for company ${companyId}`, error);
+            const details = this.extractAssistantSyncErrorDetails(error);
+            if (details) {
+                throw new AssistantSyncError(details.messages, details.statusCode);
+            }
+
+            throw error;
         }
     }
 
@@ -98,6 +105,57 @@ export class AssistantSyncService {
                 staffMembers,
             },
             voiceSettings,
+        };
+    }
+
+    private extractAssistantSyncErrorDetails(error: unknown): { messages: string[]; statusCode: number } | null {
+        if (!axios.isAxiosError(error)) {
+            return null;
+        }
+
+        const responseData: any = error.response?.data;
+        const statusCode = error.response?.status ?? responseData?.statusCode ?? 500;
+
+        const collected: string[] = [];
+        const pushValue = (value: unknown) => {
+            if (value === null || value === undefined) return;
+            if (Array.isArray(value)) {
+                value.forEach(pushValue);
+                return;
+            }
+            if (typeof value === "string") {
+                collected.push(value);
+                return;
+            }
+            if (typeof value === "number" || typeof value === "boolean") {
+                collected.push(String(value));
+            }
+        };
+
+        pushValue(responseData?.message ?? responseData?.messages);
+
+        if (collected.length === 0) {
+            pushValue(responseData?.error);
+        }
+
+        if (collected.length === 0 && typeof responseData === "string") {
+            collected.push(responseData);
+        }
+
+        if (collected.length === 0 && typeof error.message === "string") {
+            collected.push(error.message);
+        }
+
+        if (collected.length === 0) {
+            return {
+                messages: ["Failed to sync assistant"],
+                statusCode,
+            };
+        }
+
+        return {
+            messages: collected,
+            statusCode,
         };
     }
 }

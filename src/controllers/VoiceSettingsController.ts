@@ -5,10 +5,22 @@ import { VoiceSettingsService } from "../business/services/VoiceSettingsService"
 import { AuthenticatedRequest } from "../middleware/auth";
 import { VoiceSettingModel } from "../business/models/VoiceSettingsModel";
 import { ReplyStyleModel } from "../business/models/ReplyStyleModel";
+import { AssistantSyncError } from "../business/errors/AssistantSyncError";
 
 export class VoiceSettingsController {
     private get service(): VoiceSettingsService {
         return container.resolve(VoiceSettingsService);
+    }
+
+    private handleError(res: Response, err: unknown, defaultMessage: string): void {
+        if (err instanceof AssistantSyncError) {
+            console.error(err);
+            res.status(err.statusCode).json({ messages: err.messages });
+            return;
+        }
+
+        console.error(err);
+        res.status(500).send(defaultMessage);
     }
 
     public async getVoiceSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -21,8 +33,7 @@ export class VoiceSettingsController {
             const settings = await this.service.getVoiceSettings(companyId);
             res.json(settings);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching voice settings");
+            this.handleError(res, err, "Error fetching voice settings");
         }
     }
 
@@ -45,8 +56,7 @@ export class VoiceSettingsController {
             await this.service.updateVoiceSettings(companyId, settings);
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating voice settings");
+            this.handleError(res, err, "Error updating voice settings");
         }
     }
 
@@ -69,8 +79,7 @@ export class VoiceSettingsController {
             await this.service.insertVoiceSettings(companyId, settings);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error inserting voice settings");
+            this.handleError(res, err, "Error inserting voice settings");
         }
     }
 
@@ -84,8 +93,7 @@ export class VoiceSettingsController {
             const style = await this.service.getReplyStyle(companyId);
             res.json(style);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching reply style");
+            this.handleError(res, err, "Error fetching reply style");
         }
     }
 
@@ -107,8 +115,7 @@ export class VoiceSettingsController {
             await this.service.updateReplyStyle(companyId, style);
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating reply style");
+            this.handleError(res, err, "Error updating reply style");
         }
     }
 
@@ -130,8 +137,7 @@ export class VoiceSettingsController {
             await this.service.insertReplyStyle(companyId, style);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error inserting reply style");
+            this.handleError(res, err, "Error inserting reply style");
         }
     }
 }
