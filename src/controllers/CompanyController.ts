@@ -6,10 +6,22 @@ import { AuthenticatedRequest } from "../middleware/auth";
 import {CompanyHourModel} from "../business/models/CompanyHourModel";
 import {CompanyDetailsModel} from "../business/models/CompanyDetailsModel";
 import {CompanyContactModel} from "../business/models/CompanyContactModel";
+import { AssistantSyncError } from "../business/errors/AssistantSyncError";
 
 export class CompanyController {
     private get service(): CompanyService {
         return container.resolve(CompanyService);
+    }
+
+    private handleError(res: Response, err: unknown, defaultMessage: string): void {
+        if (err instanceof AssistantSyncError) {
+            console.error(err);
+            res.status(err.statusCode).json({ messages: err.messages });
+            return;
+        }
+
+        console.error(err);
+        res.status(500).send(defaultMessage);
     }
 
     // ---------- Company ----------
@@ -19,8 +31,7 @@ export class CompanyController {
             await this.service.create(name, email, twilioNumber, website, password);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error creating company");
+            this.handleError(res, err, "Error creating company");
         }
     }
 
@@ -34,8 +45,7 @@ export class CompanyController {
             }
             res.json({ token });
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error logging in");
+            this.handleError(res, err, "Error logging in");
         }
     }
 
@@ -45,6 +55,10 @@ export class CompanyController {
             const company = await this.service.findByTwilioNumber(twilioNumber);
             res.json(company);
         } catch (err: any) {
+            if (err instanceof AssistantSyncError) {
+                this.handleError(res, err, "Error fetching company by number");
+                return;
+            }
             console.error(err);
             res.status(404).send(err.message);
         }
@@ -62,8 +76,7 @@ export class CompanyController {
             await this.service.addInfo(companyId, value);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding info");
+            this.handleError(res, err, "Error adding info");
         }
     }
 
@@ -73,8 +86,7 @@ export class CompanyController {
             await this.service.removeInfo(Number(infoId));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error removing info");
+            this.handleError(res, err, "Error removing info");
         }
     }
 
@@ -84,8 +96,7 @@ export class CompanyController {
             await this.service.updateInfo(Number(id), value);
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating info");
+            this.handleError(res, err, "Error updating info");
         }
     }
 
@@ -100,8 +111,7 @@ export class CompanyController {
             const payload = list.map(model => model.toJSON());
             res.json(payload);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching info");
+            this.handleError(res, err, "Error fetching info");
         }
     }
 
@@ -124,8 +134,7 @@ export class CompanyController {
             );
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding company details");
+            this.handleError(res, err, "Error adding company details");
         }
     }
 
@@ -143,8 +152,7 @@ export class CompanyController {
             }
             res.json(details);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching company details");
+            this.handleError(res, err, "Error fetching company details");
         }
     }
 
@@ -165,8 +173,7 @@ export class CompanyController {
             );
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating company details");
+            this.handleError(res, err, "Error updating company details");
         }
     }
 
@@ -176,8 +183,7 @@ export class CompanyController {
             await this.service.deleteCompanyDetails(Number(id));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error deleting company details");
+            this.handleError(res, err, "Error deleting company details");
         }
     }
 
@@ -193,8 +199,7 @@ export class CompanyController {
             await this.service.addCompanyContact(companyId, website, phone, contact_email, address);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding company contact");
+            this.handleError(res, err, "Error adding company contact");
         }
     }
 
@@ -212,8 +217,7 @@ export class CompanyController {
             }
             res.json(contact);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching company contact");
+            this.handleError(res, err, "Error fetching company contact");
         }
     }
 
@@ -233,8 +237,7 @@ export class CompanyController {
             );
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating company contact");
+            this.handleError(res, err, "Error updating company contact");
         }
     }
 
@@ -244,8 +247,7 @@ export class CompanyController {
             await this.service.deleteCompanyContact(Number(id));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error deleting company contact");
+            this.handleError(res, err, "Error deleting company contact");
         }
     }
 
@@ -261,8 +263,7 @@ export class CompanyController {
             await this.service.addCompanyHour(companyId, dayOfWeek, isOpen, openTime, closeTime);
             res.status(201).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error adding company hour");
+            this.handleError(res, err, "Error adding company hour");
         }
     }
 
@@ -276,8 +277,7 @@ export class CompanyController {
             const hours = await this.service.getCompanyHours(companyId);
             res.json(hours);
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error fetching company hours");
+            this.handleError(res, err, "Error fetching company hours");
         }
     }
 
@@ -297,8 +297,7 @@ export class CompanyController {
             );
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error updating company hour");
+            this.handleError(res, err, "Error updating company hour");
         }
     }
 
@@ -308,8 +307,7 @@ export class CompanyController {
             await this.service.deleteCompanyHour(Number(id));
             res.status(204).send();
         } catch (err) {
-            console.error(err);
-            res.status(500).send("Error deleting company hour");
+            this.handleError(res, err, "Error deleting company hour");
         }
     }
 }
