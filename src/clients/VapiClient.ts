@@ -1219,7 +1219,6 @@ export class VapiClient {
       voice = {
         provider: '11labs',
         voiceId,
-        modelId: 'eleven_multilingual_v2',
         language: 'nl-NL',
       };
     }
