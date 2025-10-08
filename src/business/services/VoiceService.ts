@@ -9,6 +9,7 @@ import { IntegrationService } from "./IntegrationService";
 import { SchedulingService } from "./SchedulingService";
 import { UsageService } from "./UsageService";
 import { CallLogService } from "./CallLogService";
+import { TwilioClient } from "../../clients/TwilioClient";
 
 const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
@@ -28,6 +29,8 @@ export class VoiceService {
     private callStartedAt: Date | null = null;
     private activeCompanyId: bigint | null = null;
     private callerNumber: string | null = null;
+    private companyTwilioNumber: string | null = null;
+    private companyTransferNumber: string | null = null;
     private usageRecorded = false;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
@@ -92,7 +95,8 @@ export class VoiceService {
         @inject(IntegrationService) private readonly integrationService: IntegrationService,
         @inject(SchedulingService) private readonly schedulingService: SchedulingService,
         @inject(UsageService) private readonly usageService: UsageService,
-        @inject(CallLogService) private readonly callLogService: CallLogService
+        @inject(CallLogService) private readonly callLogService: CallLogService,
+        @inject("TwilioClient") private readonly twilioClient: TwilioClient
     ) {}
 
     public async startStreaming(
@@ -146,8 +150,12 @@ export class VoiceService {
             const company = await this.companyService.findByTwilioNumber(to);
             this.activeCompanyId = company.id;
             this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
-            const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
+            this.companyTwilioNumber = company.twilioNumber?.trim() || null;
             const companyContext = await this.companyService.getCompanyContext(company.id);
+            this.companyTransferNumber = this.sanitizeTransferTarget(
+                companyContext.contact?.phone ?? ""
+            ) || null;
+            const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
             const schedulingContext = await this.schedulingService.getSchedulingContext(company.id);
             const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
 
@@ -315,7 +323,91 @@ export class VoiceService {
         this.callerNumber = null;
         this.vapiCallId = null;
         this.assistantSpeaking = false;
+        this.companyTwilioNumber = null;
+        this.companyTransferNumber = null;
         this.resetSpeechTracking();
+    }
+
+    public async transferCall(
+        target: string,
+        options?: { callSid?: string; callerId?: string; reason?: string }
+    ): Promise<void> {
+        const activeCallSid = this.callSid;
+        if (!activeCallSid) {
+            throw new Error("Er is geen actief telefoongesprek om door te verbinden.");
+        }
+
+        if (options?.callSid && options.callSid !== activeCallSid) {
+            throw new Error("Het opgegeven callSid komt niet overeen met de actieve oproep.");
+        }
+
+        let sanitizedTarget = this.sanitizeTransferTarget(target);
+        if (!sanitizedTarget) {
+            if (this.companyTransferNumber) {
+                console.log(
+                    `[${activeCallSid}] No valid transfer target supplied; defaulting to company contact number ${this.companyTransferNumber}.`
+                );
+            }
+            sanitizedTarget = this.companyTransferNumber ?? "";
+        }
+        if (!sanitizedTarget) {
+            throw new Error("Het opgegeven telefoonnummer voor doorverbinden is ongeldig.");
+        }
+
+        const sanitizedTwilioNumber = this.companyTwilioNumber
+            ? this.sanitizeTransferTarget(this.companyTwilioNumber)
+            : null;
+
+        if (
+            sanitizedTwilioNumber &&
+            sanitizedTarget === sanitizedTwilioNumber &&
+            this.companyTransferNumber
+        ) {
+            console.log(
+                `[${activeCallSid}] Transfer target matched company Twilio number; using company contact number instead.`
+            );
+            sanitizedTarget = this.companyTransferNumber;
+        }
+
+        const callerId = options?.callerId?.trim() || this.companyTwilioNumber || undefined;
+
+        console.log(
+            `[${activeCallSid}] Initiating transfer to ${sanitizedTarget}${
+                options?.reason ? ` (reason: ${options.reason})` : ""
+            }`
+        );
+
+        await this.twilioClient.transferCall(activeCallSid, sanitizedTarget, callerId);
+
+        // Clean up local session state; Twilio will end the media stream after the transfer.
+        this.stopStreaming();
+    }
+
+    private sanitizeTransferTarget(target: string): string {
+        if (!target) {
+            return "";
+        }
+
+        const trimmed = target.trim();
+        if (!trimmed) {
+            return "";
+        }
+
+        if (trimmed.startsWith("sip:")) {
+            return trimmed;
+        }
+
+        const cleaned = trimmed.replace(/[^+\d]/g, "");
+        if (!cleaned) {
+            return "";
+        }
+
+        if (cleaned.startsWith("+")) {
+            const digits = cleaned.slice(1).replace(/[^\d]/g, "");
+            return `+${digits}`;
+        }
+
+        return cleaned.replace(/[^\d]/g, "");
     }
 
     private finalizeUserSpeechSegment(

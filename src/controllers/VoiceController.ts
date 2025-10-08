@@ -1,6 +1,8 @@
 // src/controllers/VoiceController.ts
 import { Request, Response } from "express";
 import twilio from "twilio";
+import { container } from "tsyringe";
+import { VoiceService } from "../business/services/VoiceService";
 
 export class VoiceController {
     /**
@@ -34,5 +36,33 @@ export class VoiceController {
 
         // Send the TwiML response
         res.type("text/xml").send(twiml.toString());
+    }
+
+    async transferActiveCall(req: Request, res: Response) {
+        const { callSid, phoneNumber, callerId, reason } = req.body as {
+            callSid?: string;
+            phoneNumber?: string;
+            callerId?: string;
+            reason?: string;
+        };
+
+        if (!phoneNumber || typeof phoneNumber !== "string") {
+            res.status(400).json({ error: "phoneNumber is verplicht" });
+            return;
+        }
+
+        try {
+            const voiceService = container.resolve(VoiceService);
+            await voiceService.transferCall(phoneNumber, {
+                callSid,
+                callerId,
+                reason,
+            });
+            res.json({ success: true });
+        } catch (error) {
+            console.error("❌ transferActiveCall failed:", error);
+            const message = error instanceof Error ? error.message : "Onbekende fout";
+            res.status(500).json({ error: message });
+        }
     }
 }
