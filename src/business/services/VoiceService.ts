@@ -190,6 +190,17 @@ export class VoiceService {
                     console.log(`[${callSid}] [Vapi] session closed`);
                     this.logSessionSnapshot("vapi session closed");
                 },
+                onTransferCall: async ({ phoneNumber, callSid: requestedCallSid, callerId, reason }) => {
+                    await this.transferCall(phoneNumber ?? "", {
+                        callSid: requestedCallSid ?? undefined,
+                        callerId: callerId ?? undefined,
+                        reason: reason ?? undefined,
+                    });
+                    return {
+                        transferredTo: phoneNumber ?? this.companyTransferNumber ?? null,
+                        callSid: this.callSid,
+                    };
+                },
             });
 
             this.vapiSession = session;

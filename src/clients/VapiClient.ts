@@ -11,6 +11,7 @@ import { CompanyContactModel } from '../business/models/CompanyContactModel';
 import { AppointmentTypeModel } from '../business/models/AppointmentTypeModel';
 import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
+import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
 
 type CompanyContext = {
@@ -61,6 +62,14 @@ export type VapiRealtimeCallbacks = {
   onToolStatus?: (message: string) => void;
   onSessionError?: (error: Error) => void;
   onSessionClosed?: () => void;
+  onTransferCall?: (
+    payload: {
+      phoneNumber?: string | null;
+      callSid?: string | null;
+      callerId?: string | null;
+      reason?: string | null;
+    },
+  ) => Promise<{ transferredTo?: string | null; callSid?: string | null } | void>;
 };
 
 export type NormalizedToolCall = {
@@ -1044,13 +1053,185 @@ export class VapiClient {
       return;
     }
 
-    try {
-      console.warn(`[VapiClient] Received unsupported tool call: ${call.name}`);
-      session.sendToolResponse(call.id, { error: `Unsupported tool: ${call.name}` });
-    } catch (error) {
-      console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
-      session.sendToolResponse(call.id, { error: (error as Error).message });
+    const sendSuccess = (data: unknown) => {
+      session.sendToolResponse(call.id, { success: true, data });
+    };
+
+    const sendError = (message: string, details?: unknown) => {
+      session.sendToolResponse(call.id, {
+        success: false,
+        error: message,
+        details,
+      });
+    };
+
+    const companyId = this.company.id;
+
+    const args = call.args ?? {};
+
+    const handlers: Record<string, () => Promise<void>> = {
+      transfer_call: async () => {
+        if (!callbacks.onTransferCall) {
+          throw new Error('Doorverbinden is niet beschikbaar in deze sessie.');
+        }
+
+        const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
+        const callSid = this.normalizeStringArg(args['callSid']);
+        const callerId = this.normalizeStringArg(args['callerId']);
+        const reason = this.normalizeStringArg(args['reason']);
+
+        const result = await callbacks.onTransferCall({ phoneNumber, callSid, callerId, reason });
+
+        sendSuccess({
+          message: 'Doorverbinden gestart',
+          transferredTo: result?.transferredTo ?? phoneNumber ?? null,
+          callSid: result?.callSid ?? callSid ?? null,
+          reason: reason ?? null,
+        });
+      },
+      check_calendar_availability: async () => {
+        const date = this.normalizeStringArg(args['date']);
+        if (!date) {
+          throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
+        }
+
+        const { openHour, closeHour } = this.getBusinessHoursForDate(date);
+
+        const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
+        sendSuccess({ date, openHour, closeHour, slots });
+      },
+      create_calendar_event: async () => {
+        const summary = this.normalizeStringArg(args['summary']);
+        const start = this.normalizeStringArg(args['start']);
+        const end = this.normalizeStringArg(args['end']);
+        const name = this.normalizeStringArg(args['name']);
+        const description = this.normalizeStringArg(args['description']);
+        const location = this.normalizeStringArg(args['location']);
+        const attendeeEmail = this.normalizeStringArg(args['attendeeEmail']);
+        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
+
+        if (!summary || !start || !end || !name || !dateOfBirth) {
+          throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
+        }
+
+        const details: string[] = [];
+        if (description) details.push(description);
+        details.push(`Naam: ${name}`);
+        details.push(`Geboortedatum: ${dateOfBirth}`);
+        const compiledDescription = details.join('\n');
+
+        const event: calendar_v3.Schema$Event = {
+          summary,
+          description: compiledDescription,
+          location: location ?? undefined,
+          start: { dateTime: start },
+          end: { dateTime: end },
+        };
+
+        if (attendeeEmail) {
+          event.attendees = [
+            {
+              email: attendeeEmail,
+              displayName: name,
+            },
+          ];
+        }
+
+        event.extendedProperties = {
+          private: {
+            customerName: name,
+            customerDateOfBirth: dateOfBirth,
+          },
+        };
+
+        const created = await this.googleService.scheduleEvent(companyId, event);
+        sendSuccess({ event: created });
+      },
+      cancel_calendar_event: async () => {
+        const eventId = this.normalizeStringArg(args['eventId']);
+        const name = this.normalizeStringArg(args['name']);
+        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
+        const reason = this.normalizeStringArg(args['reason']);
+
+        if (!eventId) {
+          throw new Error('Ontbreekt eventId om te annuleren.');
+        }
+
+        await this.googleService.cancelEvent(companyId, eventId, name ?? undefined, dateOfBirth ?? undefined);
+        sendSuccess({
+          eventId,
+          cancelled: true,
+          reason: reason ?? null,
+        });
+      },
+    };
+
+    const handler = handlers[call.name];
+
+    if (!handler) {
+      sendError(`Onbekende tool: ${call.name}`);
+      return;
     }
+
+    try {
+      await handler();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
+          : `Onbekende fout bij uitvoeren van ${call.name}`;
+      console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
+      sendError(message);
+    }
+  }
+
+  private normalizeStringArg(value: unknown): string | null {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+    return null;
+  }
+
+  private getBusinessHoursForDate(date: string): { openHour: number; closeHour: number } {
+    const defaultHours = { openHour: 9, closeHour: 17 };
+
+    if (!this.companyContext?.hours || this.companyContext.hours.length === 0) {
+      return defaultHours;
+    }
+
+    const parsedDate = new Date(date);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new Error('Ongeldige datum voor agenda beschikbaarheid.');
+    }
+
+    const dayOfWeek = parsedDate.getDay();
+    const entry = this.companyContext.hours.find((hour) => hour.dayOfWeek === dayOfWeek);
+    if (!entry) {
+      return defaultHours;
+    }
+
+    if (!entry.isOpen) {
+      throw new Error('Het bedrijf is gesloten op de gevraagde datum.');
+    }
+
+    const openHour = this.parseHour(entry.openTime) ?? defaultHours.openHour;
+    const closeHour = this.parseHour(entry.closeTime) ?? defaultHours.closeHour;
+
+    if (closeHour <= openHour) {
+      throw new Error('Ongeldige openingstijden voor de gevraagde datum.');
+    }
+
+    return { openHour, closeHour };
+  }
+
+  private parseHour(value: string | null | undefined): number | null {
+    if (!value) return null;
+    const match = value.match(/^(\d{1,2})(?::\d{2})?$/);
+    if (!match) return null;
+    const hour = Number.parseInt(match[1], 10);
+    if (Number.isNaN(hour) || hour < 0 || hour > 23) return null;
+    return hour;
   }
 
   /** ===== Assistant lifecycle ===== */
