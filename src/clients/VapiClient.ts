@@ -43,6 +43,7 @@ type CompanySnapshot = {
   staffMembers?: {
     name: string;
     role?: string;
+    skills?: string[];
     availability?: { day: string; ranges: string[] }[];
   }[];
 };
@@ -216,16 +217,6 @@ export class VapiClient {
       );
     }
 
-    const today = new Date().toLocaleDateString('nl-NL', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-
-    const context = this.buildCompanySnapshot(effectiveConfig);
-    const contextJson = JSON.stringify(context);
-
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
@@ -254,7 +245,6 @@ export class VapiClient {
       "Gebruik de tool 'transfer_call' zodra de beller aangeeft te willen worden doorverbonden. Voeg een korte reden toe en gebruik bij voorkeur het algemene bedrijfsnummer uit de context, tenzij de beller een ander nummer opgeeft.",
     );
 
-    instructions.push('Bedrijfscontext (JSON):', contextJson);
     return instructions.join('\n\n');
   }
 
@@ -339,6 +329,7 @@ export class VapiClient {
         const result: {
           name: string;
           role?: string;
+          skills?: string[];
           availability?: { day: string; ranges: string[] }[];
         } = {
           name: staff.name,
@@ -346,6 +337,13 @@ export class VapiClient {
 
         if (staff.role) {
           result.role = staff.role;
+        }
+
+        const specialties = (staff.specialties ?? [])
+          .map((specialty) => specialty.name.trim())
+          .filter((name) => name.length > 0);
+        if (specialties.length > 0) {
+          result.skills = specialties.slice(0, 5);
         }
 
         if (availability.length > 0) {
