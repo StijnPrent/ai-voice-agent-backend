@@ -547,59 +547,44 @@ export class VapiClient {
     const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
 
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      'content-type': 'application/json',
+      ...(process.env.INTERNAL_API_KEY ? { 'x-internal-api-key': process.env.INTERNAL_API_KEY } : {}),
     };
-    if (process.env.INTERNAL_API_KEY) {
-      headers['x-internal-api-key'] = process.env.INTERNAL_API_KEY!;
-    }
 
     const createApiRequestTool = (
       name: string,
-      description: string,
       path: string,
       schema: Record<string, unknown>,
+      method: 'POST' | 'GET' | 'PATCH' | 'DELETE' = 'POST',
+      description?: string,
     ) => ({
       type: 'apiRequest',
       name,
-      description,
-      method: 'POST',
+      ...(description ? { description } : {}),
+      method,
       url: join(path),
       headers,
       timeoutSeconds: 15,
-      body: {
-        type: 'json',
-        schema,
-      },
+      // ⬇️ GEEN wrapper meer; body is direct het schema
+      body: schema,
     });
 
     const tools: any[] = [
       createApiRequestTool(
-        'transfer_call',
-        'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
+        'transfer_call_http',          // ⬅️ andere naam dan function tool
         '/voice/transfer',
         {
           type: 'object',
           properties: {
-            phoneNumber: {
-              type: 'string',
-              description: 'Bestemmingsnummer in E.164-formaat waarvoor moet worden doorgeschakeld.',
-            },
-            callSid: {
-              type: 'string',
-              description: 'Het actieve callSid zodat het gesprek kan worden bijgehouden.',
-            },
-            callerId: {
-              type: 'string',
-              description: 'Caller ID dat moet worden meegegeven tijdens het doorverbinden.',
-            },
-            reason: {
-              type: 'string',
-              description: 'Korte toelichting waarom de beller moet worden doorgeschakeld.',
-            },
+            phoneNumber: { type: 'string' },
+            callSid: { type: 'string' },
+            callerId: { type: 'string' },
+            reason: { type: 'string' },
           },
           required: ['phoneNumber', 'callSid', 'callerId', 'reason'],
-          additionalProperties: false,
         },
+        'POST',
+        'Verbind de beller door via backend endpoint.'
       ),
     ];
 
@@ -607,97 +592,52 @@ export class VapiClient {
       tools.push(
         createApiRequestTool(
           'check_google_calendar_availability',
-          'Controleer beschikbare Google Agenda tijdsloten voor een opgegeven datum.',
           '/google/availability',
           {
             type: 'object',
             properties: {
-              date: {
-                type: 'string',
-                format: 'date',
-                description: 'Datum (YYYY-MM-DD) waarvoor beschikbaarheid moet worden opgehaald.',
-              },
+              date: { type: 'string' }, // ⬅️ geen format/description
             },
             required: ['date'],
-            additionalProperties: false,
           },
+          'POST',
+          'Beschikbaarheid op datum'
         ),
         createApiRequestTool(
           'schedule_google_calendar_event',
-          'Plan een nieuwe Google Agenda-afspraak voor de beller met alle details.',
           '/google/schedule',
           {
             type: 'object',
             properties: {
-              summary: {
-                type: 'string',
-                description: 'Korte titel van de afspraak.',
-              },
-              start: {
-                type: 'string',
-                format: 'date-time',
-                description: 'Starttijd in ISO 8601-formaat inclusief tijdzone.',
-              },
-              end: {
-                type: 'string',
-                format: 'date-time',
-                description: 'Eindtijd in ISO 8601-formaat inclusief tijdzone.',
-              },
-              name: {
-                type: 'string',
-                description: 'Volledige naam van de klant.',
-              },
-              dateOfBirth: {
-                type: 'string',
-                format: 'date',
-                description: 'Geboortedatum van de klant (YYYY-MM-DD).',
-              },
-              description: {
-                type: 'string',
-                description: 'Optionele toelichting die bij de afspraak moet worden opgeslagen.',
-              },
-              location: {
-                type: 'string',
-                description: 'Optionele locatie van de afspraak.',
-              },
-              attendeeEmail: {
-                type: 'string',
-                format: 'email',
-                description: 'Optioneel e-mailadres van de aanwezige.',
-              },
+              summary: { type: 'string' },
+              start: { type: 'string' },
+              end: { type: 'string' },
+              name: { type: 'string' },
+              dateOfBirth: { type: 'string' },
+              description: { type: 'string' },
+              location: { type: 'string' },
+              attendeeEmail: { type: 'string' },
             },
             required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-            additionalProperties: false,
           },
+          'POST',
+          'Nieuwe afspraak plannen'
         ),
         createApiRequestTool(
           'cancel_google_calendar_event',
-          'Annuleer een bestaande Google Agenda-afspraak en registreer de reden van annuleren.',
           '/google/cancel',
           {
             type: 'object',
             properties: {
-              eventId: {
-                type: 'string',
-                description: 'Unieke ID van de afspraak die moet worden geannuleerd.',
-              },
-              name: {
-                type: 'string',
-                description: 'Naam van de persoon voor wie de afspraak staat.',
-              },
-              dateOfBirth: {
-                type: 'string',
-                format: 'date',
-                description: 'Geboortedatum van de persoon (YYYY-MM-DD).',
-              },
-              reason: {
-                type: 'string',
-                description: 'Reden van annulering die moet worden vastgelegd.',
-              },
+              eventId: { type: 'string' },
+              name: { type: 'string' },
+              dateOfBirth: { type: 'string' },
+              reason: { type: 'string' },
             },
             required: ['eventId', 'name', 'dateOfBirth', 'reason'],
-            additionalProperties: false,
           },
+          'POST',
+          'Afspraak annuleren'
         ),
       );
     }
@@ -1436,21 +1376,16 @@ export class VapiClient {
   private buildAssistantPayload(config: VapiAssistantConfig) {
     const instructions = this.buildSystemPrompt(config);
     const companyContext = this.buildCompanySnapshot(config);
-    const tools = this.getTools(config.hasGoogleIntegration);
+
+    const functionTools = this.getTools(config.hasGoogleIntegration) || [];
+    const apiRequestTools = this.buildModelApiTools(config) || [];
+
+    const mergedTools = [
+      ...functionTools,
+      ...apiRequestTools.filter(t => !functionTools.some(ft => ft.name === t.name)),
+    ];
+
     const modelMessages = this.buildModelMessages(instructions, companyContext, config);
-    const modelTools = this.buildModelApiTools(config);
-
-    const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
-
-    const voiceId = config.voiceSettings?.voiceId?.trim();
-    let voice: { provider: string; voiceId?: string; modelId?: string; language?: string } | undefined;
-    if (voiceId) {
-      voice = {
-        provider: '11labs',
-        voiceId,
-        language: 'nl',
-      };
-    }
 
     const payload: Record<string, unknown> = {
       name: this.getAssistantName(config),
@@ -1460,6 +1395,7 @@ export class VapiClient {
         model: this.modelName,
         maxTokens: 10000,
         messages: modelMessages,
+        tools: mergedTools,  // ⬅️ gebruik de merge
       },
       firstMessageInterruptionsEnabled: false,
       firstMessageMode: 'assistant-speaks-first',
@@ -1467,11 +1403,11 @@ export class VapiClient {
       endCallMessage: 'Fijne dag!',
     };
 
-    if (modelTools.length > 0) {
-      (payload.model as Record<string, unknown>).tools = modelTools;
-    }
+    const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
     if (firstMessage) payload.firstMessage = firstMessage;
-    if (voice) payload.voice = voice;
+
+    const voiceId = config.voiceSettings?.voiceId?.trim();
+    if (voiceId) payload.voice = { provider: '11labs', voiceId, language: 'nl' };
 
     return payload;
   }
