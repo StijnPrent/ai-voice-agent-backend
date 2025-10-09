@@ -78,6 +78,7 @@ export class GoogleController {
     }
 
     async checkAvailability(req: Request, res: Response): Promise<void> {
+        console.log(req.body)
         const service = container.resolve(GoogleService);
         const { companyId, date, openHour, closeHour } = req.body as {
             companyId: string | number | bigint;
