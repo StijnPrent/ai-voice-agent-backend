@@ -233,7 +233,7 @@ export class VapiClient {
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        'Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool \'check_calendar_availability\' voordat je een tijdstip voorstelt en vraag om naam en geboortedatum voordat je \'create_calendar_event\' of \'cancel_calendar_event\' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden.',
+        'Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool \'check_calendar_availability\' voordat je een tijdstip voorstelt en vraag om naam en email voordat je \'create_calendar_event\' of \'cancel_calendar_event\' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie',
       );
     } else {
       instructions.push(
