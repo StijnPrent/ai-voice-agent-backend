@@ -733,82 +733,26 @@ export class VapiClient {
   ): { primaryUrl: string; fallbackUrls: string[]; callId?: string | null } | null {
     if (!data) return null;
 
-    const containers = [data, data?.data, data?.call, data?.result, data?.response];
-    const urls = new Set<string>();
-    const fallbackUrls = new Set<string>();
-    let callId: string | null = null;
+    // Explicit, no recursion.
+    const primaryUrl =
+      data?.transport?.websocketCallUrl ??
+      data?.websocketCallUrl ??
+      data?.url ??
+      null;
 
-    const addUrl = (value: unknown, target: Set<string>) => {
-      if (typeof value === 'string' && value.startsWith('ws')) {
-        target.add(value);
-      }
-    };
-
-    const visit = (value: unknown, path: string[] = []) => {
-      if (!value) return;
-
-      if (typeof value === 'string') {
-        if (value.startsWith('ws')) {
-          const key = path[path.length - 1]?.toLowerCase() ?? '';
-          if (key.includes('fallback')) {
-            fallbackUrls.add(value);
-          } else {
-            urls.add(value);
-          }
-        } else if (!callId && path[path.length - 1] === 'id' && path.includes('call')) {
-          callId = value;
-        } else if (!callId && path[path.length - 1] === 'callId') {
-          callId = value;
-        }
-        return;
-      }
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          visit(item, path);
-        }
-        return;
-      }
-
-      if (typeof value === 'object') {
-        for (const [key, nested] of Object.entries(value)) {
-          const lowerKey = key.toLowerCase();
-          if (lowerKey === 'websocketcallurl' || lowerKey === 'url') {
-            addUrl(nested, urls);
-          } else if (lowerKey.includes('fallback') && Array.isArray(nested)) {
-            nested.forEach((item) => addUrl(item, fallbackUrls));
-          }
-          visit(nested, [...path, key]);
-        }
-      }
-    };
-
-    for (const container of containers) {
-      visit(container ?? {}, []);
-    }
-
-    if (urls.size === 0 && fallbackUrls.size === 0) {
+    if (!primaryUrl || typeof primaryUrl !== "string" || !primaryUrl.startsWith("ws")) {
       return null;
     }
 
-    const [primaryUrl] = urls.size > 0 ? Array.from(urls) : Array.from(fallbackUrls);
-    const remainingFallbacks = new Set<string>();
-    for (const url of urls) {
-      if (url !== primaryUrl) {
-        remainingFallbacks.add(url);
-      }
-    }
-    for (const url of fallbackUrls) {
-      if (url !== primaryUrl && !remainingFallbacks.has(url)) {
-        remainingFallbacks.add(url);
-      }
-    }
+    // If Vapi ever adds fallbacks, pick them up here (otherwise empty).
+    const fallbackUrls = Array.isArray(data?.transport?.fallbackUrls)
+      ? data.transport.fallbackUrls.filter((u: any) => typeof u === "string" && u.startsWith("ws"))
+      : [];
 
-    return {
-      primaryUrl,
-      fallbackUrls: Array.from(remainingFallbacks),
-      callId,
-    };
+    // ✅ The Vapi Call ID is just data.id
+    const callId = (typeof data?.id === "string" ? data.id : null) ?? null;
+
+    return { primaryUrl, fallbackUrls, callId };
   }
 
   private async connectRealtimeSocket(
