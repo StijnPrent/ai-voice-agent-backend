@@ -557,7 +557,7 @@ export class VapiClient {
       name: string,
       description: string,
       path: string,
-      jsonSchema: Record<string, unknown>,
+      schema: Record<string, unknown>,
     ) => ({
       type: 'apiRequest',
       name,
@@ -567,8 +567,8 @@ export class VapiClient {
       headers,
       timeoutSeconds: 15,
       body: {
-        type: 'jsonSchema',
-        jsonSchema,
+        type: 'json',
+        schema,
       },
     });
 
