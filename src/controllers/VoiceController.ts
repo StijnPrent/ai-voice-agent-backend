@@ -9,7 +9,7 @@ export class VoiceController {
      * Webhook voor binnenkomende Twilio-call.
      * Start een bi-directionele media stream via een WebSocket.
      */
-    async handleIncomingCallTwilio(req: Request, res: Response) {
+    async handleIncomingCallTwilio(req: Request, res: Response): Promise<void> {
         const twiml = new twilio.twiml.VoiceResponse();
 
         // Gebruik de SERVER_URL van .env en vervang http door wss
