@@ -15,6 +15,7 @@ export class VoiceController {
         // Gebruik de SERVER_URL van .env en vervang http door wss
         const serverUrl = process.env.SERVER_URL!;
         const websocketUrl = serverUrl.replace(/^http/, "ws");
+        const statusCallbackUrl = `${serverUrl}/voice/twilio/status`;
 
         const to = req.body.To;
         const from = req.body.From;
@@ -32,6 +33,8 @@ export class VoiceController {
         const connect = twiml.connect();
         connect.stream({
             url: websocketUrlWithParams,
+            statusCallback: statusCallbackUrl,
+            statusCallbackMethod: "POST",
         });
 
         // Send the TwiML response

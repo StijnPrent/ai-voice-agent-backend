@@ -16,6 +16,18 @@ export function voiceRoutes(voiceService: VoiceService) {
     }
   });
 
+  router.post("/twilio/status", async (req, res) => {
+    try {
+      const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
+      const callStatus = typeof req.body?.CallStatus === "string" ? req.body.CallStatus : undefined;
+      voiceService.handleTwilioStatusCallback(callSid, callStatus, req.body ?? {});
+    } catch (error) {
+      console.error("[/voice/twilio/status] Failed to process status callback", error);
+    }
+
+    res.status(200).send("OK");
+  });
+
   router.post("/transfer", verifyInternalApiKey, async (req, res) => {
     try {
       const { phoneNumber, callSid, callerId, reason } = req.body || {};

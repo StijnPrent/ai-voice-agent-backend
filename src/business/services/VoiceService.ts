@@ -87,6 +87,7 @@ export class VoiceService {
     private totalAudioChunksForwardedToVapi = 0;
     private totalMuLawBytesForwardedToVapi = 0;
     private totalAssistantAudioChunks = 0;
+    private stopping = false;
 
     constructor(
         @inject(VapiClient) private readonly vapiClient: VapiClient,
@@ -110,6 +111,7 @@ export class VoiceService {
         this.ws = ws;
         this.callSid = callSid;
         this.streamSid = streamSid;
+        this.stopping = false;
         this.assistantSpeaking = false;
         this.resetSpeechTracking();
         this.twilioMessagesReceived = 0;
@@ -129,6 +131,7 @@ export class VoiceService {
         ws.on("message", this.handleTwilioStreamMessage);
         ws.on("error", (error) => {
             console.error(`[${callSid}] Twilio stream websocket error`, error);
+            this.stopStreaming("twilio stream error");
         });
 
         ws.on("close", (code, reason) => {
@@ -140,6 +143,7 @@ export class VoiceService {
             const reasonText = rawReason.trim();
             const formattedReason = reasonText ? ` (${reasonText})` : "";
             console.log(`[${callSid}] Twilio stream websocket closed with code ${code}${formattedReason}`);
+            this.stopStreaming("twilio socket closed");
         });
 
         if (initialEvent) {
@@ -271,9 +275,21 @@ export class VoiceService {
         console.log(`[${this.callSid}] Twilio mark received: ${mark}`);
     }
 
-    public stopStreaming() {
+    public stopStreaming(reason?: string) {
+        if (this.stopping) {
+            if (reason) {
+                console.log(
+                    `[${this.callSid ?? "unknown"}] stopStreaming already in progress (reason: ${reason})`
+                );
+            }
+            return;
+        }
+
+        this.stopping = true;
+
         const callId = this.callSid ?? "unknown";
-        console.log(`[${callId}] Stopping Vapi voice session`);
+        const formattedReason = reason ? ` (${reason})` : "";
+        console.log(`[${callId}] Stopping Vapi voice session${formattedReason}`);
         this.logSessionSnapshot("twilio stop");
 
         if (this.activeCompanyId && this.callStartedAt && this.callSid) {
@@ -309,9 +325,13 @@ export class VoiceService {
             if (this.ws) {
                 this.ws.removeListener("message", this.handleTwilioStreamMessage);
             }
-            this.vapiSession?.close();
+            this.terminateTwilioSocket("stop streaming");
+            this.vapiSession?.close(1000, reason ? reason.slice(0, 100) : "stopped");
         } catch (error) {
-            console.error("[VoiceService] Failed to close Vapi session", error);
+            console.error("[VoiceService] Failed during stopStreaming cleanup", error);
+            try {
+                this.ws?.terminate();
+            } catch {}
         }
         this.vapiSession = null;
         this.ws = null;
@@ -643,7 +663,7 @@ export class VoiceService {
                 break;
             }
             case "stop": {
-                this.stopStreaming();
+                this.stopStreaming("twilio stop event");
                 break;
             }
             case "keepalive":
@@ -653,6 +673,65 @@ export class VoiceService {
             default: {
                 console.log(`[${this.callSid ?? "unknown"}] Ignoring unhandled Twilio event type: ${event.event}`);
             }
+        }
+    }
+
+    public handleTwilioStatusCallback(
+        callSid: string | undefined,
+        callStatus: string | undefined,
+        rawEvent?: Record<string, unknown>
+    ) {
+        const normalizedStatus = (callStatus ?? "").toLowerCase();
+        const relevantStatuses = new Set([
+            "completed",
+            "completed-by-redirect",
+            "busy",
+            "failed",
+            "no-answer",
+            "canceled",
+        ]);
+
+        const incomingCallSid = callSid ?? rawEvent?.["CallSid"];
+        const callId = incomingCallSid ?? this.callSid ?? "unknown";
+
+        console.log(
+            `[${callId}] Received Twilio status callback: status=${callStatus ?? ""} callSid=${incomingCallSid ?? "unknown"}`
+        );
+
+        if (!relevantStatuses.has(normalizedStatus)) {
+            return;
+        }
+
+        if (this.callSid && incomingCallSid && this.callSid !== incomingCallSid) {
+            console.log(
+                `[${callId}] Status callback does not match active callSid (${this.callSid}); skipping stop`
+            );
+            return;
+        }
+
+        this.stopStreaming(`twilio status callback (${normalizedStatus || "unknown"})`);
+    }
+
+    private terminateTwilioSocket(reason: string) {
+        const socket = this.ws;
+        if (!socket) {
+            return;
+        }
+
+        if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+            return;
+        }
+
+        try {
+            socket.close(1000, reason.slice(0, 120));
+        } catch (error) {
+            console.warn(
+                `[${this.callSid ?? "unknown"}] Failed to close Twilio websocket gracefully (${reason}); terminating`,
+                error
+            );
+            try {
+                socket.terminate();
+            } catch {}
         }
     }
 }
