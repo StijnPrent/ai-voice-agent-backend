@@ -153,7 +153,7 @@ export class VapiClient {
     this.modelName = process.env.VAPI_MODEL_NAME || 'gpt-4o-mini';
     this.transportProvider = 'vapi.websocket';
 
-    this.toolBaseUrl = (process.env.VAPI_TOOL_BASE_URL || process.env.SERVER_URL || '').replace(/\/$/, '');
+    this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
 
     this.http = axios.create({
       baseURL: apiBaseUrl,
