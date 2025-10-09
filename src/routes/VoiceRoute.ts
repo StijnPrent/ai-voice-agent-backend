@@ -8,21 +8,30 @@ export function voiceRoutes(voiceService: VoiceService) {
   const router = Router();
   const controller = new VoiceController();
 
-  router.post("/twilio/incoming", controller.handleIncomingCallTwilio.bind(controller));
+  router.post("/twilio/incoming", async (req, res, next) => {
+    try {
+      await controller.handleIncomingCallTwilio(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.post("/transfer", verifyInternalApiKey, async (req, res) => {
     try {
       const { phoneNumber, callSid, callerId, reason } = req.body || {};
       if (!phoneNumber || typeof phoneNumber !== "string") {
-        return res.status(400).json({ error: "phoneNumber is required" });
+        res.status(400).json({ error: "phoneNumber is required" });
+        return;
       }
       await voiceService.transferCall(phoneNumber, { callSid, callerId, reason });
-      return res.json({ success: true, transferredTo: phoneNumber });
+      res.json({ success: true, transferredTo: phoneNumber });
+      return;
     } catch (e: any) {
       console.error("[/voice/transfer] error:", e);
-      return res
+      res
         .status(409)
         .json({ success: false, error: e?.message || "transfer failed" });
+      return;
     }
   });
 
