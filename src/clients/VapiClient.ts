@@ -549,38 +549,160 @@ export class VapiClient {
     const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
 
     const headers: Record<string, string> = {
-      'content-type': 'application/json',
+      'Content-Type': 'application/json',
     };
     if (process.env.INTERNAL_API_KEY) {
       headers['x-internal-api-key'] = process.env.INTERNAL_API_KEY!;
     }
 
+    const createApiRequestTool = (
+      name: string,
+      description: string,
+      path: string,
+      jsonSchema: Record<string, unknown>,
+    ) => ({
+      type: 'apiRequest',
+      name,
+      description,
+      method: 'POST',
+      url: join(path),
+      headers,
+      timeoutSeconds: 15,
+      body: {
+        type: 'jsonSchema',
+        jsonSchema,
+      },
+    });
+
     const tools: any[] = [
-      {
-        type: 'apiRequest',
-        name: 'transfer_call',
-        description: 'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
-        method: 'POST',
-        url: join('/voice/transfer'),
-        headers,
-        body: {
-          type: 'jsonSchema',
-          jsonSchema: {
+      createApiRequestTool(
+        'transfer_call',
+        'Verbind de beller door naar een medewerker via het opgegeven telefoonnummer.',
+        '/voice/transfer',
+        {
+          type: 'object',
+          properties: {
+            phoneNumber: {
+              type: 'string',
+              description: 'Bestemmingsnummer in E.164-formaat waarvoor moet worden doorgeschakeld.',
+            },
+            callSid: {
+              type: 'string',
+              description: 'Het actieve callSid zodat het gesprek kan worden bijgehouden.',
+            },
+            callerId: {
+              type: 'string',
+              description: 'Caller ID dat moet worden meegegeven tijdens het doorverbinden.',
+            },
+            reason: {
+              type: 'string',
+              description: 'Korte toelichting waarom de beller moet worden doorgeschakeld.',
+            },
+          },
+          required: ['phoneNumber', 'callSid', 'callerId', 'reason'],
+          additionalProperties: false,
+        },
+      ),
+    ];
+
+    if (config.hasGoogleIntegration) {
+      tools.push(
+        createApiRequestTool(
+          'check_google_calendar_availability',
+          'Controleer beschikbare Google Agenda tijdsloten voor een opgegeven datum.',
+          '/google/availability',
+          {
             type: 'object',
             properties: {
-              phoneNumber: { type: 'string', description: 'Telefoonnummer of SIP-adres' },
-              callSid: { type: 'string', description: 'Optioneel: actief callSid' },
-              callerId: { type: 'string', description: 'Caller ID om mee te bellen' },
-              reason: { type: 'string', description: 'Korte reden van doorverbinden' },
+              date: {
+                type: 'string',
+                format: 'date',
+                description: 'Datum (YYYY-MM-DD) waarvoor beschikbaarheid moet worden opgehaald.',
+              },
             },
-            required: ['phoneNumber'],
+            required: ['date'],
             additionalProperties: false,
           },
-        },
-        timeoutSeconds: 20,
-      },
-      // (Calendar tools can be appended here using the same headers/jsonSchema pattern)
-    ];
+        ),
+        createApiRequestTool(
+          'schedule_google_calendar_event',
+          'Plan een nieuwe Google Agenda-afspraak voor de beller met alle details.',
+          '/google/schedule',
+          {
+            type: 'object',
+            properties: {
+              summary: {
+                type: 'string',
+                description: 'Korte titel van de afspraak.',
+              },
+              start: {
+                type: 'string',
+                format: 'date-time',
+                description: 'Starttijd in ISO 8601-formaat inclusief tijdzone.',
+              },
+              end: {
+                type: 'string',
+                format: 'date-time',
+                description: 'Eindtijd in ISO 8601-formaat inclusief tijdzone.',
+              },
+              name: {
+                type: 'string',
+                description: 'Volledige naam van de klant.',
+              },
+              dateOfBirth: {
+                type: 'string',
+                format: 'date',
+                description: 'Geboortedatum van de klant (YYYY-MM-DD).',
+              },
+              description: {
+                type: 'string',
+                description: 'Optionele toelichting die bij de afspraak moet worden opgeslagen.',
+              },
+              location: {
+                type: 'string',
+                description: 'Optionele locatie van de afspraak.',
+              },
+              attendeeEmail: {
+                type: 'string',
+                format: 'email',
+                description: 'Optioneel e-mailadres van de aanwezige.',
+              },
+            },
+            required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
+            additionalProperties: false,
+          },
+        ),
+        createApiRequestTool(
+          'cancel_google_calendar_event',
+          'Annuleer een bestaande Google Agenda-afspraak en registreer de reden van annuleren.',
+          '/google/cancel',
+          {
+            type: 'object',
+            properties: {
+              eventId: {
+                type: 'string',
+                description: 'Unieke ID van de afspraak die moet worden geannuleerd.',
+              },
+              name: {
+                type: 'string',
+                description: 'Naam van de persoon voor wie de afspraak staat.',
+              },
+              dateOfBirth: {
+                type: 'string',
+                format: 'date',
+                description: 'Geboortedatum van de persoon (YYYY-MM-DD).',
+              },
+              reason: {
+                type: 'string',
+                description: 'Reden van annulering die moet worden vastgelegd.',
+              },
+            },
+            required: ['eventId', 'name', 'dateOfBirth', 'reason'],
+            additionalProperties: false,
+          },
+        ),
+      );
+    }
 
     return tools;
   }
