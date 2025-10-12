@@ -1,6 +1,3 @@
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "test-openai";
-process.env.ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "test-elevenlabs";
-process.env.ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "test-voice";
 process.env.TWILIO_SID = process.env.TWILIO_SID || "test-twilio-sid";
 process.env.TWILIO_AUTH = process.env.TWILIO_AUTH || "test-twilio-auth";
 process.env.SERVER_URL = process.env.SERVER_URL || "http://localhost:3003";
