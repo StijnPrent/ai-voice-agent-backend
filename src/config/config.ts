@@ -7,16 +7,6 @@ interface Config {
     port: number;
     nodeEnv: string;
 
-    // OpenAI
-    openAiKey: string;
-
-    // deepgram
-    deepgramKey: string;
-
-    // ElevenLabs
-    elevenLabsKey: string;
-    elevenLabsVoiceId: string;
-
     // Twilio
     twilioSid: string;
     twilioAuth: string;
@@ -59,13 +49,6 @@ const config: Config = {
     port: Number(process.env.PORT) || 3002,
     nodeEnv: process.env.NODE_ENV || "development",
 
-    openAiKey: process.env.OPENAI_API_KEY || "",
-
-    deepgramKey: process.env.DEEPGRAM_API_KEY || "",
-
-    elevenLabsKey: process.env.ELEVENLABS_API_KEY || "",
-    elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID || "",
-
     twilioSid: process.env.TWILIO_SID || "",
     twilioAuth: process.env.TWILIO_AUTH || "",
     twilioFrom: process.env.TWILIO_FROM || "",
@@ -99,9 +82,6 @@ const config: Config = {
 };
 
 // Validate critical values
-if (!config.openAiKey) throw new Error("❌ Missing OPENAI_API_KEY in .env");
-if (!config.elevenLabsKey) throw new Error("❌ Missing ELEVENLABS_API_KEY in .env");
-if (!config.elevenLabsVoiceId) throw new Error("❌ Missing ELEVENLABS_VOICE_ID in .env");
 if (!config.twilioSid || !config.twilioAuth) throw new Error("❌ Missing Twilio credentials in .env");
 if (!config.googleRedirectUri) throw new Error("❌ Missing GOOGLE_REDIRECT_URI in .env");
 if (!config.outlookRedirectUri) throw new Error("❌ Missing OUTLOOK_REDIRECT_URI in .env");
