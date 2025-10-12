@@ -100,6 +100,40 @@ export class VoiceService {
         @inject("TwilioClient") private readonly twilioClient: TwilioClient
     ) {}
 
+    /**
+     * Initializes a Twilio <-> Vapi streaming session for an inbound or outbound call.
+     *
+     * Sets up websocket listeners for the Twilio media stream, resolves company configuration,
+     * boots the Vapi realtime session, and primes the service for subsequent audio forwarding
+     * and call management.
+     *
+     * @param ws WebSocket connection received from Twilio's media stream webhook. Side-effect:
+     * attaches `message`, `error`, and `close` handlers that forward media to Vapi via
+     * {@link forwardAudioToTwilio} and eventually invoke {@link stopStreaming} when the socket
+     * closes or errors.
+     * @param callSid Twilio call identifier used for logging, repository lookups, and Vapi
+     * session association.
+     * @param streamSid Twilio media stream identifier returned to Twilio in `clear` events.
+     * @param to Destination phone number for the call. Must be present—used to resolve the
+     * owning company and their voice settings; streaming cannot continue without a match.
+     * @param from Optional caller phone number. If omitted, we fall back to the value embedded in
+     * the first Twilio media event (`initialEvent`). Used for caller tracking and transfer logic.
+     * @param initialEvent Optional first media event payload received during stream setup. When
+     * provided it is processed immediately to avoid dropping the initial audio frame and to infer
+     * caller details if `from` is absent.
+     *
+     * @remarks
+     * - Resets speech tracking counters and timestamps so that silence detection and usage logs
+     *   behave correctly for each new call.
+     * - Looks up company information, reply style, and scheduling context via injected services
+     *   (`CompanyService`, `IVoiceRepository`, `SchedulingService`, etc.), then configures the
+     *   {@link VapiClient} before establishing a realtime session.
+     * - Registers Vapi session callbacks that can trigger downstream helpers like
+     *   {@link transferCall} when a transfer is requested, and updates assistant/user speaking
+     *   state used by {@link stopStreaming} heuristics.
+     * - When the websocket errors or closes, `stopStreaming` is triggered to tear down resources
+     *   and send the appropriate Twilio status events.
+     */
     public async startStreaming(
         ws: WebSocket,
         callSid: string,
