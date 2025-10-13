@@ -105,7 +105,7 @@ describe('VapiClient tool dispatcher', () => {
 
     await execute({
       id: 'tool-3',
-      name: 'create_calendar_event',
+      name: 'schedule_google_calendar_event',
       args: {
         summary: 'Consult',
         start: '2024-01-08T09:00:00+01:00',
@@ -138,12 +138,35 @@ describe('VapiClient tool dispatcher', () => {
     });
   });
 
+  it('accepts legacy create_calendar_event tool names for backwards compatibility', async () => {
+    const createdEvent = { id: 'legacy-event' };
+    googleService.scheduleEvent.mockResolvedValue(createdEvent as any);
+
+    await execute({
+      id: 'legacy-tool',
+      name: 'create_calendar_event',
+      args: {
+        summary: 'Controle',
+        start: '2024-02-01T10:00:00+01:00',
+        end: '2024-02-01T10:30:00+01:00',
+        name: 'Jan Jansen',
+        dateOfBirth: '02-02-1980',
+      },
+    });
+
+    expect(googleService.scheduleEvent).toHaveBeenCalled();
+    expect(session.sendToolResponse).toHaveBeenCalledWith('legacy-tool', {
+      success: true,
+      data: { event: createdEvent },
+    });
+  });
+
   it('requests availability slots with derived business hours', async () => {
     googleService.getAvailableSlots.mockResolvedValue(['09:00', '09:30']);
 
     await execute({
       id: 'tool-4',
-      name: 'check_calendar_availability',
+      name: 'check_google_calendar_availability',
       args: { date: '2024-01-08' },
     });
 
@@ -162,7 +185,7 @@ describe('VapiClient tool dispatcher', () => {
   it('returns an error response when Google service throws', async () => {
     googleService.cancelEvent.mockRejectedValue(new Error('Event not found'));
 
-    await execute({ id: 'tool-5', name: 'cancel_calendar_event', args: { eventId: 'evt-1' } });
+    await execute({ id: 'tool-5', name: 'cancel_google_calendar_event', args: { eventId: 'evt-1' } });
 
     expect(session.sendToolResponse).toHaveBeenCalledWith('tool-5', {
       success: false,
@@ -178,7 +201,11 @@ describe('VapiClient tool dispatcher', () => {
     createCompany(false);
 
     await (client as any).executeToolCall(
-      { id: 'tool-6', name: 'create_calendar_event', args: { summary: 'A', start: 's', end: 'e', name: 'n', dateOfBirth: 'd' } },
+      {
+        id: 'tool-6',
+        name: 'schedule_google_calendar_event',
+        args: { summary: 'A', start: 's', end: 'e', name: 'n', dateOfBirth: 'd' },
+      },
       session,
       baseCallbacks,
     );

@@ -79,6 +79,26 @@ export type NormalizedToolCall = {
   args: Record<string, unknown>;
 };
 
+const TOOL_NAMES = {
+  transferCall: 'transfer_call',
+  scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
+  checkGoogleCalendarAvailability: 'check_google_calendar_availability',
+  cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
+} as const;
+
+const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
+  ['create_calendar_event', TOOL_NAMES.scheduleGoogleCalendarEvent],
+  ['check_calendar_availability', TOOL_NAMES.checkGoogleCalendarAvailability],
+  ['cancel_calendar_event', TOOL_NAMES.cancelGoogleCalendarEvent],
+]);
+
+const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
+  TOOL_NAMES.transferCall,
+  TOOL_NAMES.scheduleGoogleCalendarEvent,
+  TOOL_NAMES.checkGoogleCalendarAvailability,
+  TOOL_NAMES.cancelGoogleCalendarEvent,
+]);
+
 class VapiRealtimeSession {
   private closed = false;
 
@@ -233,7 +253,7 @@ export class VapiClient {
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        'Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool \'check_calendar_availability\' voordat je een tijdstip voorstelt en vraag om naam en email voordat je \'create_calendar_event\' of \'cancel_calendar_event\' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie',
+        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie`,
       );
     } else {
       instructions.push(
@@ -391,7 +411,7 @@ export class VapiClient {
     const tools: any[] = [
       {
         type: 'function',
-        name: 'transfer_call',
+        name: TOOL_NAMES.transferCall,
         description:
           'Verbind de beller door naar een medewerker of collega wanneer menselijke hulp nodig is.',
         parameters: {
@@ -456,21 +476,21 @@ export class VapiClient {
     tools.push(
       {
         type: 'function',
-        name: 'create_calendar_event',
+        name: TOOL_NAMES.scheduleGoogleCalendarEvent,
         description:
           'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
         parameters: createCalendarParameters,
       },
       {
         type: 'function',
-        name: 'check_calendar_availability',
+        name: TOOL_NAMES.checkGoogleCalendarAvailability,
         description:
           'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
         parameters: checkAvailabilityParameters,
       },
       {
         type: 'function',
-        name: 'cancel_calendar_event',
+        name: TOOL_NAMES.cancelGoogleCalendarEvent,
         description:
           'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
         parameters: cancelCalendarParameters,
@@ -1101,13 +1121,16 @@ export class VapiClient {
       return;
     }
 
-    const googleTools = new Set([
-      'create_calendar_event',
-      'check_calendar_availability',
-      'cancel_calendar_event',
+    const normalizedToolName = this.normalizeToolName(call.name);
+    const googleTools = new Set<
+      (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]
+    >([
+      TOOL_NAMES.scheduleGoogleCalendarEvent,
+      TOOL_NAMES.checkGoogleCalendarAvailability,
+      TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    if (googleTools.has(call.name) && !this.hasGoogleIntegration) {
+    if (normalizedToolName && googleTools.has(normalizedToolName) && !this.hasGoogleIntegration) {
       console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
       session.sendToolResponse(call.id, { error: 'Google integration not available' });
       return;
@@ -1130,7 +1153,7 @@ export class VapiClient {
     const args = call.args ?? {};
 
     const handlers: Record<string, () => Promise<void>> = {
-      transfer_call: async () => {
+      [TOOL_NAMES.transferCall]: async () => {
         if (!callbacks.onTransferCall) {
           throw new Error('Doorverbinden is niet beschikbaar in deze sessie.');
         }
@@ -1149,7 +1172,7 @@ export class VapiClient {
           reason: reason ?? null,
         });
       },
-      check_calendar_availability: async () => {
+      [TOOL_NAMES.checkGoogleCalendarAvailability]: async () => {
         const date = this.normalizeStringArg(args['date']);
         if (!date) {
           throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
@@ -1160,7 +1183,7 @@ export class VapiClient {
         const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
         sendSuccess({ date, openHour, closeHour, slots });
       },
-      create_calendar_event: async () => {
+      [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
         const summary = this.normalizeStringArg(args['summary']);
         const start = this.normalizeStringArg(args['start']);
         const end = this.normalizeStringArg(args['end']);
@@ -1207,7 +1230,7 @@ export class VapiClient {
         const created = await this.googleService.scheduleEvent(companyId, event);
         sendSuccess({ event: created });
       },
-      cancel_calendar_event: async () => {
+      [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
         const eventId = this.normalizeStringArg(args['eventId']);
         const name = this.normalizeStringArg(args['name']);
         const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
@@ -1226,7 +1249,7 @@ export class VapiClient {
       },
     };
 
-    const handler = handlers[call.name];
+    const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
 
     if (!handler) {
       sendError(`Onbekende tool: ${call.name}`);
@@ -1243,6 +1266,22 @@ export class VapiClient {
       console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
       sendError(message);
     }
+  }
+
+  private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
+    const normalized = this.normalizeStringArg(name)?.toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    const alias = LEGACY_TOOL_ALIASES.get(normalized);
+    if (alias) {
+      return alias;
+    }
+
+    return KNOWN_TOOL_NAMES.has(normalized as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
+      ? (normalized as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
+      : null;
   }
 
   private normalizeStringArg(value: unknown): string | null {
