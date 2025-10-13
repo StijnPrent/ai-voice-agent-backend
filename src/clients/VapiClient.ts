@@ -262,7 +262,7 @@ export class VapiClient {
     }
 
     instructions.push(
-      "Gebruik de tool 'transfer_call' zodra de beller aangeeft te willen worden doorverbonden. Voeg een korte reden toe en gebruik bij voorkeur het algemene bedrijfsnummer uit de context, tenzij de beller een ander nummer opgeeft.",
+      "Gebruik de tool 'transfer_call' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer",
     );
 
     return instructions.join('\n\n');
