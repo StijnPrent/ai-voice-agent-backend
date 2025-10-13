@@ -21,7 +21,7 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 
 ## 4. Handle Real-Time Events
 1. Listen for JSON events from Vapi alongside the audio, such as partial transcripts, final messages, or tool calls.
-2. When Vapi issues a tool call (e.g., `create_calendar_event`), invoke the appropriate downstream service or internal API from your backend.
+2. When Vapi issues a tool call (e.g., `schedule_google_calendar_event`), invoke the appropriate downstream service or internal API from your backend.
 3. Respond to Vapi with a `tool.response` message over the same WebSocket so the assistant can continue the conversation with the new information.
 
 ## 5. Manage Call Lifecycle
