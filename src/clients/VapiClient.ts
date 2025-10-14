@@ -425,7 +425,7 @@ export class VapiClient {
             properties: {
               phoneNumber: {
                 type: 'string',
-                description: 'Telefoonnummer of SIP-adres van de medewerker die de call moet overnemen.',
+                description: `Vereist: het telefoonnummer om de beller naartoe door te verbinden (gebruik altijd het algemene bedrijfsnummer).`,
               },
               callSid: {
                 type: 'string',
