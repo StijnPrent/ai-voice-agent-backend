@@ -614,7 +614,6 @@ export class VapiClient {
       ...(description ? { description } : {}),
       method,
       url: join(path),
-      headers,
       timeoutSeconds: 15,
       // ⬇️ GEEN wrapper meer; body is direct het schema
       body: schema,
