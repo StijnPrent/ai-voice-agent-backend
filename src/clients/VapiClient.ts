@@ -579,6 +579,29 @@ export class VapiClient {
       ...(process.env.INTERNAL_API_KEY ? { 'x-internal-api-key': process.env.INTERNAL_API_KEY } : {}),
     };
 
+    const addCompanyContext = (schema: Record<string, any>) => {
+      const companyId = config.company.id.toString();
+      const properties = {
+        ...(schema.properties ?? {}),
+        companyId: {
+          type: 'string',
+          description: 'Identifier of the company for which the action is performed.',
+          const: companyId,
+        },
+      };
+
+      const required = Array.isArray(schema.required)
+        ? Array.from(new Set([...(schema.required as string[]), 'companyId']))
+        : ['companyId'];
+
+      return {
+        ...schema,
+        type: 'object',
+        properties,
+        required,
+      };
+    };
+
     const createApiRequestTool = (
       name: string,
       path: string,
@@ -621,20 +644,20 @@ export class VapiClient {
         createApiRequestTool(
           'check_google_calendar_availability',
           '/google/availability',
-          {
+          addCompanyContext({
             type: 'object',
             properties: {
               date: { type: 'string' }, // ⬅️ geen format/description
             },
             required: ['date'],
-          },
+          }),
           'POST',
           'Beschikbaarheid op datum',
         ),
         createApiRequestTool(
           'schedule_google_calendar_event',
           '/google/schedule',
-          {
+          addCompanyContext({
             type: 'object',
             properties: {
               summary: { type: 'string' },
@@ -647,14 +670,14 @@ export class VapiClient {
               attendeeEmail: { type: 'string' },
             },
             required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-          },
+          }),
           'POST',
           'Nieuwe afspraak plannen',
         ),
         createApiRequestTool(
           'cancel_google_calendar_event',
           '/google/cancel',
-          {
+          addCompanyContext({
             type: 'object',
             properties: {
               eventId: { type: 'string' },
@@ -663,7 +686,7 @@ export class VapiClient {
               reason: { type: 'string' },
             },
             required: ['eventId', 'name', 'dateOfBirth', 'reason'],
-          },
+          }),
           'POST',
           'Afspraak annuleren',
         ),
