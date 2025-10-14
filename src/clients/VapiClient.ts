@@ -102,7 +102,8 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
 class VapiRealtimeSession {
   private closed = false;
 
-  constructor(private readonly socket: WebSocket) {}
+  constructor(private readonly socket: WebSocket) {
+  }
 
   public sendAudioChunkBinary(chunk: Buffer) {
     if (this.closed) return;
@@ -266,7 +267,7 @@ export class VapiClient {
     }
 
     instructions.push(
-      "Gebruik de tool 'transfer_call' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer",
+      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer',
     );
 
     return instructions.join('\n\n');
@@ -415,26 +416,24 @@ export class VapiClient {
     const tools: any[] = [
       {
         type: 'function',
-        name: TOOL_NAMES.transferCall,
-        description:
-          'Verbind de beller door naar een medewerker of collega wanneer menselijke hulp nodig is.',
-        parameters: {
-          type: 'object',
-          properties: {
-            phoneNumber: {
-              type: 'string',
-              description: 'Telefoonnummer of SIP-adres van de medewerker die de call moet overnemen.',
+        function: {
+          name: TOOL_NAMES.transferCall,
+          description:
+            'Verbind de beller door naar een medewerker of collega wanneer menselijke hulp nodig is.',
+          parameters: {
+            type: 'object',
+            properties: {
+              phoneNumber: {
+                type: 'string',
+                description: 'Telefoonnummer of SIP-adres van de medewerker die de call moet overnemen.',
+              },
+              callSid: {
+                type: 'string',
+                description: 'Optioneel: het huidige callSid als je dit weet.',
+              },
             },
-            callSid: {
-              type: 'string',
-              description: 'Optioneel: het huidige callSid als je dit weet.',
-            },
-            reason: {
-              type: 'string',
-              description: 'Korte toelichting waarom er wordt doorverbonden.',
-            },
+            required: ['phoneNumber'],
           },
-          required: ['phoneNumber'],
         },
       },
     ];
@@ -480,24 +479,30 @@ export class VapiClient {
     tools.push(
       {
         type: 'function',
-        name: TOOL_NAMES.scheduleGoogleCalendarEvent,
-        description:
-          'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
-        parameters: createCalendarParameters,
+        function: {
+          name: TOOL_NAMES.scheduleGoogleCalendarEvent,
+          description:
+            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
+          parameters: createCalendarParameters,
+        },
       },
       {
         type: 'function',
-        name: TOOL_NAMES.checkGoogleCalendarAvailability,
-        description:
-          'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
-        parameters: checkAvailabilityParameters,
+        function: {
+          name: TOOL_NAMES.checkGoogleCalendarAvailability,
+          description:
+            'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
+          parameters: checkAvailabilityParameters,
+        },
       },
       {
         type: 'function',
-        name: TOOL_NAMES.cancelGoogleCalendarEvent,
-        description:
-          'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
-        parameters: cancelCalendarParameters,
+        function: {
+          name: TOOL_NAMES.cancelGoogleCalendarEvent,
+          description:
+            'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
+          parameters: cancelCalendarParameters,
+        },
       },
     );
 
@@ -608,7 +613,7 @@ export class VapiClient {
           required: ['phoneNumber', 'callSid', 'callerId', 'reason'],
         },
         'POST',
-        'Verbind de beller door via backend endpoint.'
+        'Verbind de beller door via backend endpoint.',
       ),
     ];
 
@@ -625,7 +630,7 @@ export class VapiClient {
             required: ['date'],
           },
           'POST',
-          'Beschikbaarheid op datum'
+          'Beschikbaarheid op datum',
         ),
         createApiRequestTool(
           'schedule_google_calendar_event',
@@ -645,7 +650,7 @@ export class VapiClient {
             required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
           },
           'POST',
-          'Nieuwe afspraak plannen'
+          'Nieuwe afspraak plannen',
         ),
         createApiRequestTool(
           'cancel_google_calendar_event',
@@ -661,7 +666,7 @@ export class VapiClient {
             required: ['eventId', 'name', 'dateOfBirth', 'reason'],
           },
           'POST',
-          'Afspraak annuleren'
+          'Afspraak annuleren',
         ),
       );
     }
@@ -840,17 +845,17 @@ export class VapiClient {
       data?.url ??
       null;
 
-    if (!primaryUrl || typeof primaryUrl !== "string" || !primaryUrl.startsWith("ws")) {
+    if (!primaryUrl || typeof primaryUrl !== 'string' || !primaryUrl.startsWith('ws')) {
       return null;
     }
 
     // If Vapi ever adds fallbacks, pick them up here (otherwise empty).
     const fallbackUrls = Array.isArray(data?.transport?.fallbackUrls)
-      ? data.transport.fallbackUrls.filter((u: any) => typeof u === "string" && u.startsWith("ws"))
+      ? data.transport.fallbackUrls.filter((u: any) => typeof u === 'string' && u.startsWith('ws'))
       : [];
 
     // ✅ The Vapi Call ID is just data.id
-    const callId = (typeof data?.id === "string" ? data.id : null) ?? null;
+    const callId = (typeof data?.id === 'string' ? data.id : null) ?? null;
 
     return { primaryUrl, fallbackUrls, callId };
   }

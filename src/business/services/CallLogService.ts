@@ -7,6 +7,7 @@ export type CallTranscriptMessage = {
     role: string;
     content: string;
     startTime: number | null;
+    duration?: number | null;
 };
 
 export type CallDetailsResponse = {
@@ -22,6 +23,7 @@ export type CallSummaryResponse = {
     callSid: string;
     phoneNumber: string | null;
     startedAt: Date;
+    duration: number | null;
 };
 
 @injectable()
@@ -71,6 +73,7 @@ export class CallLogService {
             callSid: record.callSid,
             phoneNumber: record.fromNumber,
             startedAt: record.startedAt,
+            duration: record.endedAt ? (record.endedAt.getTime() - record.startedAt.getTime()) / 1000 : null,
         }));
     }
 
