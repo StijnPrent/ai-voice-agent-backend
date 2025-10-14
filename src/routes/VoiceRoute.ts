@@ -28,7 +28,7 @@ export function voiceRoutes(voiceService: VoiceService) {
     res.status(200).send("OK");
   });
 
-  router.post("/transfer", verifyInternalApiKey, async (req, res) => {
+  router.post("/transfer", async (req, res) => {
     try {
       const { phoneNumber, callSid, callerId, reason } = req.body || {};
       if (!phoneNumber || typeof phoneNumber !== "string") {
