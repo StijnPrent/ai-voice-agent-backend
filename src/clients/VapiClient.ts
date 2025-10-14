@@ -581,8 +581,11 @@ export class VapiClient {
         ...(schema.properties ?? {}),
         companyId: {
           type: 'string',
-          description: 'Identifier of the company for which the action is performed.',
+          description: 'Identifier of the company for which the action is performed. Must always match the current company.',
           const: companyId,
+          default: companyId,
+          enum: [companyId],
+          examples: [companyId],
         },
       };
 
@@ -595,6 +598,7 @@ export class VapiClient {
         type: 'object',
         properties,
         required,
+        additionalProperties: schema.additionalProperties ?? false,
       };
     };
 
@@ -643,7 +647,13 @@ export class VapiClient {
             type: 'object',
             properties: {
               companyId: { type: 'string' }, // ⬅️ altijd constant
-              date: { type: 'string' }, // ⬅️ geen format/description
+              date: {
+                type: 'string',
+                format: 'date',
+                pattern: '^\\d{4}-\\d{2}-\\d{2}$',
+                description: 'Date (YYYY-MM-DD) for which availability must be checked.',
+                examples: ['2024-05-30'],
+              },
             },
             required: ['date'],
           }),
@@ -1194,7 +1204,9 @@ export class VapiClient {
         }
 
         const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
-        const callSid = this.normalizeStringArg(args['callSid']);
+        const sessionCallSid = sessionContext?.callSid ?? null;
+        const callSidFromArgs = this.normalizeStringArg(args['callSid']);
+        const callSid = callSidFromArgs ?? sessionCallSid;
         const callerId = this.normalizeStringArg(args['callerId']);
         const reason = this.normalizeStringArg(args['reason']);
 
@@ -1203,7 +1215,7 @@ export class VapiClient {
         sendSuccess({
           message: 'Doorverbinden gestart',
           transferredTo: result?.transferredTo ?? phoneNumber ?? null,
-          callSid: result?.callSid ?? callSid ?? null,
+          callSid: result?.callSid ?? callSid ?? sessionCallSid ?? null,
           reason: reason ?? null,
         });
       },
