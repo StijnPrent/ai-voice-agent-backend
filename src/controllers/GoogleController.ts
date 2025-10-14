@@ -3,6 +3,7 @@
 import { Request, Response } from "express";
 import {injectable, inject, container} from "tsyringe";
 import { GoogleService } from "../business/services/GoogleService";
+import { GoogleReauthRequiredError } from "../business/errors/GoogleReauthRequiredError";
 import { calendar_v3 } from "googleapis";
 
 @injectable()
@@ -72,6 +73,10 @@ export class GoogleController {
             const scheduled = await service.scheduleEvent(BigInt(companyId), event);
             res.json(scheduled);
         } catch (err) {
+            if (err instanceof GoogleReauthRequiredError) {
+                res.status(err.statusCode).json({ message: err.message, authUrl: err.authUrl });
+                return;
+            }
             console.error("❌ scheduleEvent failed:", err);
             res.status(500).send("Error scheduling event");
         }
@@ -106,6 +111,10 @@ export class GoogleController {
             );
             res.json({ availableSlots });
         } catch (err) {
+            if (err instanceof GoogleReauthRequiredError) {
+                res.status(err.statusCode).json({ message: err.message, authUrl: err.authUrl });
+                return;
+            }
             console.error("❌ checkAvailability failed:", err);
             res.status(500).send("Error fetching availability");
         }
@@ -129,6 +138,10 @@ export class GoogleController {
             const success = await service.cancelEvent(BigInt(companyId), eventId, name, dateOfBirth);
             res.json({ success });
         } catch (err) {
+            if (err instanceof GoogleReauthRequiredError) {
+                res.status(err.statusCode).json({ message: err.message, authUrl: err.authUrl });
+                return;
+            }
             console.error("❌ cancelEvent failed:", err);
             res.status(500).send("Error cancelling event");
         }

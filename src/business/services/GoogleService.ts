@@ -6,7 +6,8 @@ import { IGoogleRepository } from "../../data/interfaces/IGoogleRepository";
 import { GoogleCalendarClient, GoogleAppCredentials } from "../../clients/GoogleCalenderClient";
 import config from "../../config/config";
 import {encrypt} from "../../utils/crypto";
-import {addMinutes, format, isBefore, parseISO, roundToNearestMinutes} from "date-fns";
+import {addMinutes, format, isBefore, parseISO} from "date-fns";
+import { GoogleReauthRequiredError } from "../errors/GoogleReauthRequiredError";
 
 @injectable()
 export class GoogleService {
@@ -178,7 +179,16 @@ export class GoogleService {
             } catch (error: any) {
                 if (error.response?.data?.error === 'invalid_grant') {
                     console.error(`[GoogleService] 'invalid_grant' error for company ${model.companyId}. The refresh token is likely revoked or invalid. Please re-authenticate.`);
-                    throw new Error(`Google API 'invalid_grant': Re-authentication required for company ${model.companyId}.`);
+                    const companyIdStr = model.companyId.toString();
+                    const authUrl = this.getAuthUrl(companyIdStr);
+
+                    try {
+                        await this.repo.deleteGoogleTokens(BigInt(companyIdStr));
+                    } catch (repoError) {
+                        console.error(`[GoogleService] Failed to remove invalid tokens for company ${companyIdStr}:`, repoError);
+                    }
+
+                    throw new GoogleReauthRequiredError(companyIdStr, authUrl);
                 }
                 throw error;
             }
