@@ -576,7 +576,6 @@ export class VapiClient {
     const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
 
     const headers: Record<string, string> = {
-      'content-type': 'application/json',
       ...(process.env.INTERNAL_API_KEY ? { 'x-internal-api-key': process.env.INTERNAL_API_KEY } : {}),
     };
 
