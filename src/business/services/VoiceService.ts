@@ -210,32 +210,36 @@ export class VoiceService {
                 this.ws.send(JSON.stringify({ event: "clear", streamSid: this.streamSid }));
             }
 
-            const { session, callId } = await this.vapiClient.openRealtimeSession(callSid, {
-                onAudio: (audioPayload) => this.forwardAudioToTwilio(audioPayload),
-                onText: (text) => console.log(`[${callSid}] [Vapi] text:`, text),
-                onToolStatus: (status) => {
-                    console.log(`[${callSid}] [Vapi] tool status: ${status}`);
-                    if (status === "response-completed") {
-                        this.assistantSpeaking = false;
-                    }
+            const { session, callId } = await this.vapiClient.openRealtimeSession(
+                callSid,
+                {
+                    onAudio: (audioPayload) => this.forwardAudioToTwilio(audioPayload),
+                    onText: (text) => console.log(`[${callSid}] [Vapi] text:`, text),
+                    onToolStatus: (status) => {
+                        console.log(`[${callSid}] [Vapi] tool status: ${status}`);
+                        if (status === "response-completed") {
+                            this.assistantSpeaking = false;
+                        }
+                    },
+                    onSessionError: (err) => console.error(`[${callSid}] [Vapi] session error`, err),
+                    onSessionClosed: () => {
+                        console.log(`[${callSid}] [Vapi] session closed`);
+                        this.logSessionSnapshot("vapi session closed");
+                    },
+                    onTransferCall: async ({ phoneNumber, callSid: requestedCallSid, callerId, reason }) => {
+                        await this.transferCall(phoneNumber ?? "", {
+                            callSid: requestedCallSid ?? undefined,
+                            callerId: callerId ?? undefined,
+                            reason: reason ?? undefined,
+                        });
+                        return {
+                            transferredTo: phoneNumber ?? this.companyTransferNumber ?? null,
+                            callSid: this.callSid,
+                        };
+                    },
                 },
-                onSessionError: (err) => console.error(`[${callSid}] [Vapi] session error`, err),
-                onSessionClosed: () => {
-                    console.log(`[${callSid}] [Vapi] session closed`);
-                    this.logSessionSnapshot("vapi session closed");
-                },
-                onTransferCall: async ({ phoneNumber, callSid: requestedCallSid, callerId, reason }) => {
-                    await this.transferCall(phoneNumber ?? "", {
-                        callSid: requestedCallSid ?? undefined,
-                        callerId: callerId ?? undefined,
-                        reason: reason ?? undefined,
-                    });
-                    return {
-                        transferredTo: phoneNumber ?? this.companyTransferNumber ?? null,
-                        callSid: this.callSid,
-                    };
-                },
-            });
+                { callerNumber: this.callerNumber }
+            );
 
             this.vapiSession = session;
             this.vapiCallId = callId ?? null;

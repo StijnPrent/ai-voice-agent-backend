@@ -152,6 +152,10 @@ export class VapiClient {
   private readonly assistantCache = new Map<string, string>();
   private readonly toolBaseUrl: string;
   private readonly transportProvider: string;
+  private readonly sessionContexts = new WeakMap<
+    VapiRealtimeSession,
+    { callSid: string; callerNumber: string | null }
+  >();
 
   private company: CompanyModel | null = null;
   private hasGoogleIntegration = false;
@@ -668,6 +672,7 @@ export class VapiClient {
   public async openRealtimeSession(
     callSid: string,
     callbacks: VapiRealtimeCallbacks,
+    options?: { callerNumber?: string | null },
   ): Promise<{ session: VapiRealtimeSession; callId: string | null }> {
     const config = this.currentConfig;
     if (!config || !this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
@@ -708,6 +713,10 @@ export class VapiClient {
     );
 
     const session = new VapiRealtimeSession(ws);
+    this.sessionContexts.set(session, {
+      callSid,
+      callerNumber: options?.callerNumber ?? null,
+    });
 
     const keepAlive = setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -743,11 +752,13 @@ export class VapiClient {
       console.log(`[${callSid}] [Vapi] realtime session closed with code ${code}`);
       clearInterval(keepAlive);
       callbacks.onSessionClosed?.();
+      this.sessionContexts.delete(session);
     });
 
     ws.on('error', (error) => {
       console.error(`[${callSid}] [Vapi] realtime session error`, error);
       callbacks.onSessionError?.(error as Error);
+      this.sessionContexts.delete(session);
     });
 
     return { session, callId: callId ?? null };
@@ -1151,6 +1162,7 @@ export class VapiClient {
     const companyId = this.company.id;
 
     const args = call.args ?? {};
+    const sessionContext = this.sessionContexts.get(session);
 
     const handlers: Record<string, () => Promise<void>> = {
       [TOOL_NAMES.transferCall]: async () => {
@@ -1192,6 +1204,7 @@ export class VapiClient {
         const location = this.normalizeStringArg(args['location']);
         const attendeeEmail = this.normalizeStringArg(args['attendeeEmail']);
         const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
+        const callerNumber = sessionContext?.callerNumber ?? null;
 
         if (!summary || !start || !end || !name || !dateOfBirth) {
           throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
@@ -1201,6 +1214,9 @@ export class VapiClient {
         if (description) details.push(description);
         details.push(`Naam: ${name}`);
         details.push(`Geboortedatum: ${dateOfBirth}`);
+        if (callerNumber) {
+          details.push(`Telefoonnummer: ${callerNumber}`);
+        }
         const compiledDescription = details.join('\n');
 
         const event: calendar_v3.Schema$Event = {
@@ -1220,12 +1236,16 @@ export class VapiClient {
           ];
         }
 
-        event.extendedProperties = {
-          private: {
-            customerName: name,
-            customerDateOfBirth: dateOfBirth,
-          },
+        const privateProperties: Record<string, string> = {
+          customerName: name,
+          customerDateOfBirth: dateOfBirth,
         };
+
+        if (callerNumber) {
+          privateProperties.customerPhoneNumber = callerNumber;
+        }
+
+        event.extendedProperties = { private: privateProperties };
 
         const created = await this.googleService.scheduleEvent(companyId, event);
         sendSuccess({ event: created });
