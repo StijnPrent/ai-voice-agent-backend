@@ -89,6 +89,34 @@ describe('VapiClient tool dispatcher', () => {
     });
   });
 
+  it('injects the active session callSid when the tool request omits it', async () => {
+    const transferHandler = jest.fn().mockResolvedValue({});
+    const callbacks: VapiRealtimeCallbacks = { ...baseCallbacks, onTransferCall: transferHandler };
+
+    (client as any).sessionContexts.set(session, { callSid: 'CA1234567890', callerNumber: '+31111222333' });
+
+    await execute(
+      { id: 'tool-1', name: 'transfer_call', args: { phoneNumber: '+31881234567' } },
+      callbacks,
+    );
+
+    expect(transferHandler).toHaveBeenCalledWith({
+      phoneNumber: '+31881234567',
+      callSid: 'CA1234567890',
+      callerId: null,
+      reason: null,
+    });
+    expect(session.sendToolResponse).toHaveBeenCalledWith('tool-1', {
+      success: true,
+      data: {
+        message: 'Doorverbinden gestart',
+        transferredTo: '+31881234567',
+        callSid: 'CA1234567890',
+        reason: null,
+      },
+    });
+  });
+
   it('returns an error when transfer handler is missing', async () => {
     await execute({ id: 'tool-2', name: 'transfer_call', args: { phoneNumber: '+3100000000' } }, baseCallbacks);
 
