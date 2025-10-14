@@ -575,10 +575,6 @@ export class VapiClient {
 
     const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
 
-    const headers: Record<string, string> = {
-      ...(process.env.INTERNAL_API_KEY ? { 'x-internal-api-key': process.env.INTERNAL_API_KEY } : {}),
-    };
-
     const addCompanyContext = (schema: Record<string, any>) => {
       const companyId = config.company.id.toString();
       const properties = {
@@ -646,6 +642,7 @@ export class VapiClient {
           addCompanyContext({
             type: 'object',
             properties: {
+              companyId: { type: 'string' }, // ⬅️ altijd constant
               date: { type: 'string' }, // ⬅️ geen format/description
             },
             required: ['date'],
