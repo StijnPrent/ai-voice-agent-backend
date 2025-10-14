@@ -1501,7 +1501,7 @@ export class VapiClient {
     if (firstMessage) payload.firstMessage = firstMessage;
 
     const voiceId = config.voiceSettings?.voiceId?.trim();
-    if (voiceId) payload.voice = { provider: '11labs', voiceId, language: 'nl' };
+    if (voiceId) payload.voice = { provider: '11labs', voiceId};
 
     return payload;
   }
