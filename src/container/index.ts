@@ -2,6 +2,7 @@ import { container } from "tsyringe";
 import { VapiClient } from "../clients/VapiClient";
 import { TwilioClient } from "../clients/TwilioClient";
 import {VoiceService} from "../business/services/VoiceService";
+import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 import {GoogleService} from "../business/services/GoogleService";
 import {CompanyService} from "../business/services/CompanyService";
 import { VoiceSettingsService } from "../business/services/VoiceSettingsService";
@@ -48,7 +49,8 @@ container.register("OutlookCalendarClient", {
 });
 
 // Register business services
-container.registerSingleton(VoiceService, VoiceService);
+container.registerSingleton(VoiceSessionManager, VoiceSessionManager);
+container.register(VoiceService, { useClass: VoiceService });
 container.register(GoogleService, { useClass: GoogleService });
 container.register("OutlookService", { useClass: OutlookService });
 container.register(CompanyService, { useClass: CompanyService });

@@ -2,6 +2,7 @@
 import 'reflect-metadata';
 import { WebSocketServer } from '../src/websocket/WebSocketServer';
 import { VoiceService } from '../src/business/services/VoiceService';
+import { VoiceSessionManager } from '../src/business/services/VoiceSessionManager';
 import WebSocket from 'ws';
 import { IncomingMessage } from 'http';
 import { Duplex } from 'stream';
@@ -13,19 +14,30 @@ jest.mock('ws');
 describe('WebSocketServer Call Flow', () => {
     let webSocketServer: WebSocketServer;
     let mockVoiceService: jest.Mocked<VoiceService>;
+    let stopStreamingMock: jest.Mock;
+    let mockSessionManager: jest.Mocked<VoiceSessionManager>;
     let mockWs: jest.Mocked<WebSocket>;
 
     beforeEach(() => {
         // Create a complete mock of VoiceService
+        stopStreamingMock = jest.fn();
         mockVoiceService = {
             startStreaming: jest.fn(),
             sendAudio: jest.fn(),
             handleMark: jest.fn(),
-            stopStreaming: jest.fn(),
+            stopStreaming: stopStreamingMock as any,
         } as any;
 
-        // Create the WebSocketServer with the mocked VoiceService
-        webSocketServer = new WebSocketServer(mockVoiceService);
+        mockSessionManager = {
+            createSession: jest.fn().mockReturnValue(mockVoiceService),
+            getSession: jest.fn(),
+            resolveActiveSession: jest.fn(),
+            releaseSession: jest.fn(),
+            listActiveCallSids: jest.fn().mockReturnValue([]),
+        } as unknown as jest.Mocked<VoiceSessionManager>;
+
+        // Create the WebSocketServer with the mocked session manager
+        webSocketServer = new WebSocketServer(mockSessionManager);
         webSocketServer.start();
 
         // Mock the WebSocket object that will be created
@@ -73,9 +85,14 @@ describe('WebSocketServer Call Flow', () => {
         // 2. Simulate 'start' event from Twilio
         const startEvent = {
             event: 'start',
-            start: { callSid: 'call123', streamSid: 'stream456' }
+            start: {
+                callSid: 'call123',
+                streamSid: 'stream456',
+                customParameters: { to: '1234567890' },
+            },
         };
         await messageCallback(JSON.stringify(startEvent));
+        expect(mockSessionManager.createSession).toHaveBeenCalledWith('call123');
         expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(
             mockWs,
             'call123',
@@ -112,10 +129,10 @@ describe('WebSocketServer Call Flow', () => {
         // 6. Simulate connection close
         const closeCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'close')[1];
         await closeCallback();
-        expect(mockVoiceService.stopStreaming).toHaveBeenCalledTimes(1);
+        expect(stopStreamingMock).toHaveBeenCalledTimes(1);
     });
 
-    it("should reject connections without a valid 'to' parameter", () => {
+    it("should reject connections without a valid 'to' parameter", async () => {
         const mockRequest = {
             url: '/ws',
             headers: {
@@ -130,9 +147,21 @@ describe('WebSocketServer Call Flow', () => {
 
         webSocketServer.handleUpgrade(mockRequest, mockSocket, mockHead);
 
-        expect(mockSocket.write).toHaveBeenCalledWith("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-        expect(mockSocket.destroy).toHaveBeenCalled();
-        expect((webSocketServer as any).wss.handleUpgrade).not.toHaveBeenCalled();
+        expect((webSocketServer as any).wss.handleUpgrade).toHaveBeenCalled();
+        const messageCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'message')[1];
+
+        const startEvent = {
+            event: 'start',
+            start: {
+                callSid: 'call123',
+                streamSid: 'stream456',
+            },
+        };
+
+        await messageCallback(JSON.stringify(startEvent));
+
+        expect(mockSessionManager.createSession).not.toHaveBeenCalled();
+        expect(mockWs.close).toHaveBeenCalledWith(1008, expect.stringContaining("'to'"));
     });
 
     it('should accept the first valid number when multiple to parameters are provided', async () => {
@@ -154,10 +183,15 @@ describe('WebSocketServer Call Flow', () => {
         const messageCallback = (mockWs.on as jest.Mock).mock.calls.find(call => call[0] === 'message')[1];
         const startEvent = {
             event: 'start',
-            start: { callSid: 'call123', streamSid: 'stream456' }
+            start: {
+                callSid: 'call123',
+                streamSid: 'stream456',
+                customParameters: { to: '1987654321' },
+            },
         };
 
         await messageCallback(JSON.stringify(startEvent));
+        expect(mockSessionManager.createSession).toHaveBeenCalledWith('call123');
 
         expect(mockVoiceService.startStreaming).toHaveBeenCalledWith(
             mockWs,
