@@ -19,7 +19,7 @@ export class SchedulingController {
         }
 
         console.error(err);
-        res.status(500).send(defaultMessage);
+        res.status(500).json({ message: defaultMessage });
     }
 
     // ---------- Appointment Types ----------
@@ -27,7 +27,7 @@ export class SchedulingController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const list = await this.service.getAppointmentTypes(companyId);
@@ -43,11 +43,18 @@ export class SchedulingController {
             const { name, duration, price, category, description } = req.body;
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
-            const data = await this.service.addAppointmentType(companyId, name, duration, price, category, description);
-            res.status(201).send(data);
+            const id = await this.service.addAppointmentType(companyId, name, duration, price, category, description);
+            res.status(201).json({
+                id,
+                name,
+                duration,
+                price: price ?? null,
+                category: category ?? null,
+                description: description ?? null,
+            });
         } catch (err) {
             this.handleError(res, err, "Error adding appointment type");
         }
@@ -68,7 +75,14 @@ export class SchedulingController {
                     description
                 )
             );
-            res.status(204).send();
+            res.json({
+                id,
+                name,
+                duration,
+                price: price ?? null,
+                category: category ?? null,
+                description: description ?? null,
+            });
         } catch (err) {
             this.handleError(res, err, "Error updating appointment type");
         }
@@ -79,7 +93,7 @@ export class SchedulingController {
             const { id } = req.params;
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             await this.service.deleteAppointmentType(companyId, Number(id));
@@ -94,7 +108,7 @@ export class SchedulingController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const list = await this.service.getStaffMembers(companyId);
@@ -110,7 +124,7 @@ export class SchedulingController {
             const { name, specialties, role, availability } = req.body;
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
 
@@ -122,7 +136,13 @@ export class SchedulingController {
                 availability     // nieuw: StaffAvailabilityModel[]
             );
 
-            res.status(201).send(data);
+            res.status(201).json({
+                id: data,
+                name,
+                role,
+                specialties,
+                availability,
+            });
         } catch (err) {
             this.handleError(res, err, "Error adding staff member");
         }
@@ -143,8 +163,13 @@ export class SchedulingController {
                     availability
                 )
             );
-
-            res.status(204).send();
+            res.json({
+                id,
+                name,
+                role,
+                specialties,
+                availability,
+            });
         } catch (err) {
             this.handleError(res, err, "Error updating staff member");
         }
@@ -155,7 +180,7 @@ export class SchedulingController {
             const { id } = req.params;
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             await this.service.deleteStaffMember(companyId, Number(id));

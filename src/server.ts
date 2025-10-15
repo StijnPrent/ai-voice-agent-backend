@@ -15,6 +15,7 @@ import integrationRoute from "./routes/IntegrationRoute";
 import updateRoute from "./routes/UpdateRoute";
 import schedulingRoute from "./routes/SchedulingRoute";
 import callRoute from "./routes/CallRoute";
+import analyticsRoute from "./routes/AnalyticsRoute";
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use("/integrations", integrationRoute)
 app.use("/updates", updateRoute)
 app.use("/scheduling", schedulingRoute)
 app.use("/calls", callRoute)
+app.use("/analytics", analyticsRoute)
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);

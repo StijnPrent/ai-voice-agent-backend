@@ -122,22 +122,32 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     }
 
     // ---------- Company Info ----------
-    public async addInfo(companyId: bigint, value: string): Promise<void> {
+    public async addInfo(companyId: bigint, value: string): Promise<CompanyInfoModel> {
         const sql = `
             INSERT INTO company_info
                 (company_id, info_value, created_at)
             VALUES (?, ?, NOW())
         `;
-        await this.execute<ResultSetHeader>(sql, [companyId, value]);
+        const result = await this.execute<ResultSetHeader>(sql, [companyId, value]);
+        const insertedId = result.insertId;
+        const model = await this.findInfoById(insertedId);
+        if (!model) {
+            return new CompanyInfoModel(insertedId, value, new Date());
+        }
+        return model;
     }
 
-    public async updateInfo(info: CompanyInfoModel): Promise<void> {
+    public async updateInfo(info: CompanyInfoModel): Promise<CompanyInfoModel> {
         const sql = `
             UPDATE company_info
             SET info_value = ?, updated_at = NOW()
             WHERE id = ?
         `;
         await this.execute<ResultSetHeader>(sql, [info.value, info.id]);
+        const updated = await this.findInfoById(info.id);
+        return (
+            updated ?? new CompanyInfoModel(info.id, info.value, new Date())
+        );
     }
 
     public async removeInfo(infoId: number): Promise<void> {
@@ -163,14 +173,29 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         return BigInt(rows[0].company_id);
     }
 
+    public async findInfoById(infoId: number): Promise<CompanyInfoModel | null> {
+        const sql = `
+            SELECT id, info_value, created_at
+            FROM company_info
+            WHERE id = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [infoId]);
+        if (rows.length === 0) {
+            return null;
+        }
+        const row = rows[0];
+        return new CompanyInfoModel(row.id, row.info_value, row.created_at);
+    }
+
     // ---------- Company Details ----------
-    public async addCompanyDetails(details: CompanyDetailsModel): Promise<void> {
+    public async addCompanyDetails(details: CompanyDetailsModel): Promise<CompanyDetailsModel> {
         const sql = `
             INSERT INTO company_details
             (company_id, name, industry, size, founded_year, description)
             VALUES (?, ?, ?, ?, ?, ?)
         `;
-        await this.execute<ResultSetHeader>(sql, [
+        const result = await this.execute<ResultSetHeader>(sql, [
             details.companyId,
             details.name,
             details.industry,
@@ -178,6 +203,16 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             details.foundedYear,
             details.description
         ]);
+        const insertedId = result.insertId || 0;
+        return new CompanyDetailsModel(
+            insertedId,
+            details.companyId,
+            details.name,
+            details.industry,
+            details.size,
+            details.foundedYear,
+            details.description
+        );
     }
 
     public async fetchCompanyDetails(companyId: bigint): Promise<CompanyDetailsModel | null> {
@@ -201,7 +236,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         );
     }
 
-    public async updateCompanyDetails(details: CompanyDetailsModel): Promise<void> {
+    public async updateCompanyDetails(details: CompanyDetailsModel): Promise<CompanyDetailsModel> {
         const sql = `
             UPDATE company_details
             SET name = ?, industry = ?, size = ?, founded_year = ?, description = ?
@@ -217,6 +252,15 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         ]);
         // zorg dat updated_at altijd goed staat
         await this.touchCompany(details.companyId);
+        return new CompanyDetailsModel(
+            details.id,
+            details.companyId,
+            details.name,
+            details.industry,
+            details.size,
+            details.foundedYear,
+            details.description
+        );
     }
 
     public async deleteCompanyDetails(detailsId: number): Promise<void> {
@@ -235,13 +279,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async addCompanyContact(contact: CompanyContactModel): Promise<void> {
         const sql = `
             INSERT INTO company_contacts
-                (company_id, website, phone, address)
-            VALUES (?, ?, ?, ?)
+                (company_id, website, phone, contact_email, address)
+            VALUES (?, ?, ?, ?, ?)
         `;
         await this.execute<ResultSetHeader>(sql, [
             contact.companyId,
             contact.website,
             contact.phone,
+            contact.contact_email,
             contact.address
         ]);
     }
@@ -269,12 +314,13 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async updateCompanyContact(contact: CompanyContactModel): Promise<void> {
         const sql = `
             UPDATE company_contacts
-            SET website = ?, phone = ?, address = ?
+            SET website = ?, phone = ?, contact_email = ?, address = ?
             WHERE company_id = ?
         `;
         await this.execute<ResultSetHeader>(sql, [
             contact.website,
             contact.phone,
+            contact.contact_email,
             contact.address,
             contact.companyId
         ]);
@@ -294,19 +340,24 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     }
 
     // ---------- Company Hours ----------
-    public async addCompanyHour(hour: CompanyHourModel): Promise<void> {
+    public async addCompanyHour(hour: CompanyHourModel): Promise<CompanyHourModel> {
         const sql = `
             INSERT INTO company_hours
             (company_id, day_of_week, is_open, open_time, close_time)
             VALUES (?, ?, ?, ?, ?)
         `;
-        await this.execute<ResultSetHeader>(sql, [
+        const result = await this.execute<ResultSetHeader>(sql, [
             hour.companyId,
             hour.dayOfWeek,
             hour.isOpen ? 1 : 0,
             hour.openTime,
             hour.closeTime
         ]);
+        const insertedId = result.insertId || 0;
+        const created = await this.findCompanyHourById(insertedId);
+        return (
+            created ?? new CompanyHourModel(insertedId, hour.companyId, hour.dayOfWeek, hour.isOpen, hour.openTime, hour.closeTime)
+        );
     }
 
     public async fetchCompanyHours(companyId: bigint): Promise<CompanyHourModel[]> {
@@ -327,7 +378,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         ));
     }
 
-    public async updateCompanyHour(hour: CompanyHourModel): Promise<void> {
+    public async updateCompanyHour(hour: CompanyHourModel): Promise<CompanyHourModel> {
         const sql = `
             UPDATE company_hours
             SET day_of_week = ?, is_open = ?, open_time = ?, close_time = ?
@@ -341,6 +392,10 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             hour.id
         ]);
         await this.touchCompany(hour.companyId);
+        const updated = await this.findCompanyHourById(hour.id);
+        return (
+            updated ?? new CompanyHourModel(hour.id, hour.companyId, hour.dayOfWeek, hour.isOpen, hour.openTime, hour.closeTime)
+        );
     }
 
     public async deleteCompanyHour(hourId: number): Promise<void> {
@@ -353,5 +408,50 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         const rows = await this.execute<RowDataPacket[]>(sql, [hourId]);
         if (rows.length === 0) return null;
         return BigInt(rows[0].company_id);
+    }
+
+    public async findCompanyHourByDay(companyId: bigint, dayOfWeek: number): Promise<CompanyHourModel | null> {
+        const sql = `
+            SELECT *
+            FROM company_hours
+            WHERE company_id = ?
+              AND day_of_week = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, dayOfWeek]);
+        if (rows.length === 0) {
+            return null;
+        }
+        const row = rows[0];
+        return new CompanyHourModel(
+            row.id,
+            BigInt(row.company_id),
+            row.day_of_week,
+            row.is_open === 1,
+            row.open_time,
+            row.close_time
+        );
+    }
+
+    public async findCompanyHourById(hourId: number): Promise<CompanyHourModel | null> {
+        const sql = `
+            SELECT *
+            FROM company_hours
+            WHERE id = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [hourId]);
+        if (rows.length === 0) {
+            return null;
+        }
+        const row = rows[0];
+        return new CompanyHourModel(
+            row.id,
+            BigInt(row.company_id),
+            row.day_of_week,
+            row.is_open === 1,
+            row.open_time,
+            row.close_time
+        );
     }
 }

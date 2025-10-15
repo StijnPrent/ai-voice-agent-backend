@@ -19,7 +19,7 @@ export class UpdateController {
             res.json(updates.map(update => update.toJSON()));
         } catch (err) {
             console.error(err);
-            res.status(500).send("Error checking for updates");
+            res.status(500).json({ message: "Error checking for updates" });
         }
     }
 }

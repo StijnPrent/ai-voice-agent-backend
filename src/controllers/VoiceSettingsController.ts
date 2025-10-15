@@ -20,18 +20,18 @@ export class VoiceSettingsController {
         }
 
         console.error(err);
-        res.status(500).send(defaultMessage);
+        res.status(500).json({ message: defaultMessage });
     }
 
     public async getVoiceSettings(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const settings = await this.service.getVoiceSettings(companyId);
-            res.json(settings);
+            res.json(settings ? settings.toJSON() : null);
         } catch (err) {
             this.handleError(res, err, "Error fetching voice settings");
         }
@@ -41,7 +41,7 @@ export class VoiceSettingsController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const settings = new VoiceSettingModel(
@@ -53,8 +53,8 @@ export class VoiceSettingsController {
                 new Date(), // createdAt is not used for update
                 new Date() // updatedAt is not used for update
             );
-            await this.service.updateVoiceSettings(companyId, settings);
-            res.status(204).send();
+            const updated = await this.service.updateVoiceSettings(companyId, settings);
+            res.json(updated.toJSON());
         } catch (err) {
             this.handleError(res, err, "Error updating voice settings");
         }
@@ -64,7 +64,7 @@ export class VoiceSettingsController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const settings = new VoiceSettingModel(
@@ -76,8 +76,8 @@ export class VoiceSettingsController {
                 new Date(), // createdAt is not used for insert
                 new Date() // updatedAt is not used for insert
             );
-            await this.service.insertVoiceSettings(companyId, settings);
-            res.status(201).send();
+            const inserted = await this.service.insertVoiceSettings(companyId, settings);
+            res.status(201).json(inserted.toJSON());
         } catch (err) {
             this.handleError(res, err, "Error inserting voice settings");
         }
@@ -87,11 +87,11 @@ export class VoiceSettingsController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const style = await this.service.getReplyStyle(companyId);
-            res.json(style);
+            res.json(style ? style.toJSON() : null);
         } catch (err) {
             this.handleError(res, err, "Error fetching reply style");
         }
@@ -101,7 +101,7 @@ export class VoiceSettingsController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const style = new ReplyStyleModel(
@@ -112,8 +112,8 @@ export class VoiceSettingsController {
                 new Date(), // createdAt is not used for update
                 new Date() // updatedAt is not used for update
             );
-            await this.service.updateReplyStyle(companyId, style);
-            res.status(204).send();
+            const updated = await this.service.updateReplyStyle(companyId, style);
+            res.json(updated.toJSON());
         } catch (err) {
             this.handleError(res, err, "Error updating reply style");
         }
@@ -123,7 +123,7 @@ export class VoiceSettingsController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const style = new ReplyStyleModel(
@@ -134,8 +134,8 @@ export class VoiceSettingsController {
                 new Date(), // createdAt is not used for insert
                 new Date() // updatedAt is not used for insert
             );
-            await this.service.insertReplyStyle(companyId, style);
-            res.status(201).send();
+            const inserted = await this.service.insertReplyStyle(companyId, style);
+            res.status(201).json(inserted.toJSON());
         } catch (err) {
             this.handleError(res, err, "Error inserting reply style");
         }

@@ -9,12 +9,14 @@ export class CompanyContactModel {
     ) {}
 
     public toJSON(): Record<string, any> {
+        const email = this.contact_email;
         return {
             id: this.id,
             companyId: this.companyId.toString(),
             website: this.website,
             phone: this.phone,
-            contact_email: this.contact_email,
+            contact_email: email,
+            email,
             address: this.address,
         };
     }
