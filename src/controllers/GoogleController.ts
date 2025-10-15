@@ -15,9 +15,11 @@ export class GoogleController {
      */
     async getAuthUrl(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const companyId = req.query.companyId as string;
+        const rawCompanyId = req.query.companyId;
+        const companyId = typeof rawCompanyId === "string" ? rawCompanyId.trim() : "";
         if (!companyId) {
             res.status(400).json({ message: "Missing companyId" });
+            return;
         }
         try {
             const url = service.getAuthUrl(companyId);
@@ -152,10 +154,20 @@ export class GoogleController {
         const companyId = (req as any).companyId;
         if (!companyId) {
             res.status(400).json({ message: "Missing companyId" });
+            return;
+        }
+
+        let normalizedCompanyId: bigint;
+        try {
+            normalizedCompanyId =
+                typeof companyId === "bigint" ? companyId : BigInt(companyId);
+        } catch {
+            res.status(400).json({ message: "Invalid company identifier." });
+            return;
         }
 
         try {
-            await service.disconnect(companyId);
+            await service.disconnect(normalizedCompanyId);
             res.status(200).json({ message: "Google integration disconnected" });
         } catch (err) {
             console.error("❌ disconnect failed:", err);
