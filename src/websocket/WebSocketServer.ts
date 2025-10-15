@@ -4,13 +4,14 @@ import { Duplex } from "stream";
 import { inject, singleton } from "tsyringe";
 import WebSocket from "ws";
 import { VoiceService } from "../business/services/VoiceService";
+import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 import { parse } from "url";
 
 @singleton()
 export class WebSocketServer {
     private wss!: WebSocket.Server;
 
-    constructor(@inject(VoiceService) private voiceService: VoiceService) {}
+    constructor(@inject(VoiceSessionManager) private sessionManager: VoiceSessionManager) {}
 
     /**
      * Start the WebSocket server in 'noServer' mode.
@@ -54,6 +55,7 @@ export class WebSocketServer {
 
         // We'll validate after we receive the Twilio "start" frame
         let started = false;
+        let activeVoiceService: VoiceService | null = null;
 
         const handleStartEvent = async (rawMessage: WebSocket.RawData) => {
             const messageString =
@@ -115,6 +117,15 @@ export class WebSocketServer {
               )
             );
 
+            if (!callSid) {
+                const reason = "Missing required 'callSid' parameter in Twilio start event";
+                console.error(`❌ ${reason}.`);
+                try {
+                    ws.close(1008, reason);
+                } catch {}
+                return;
+            }
+
             if (!toParam) {
                 const reason = "Missing required 'to' parameter (expected in start.customParameters)";
                 console.error(`❌ ${reason}; callSid=${callSid ?? "?"}`);
@@ -126,7 +137,10 @@ export class WebSocketServer {
 
             // Start streaming to your voice service
             try {
-                await this.voiceService.startStreaming(
+                const voiceService = this.sessionManager.createSession(callSid);
+                activeVoiceService = voiceService;
+
+                await voiceService.startStreaming(
                   ws,
                   callSid,
                   streamSid,
@@ -136,6 +150,8 @@ export class WebSocketServer {
                 );
             } catch (err) {
                 console.error("❌ startStreaming failed:", err);
+                this.sessionManager.releaseSession(callSid, activeVoiceService ?? undefined);
+                activeVoiceService = null;
                 try {
                     ws.close(1011, "Internal error during startStreaming");
                 } catch {}
@@ -153,12 +169,12 @@ export class WebSocketServer {
 
         ws.on("close", (code, reason) => {
             console.log(`🔌 Connection closed (${code}) ${reason?.toString?.() || ""}`.trim());
-            this.voiceService.stopStreaming();
+            activeVoiceService?.stopStreaming("websocket closed");
         });
 
         ws.on("error", (err) => {
             console.error("❌ WebSocket error:", err);
-            this.voiceService.stopStreaming();
+            activeVoiceService?.stopStreaming("websocket error");
             try {
                 ws.close(1011, "WebSocket error");
             } catch {}

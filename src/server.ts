@@ -4,7 +4,7 @@ import cors from "cors";
 import { createServer } from "http";
 import { container } from "tsyringe";
 import voiceRoutes from "./routes/VoiceRoute";
-import { VoiceService } from "./business/services/VoiceService";
+import { VoiceSessionManager } from "./business/services/VoiceSessionManager";
 import companyRoutes from "./routes/CompanyRoute";
 import voiceSettingsRoutes from "./routes/VoiceSettingsRoute";
 import { WebSocketServer } from "./websocket/WebSocketServer";
@@ -19,7 +19,7 @@ import analyticsRoute from "./routes/AnalyticsRoute";
 
 const app = express();
 
-const voiceService = container.resolve(VoiceService);
+const voiceSessionManager = container.resolve(VoiceSessionManager);
 
 app.use(cors({
     origin: process.env.FRONTEND_URL,
@@ -29,7 +29,7 @@ app.use(cors({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/voice", voiceRoutes(voiceService));
+app.use("/voice", voiceRoutes(voiceSessionManager));
 app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute)

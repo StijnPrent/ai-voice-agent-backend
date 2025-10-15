@@ -2,7 +2,7 @@
 import { Request, Response } from "express";
 import twilio from "twilio";
 import { container } from "tsyringe";
-import { VoiceService } from "../business/services/VoiceService";
+import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 
 export class VoiceController {
     /**
@@ -55,7 +55,19 @@ export class VoiceController {
         }
 
         try {
-            const voiceService = container.resolve(VoiceService);
+            const sessionManager = container.resolve(VoiceSessionManager);
+            const voiceService = sessionManager.resolveActiveSession(callSid);
+
+            if (!voiceService) {
+                const activeSessions = sessionManager.listActiveCallSids();
+                const errorMessage =
+                    callSid || activeSessions.length === 0
+                        ? "Er is geen actieve oproep met het opgegeven callSid."
+                        : "Er zijn meerdere actieve oproepen; specificeer callSid.";
+                res.status(409).json({ error: errorMessage });
+                return;
+            }
+
             await voiceService.transferCall(phoneNumber, {
                 callSid,
                 callerId,

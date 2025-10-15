@@ -2,9 +2,9 @@
 import { Router } from "express";
 import { VoiceController } from "../controllers/VoiceController";
 import { verifyInternalApiKey } from "../middleware/security";
-import { VoiceService } from "../business/services/VoiceService";
+import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 
-export function voiceRoutes(voiceService: VoiceService) {
+export function voiceRoutes(sessionManager: VoiceSessionManager) {
   const router = Router();
   const controller = new VoiceController();
 
@@ -20,7 +20,16 @@ export function voiceRoutes(voiceService: VoiceService) {
     try {
       const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
       const callStatus = typeof req.body?.CallStatus === "string" ? req.body.CallStatus : undefined;
-      voiceService.handleTwilioStatusCallback(callSid, callStatus, req.body ?? {});
+      const voiceService = sessionManager.getSession(callSid ?? undefined);
+      if (!voiceService) {
+        console.warn(
+          `[/voice/twilio/status] No active session for callSid=${callSid ?? "unknown"}; active callSids=${sessionManager
+            .listActiveCallSids()
+            .join(",")}`
+        );
+      } else {
+        voiceService.handleTwilioStatusCallback(callSid, callStatus, req.body ?? {});
+      }
     } catch (error) {
       console.error("[/voice/twilio/status] Failed to process status callback", error);
     }
@@ -35,6 +44,19 @@ export function voiceRoutes(voiceService: VoiceService) {
         res.status(400).json({ error: "phoneNumber is required" });
         return;
       }
+      const voiceService = sessionManager.resolveActiveSession(callSid);
+      if (!voiceService) {
+        const activeSessions = sessionManager.listActiveCallSids();
+        res.status(409).json({
+          success: false,
+          error:
+            callSid || activeSessions.length === 0
+              ? "Er is geen actieve oproep met het opgegeven callSid."
+              : "Er zijn meerdere actieve oproepen; specificeer callSid.",
+        });
+        return;
+      }
+
       await voiceService.transferCall(phoneNumber, { callSid, callerId, reason });
       res.json({ success: true, transferredTo: phoneNumber });
       return;
