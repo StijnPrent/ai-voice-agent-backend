@@ -17,14 +17,14 @@ export class GoogleController {
         const service = container.resolve(GoogleService);
         const companyId = req.query.companyId as string;
         if (!companyId) {
-            res.status(400).send("Missing companyId");
+            res.status(400).json({ message: "Missing companyId" });
         }
         try {
             const url = service.getAuthUrl(companyId);
             res.json({ url });
         } catch (err) {
             console.error("❌ getAuthUrl failed:", err);
-            res.status(500).send("Error generating auth URL");
+            res.status(500).json({ message: "Error generating auth URL" });
         }
     }
 
@@ -39,7 +39,7 @@ export class GoogleController {
         const frontendUrl = process.env.FRONTEND_URL;
 
         if (!code || !companyId) {
-            res.status(400).send("Missing code or state");
+            res.status(400).json({ message: "Missing code or state" });
             return;
         }
 
@@ -49,7 +49,7 @@ export class GoogleController {
             res.redirect(`${frontendUrl}/?tab=integrations`);
         } catch (err) {
             console.error("❌ handleCallback failed:", err);
-            res.status(500).send("Error handling OAuth callback");
+            res.status(500).json({ message: "Error handling OAuth callback" });
         }
     }
 
@@ -65,7 +65,7 @@ export class GoogleController {
             event: calendar_v3.Schema$Event;
         };
         if (!companyId || !event) {
-            res.status(400).send("Missing companyId or event");
+            res.status(400).json({ message: "Missing companyId or event" });
             return;
         }
 
@@ -78,7 +78,7 @@ export class GoogleController {
                 return;
             }
             console.error("❌ scheduleEvent failed:", err);
-            res.status(500).send("Error scheduling event");
+            res.status(500).json({ message: "Error scheduling event" });
         }
     }
 
@@ -93,7 +93,7 @@ export class GoogleController {
         };
 
         if (!companyId || !date) {
-            res.status(400).send("Missing companyId or date");
+            res.status(400).json({ message: "Missing companyId or date" });
             return;
         }
 
@@ -116,7 +116,7 @@ export class GoogleController {
                 return;
             }
             console.error("❌ checkAvailability failed:", err);
-            res.status(500).send("Error fetching availability");
+            res.status(500).json({ message: "Error fetching availability" });
         }
     }
 
@@ -130,7 +130,7 @@ export class GoogleController {
         };
 
         if (!companyId || !eventId) {
-            res.status(400).send("Missing companyId or eventId");
+            res.status(400).json({ message: "Missing companyId or eventId" });
             return;
         }
 
@@ -143,7 +143,7 @@ export class GoogleController {
                 return;
             }
             console.error("❌ cancelEvent failed:", err);
-            res.status(500).send("Error cancelling event");
+            res.status(500).json({ message: "Error cancelling event" });
         }
     }
 
@@ -151,15 +151,15 @@ export class GoogleController {
         const service = container.resolve(GoogleService);
         const companyId = (req as any).companyId;
         if (!companyId) {
-            res.status(400).send("Missing companyId");
+            res.status(400).json({ message: "Missing companyId" });
         }
 
         try {
             await service.disconnect(companyId);
-            res.status(200).send("Google integration disconnected");
+            res.status(200).json({ message: "Google integration disconnected" });
         } catch (err) {
             console.error("❌ disconnect failed:", err);
-            res.status(500).send("Error disconnecting Google integration");
+            res.status(500).json({ message: "Error disconnecting Google integration" });
         }
     }
 }

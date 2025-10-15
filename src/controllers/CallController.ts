@@ -3,6 +3,8 @@ import { Response } from "express";
 import { container } from "tsyringe";
 import { CallLogService } from "../business/services/CallLogService";
 import { AuthenticatedRequest } from "../middleware/auth";
+import { ResourceNotFoundError } from "../business/errors/ResourceNotFoundError";
+import { TranscriptNotReadyError } from "../business/errors/TranscriptNotReadyError";
 
 export class CallController {
     private readonly callLogService: CallLogService;
@@ -20,24 +22,11 @@ export class CallController {
             }
 
             const rawLimit = req.query.limit;
+            const limitValue = Array.isArray(rawLimit) ? rawLimit[0] : rawLimit;
+            const parsedLimit = limitValue !== undefined ? Number(limitValue) : undefined;
 
-            let parsedLimit: number;
-            if (typeof rawLimit === "string") {
-                parsedLimit = rawLimit.trim().length ? Number(rawLimit) : NaN;
-            } else if (Array.isArray(rawLimit)) {
-                const first = rawLimit.find(
-                  (v): v is string => typeof v === "string" && v.trim().length > 0
-                );
-                parsedLimit = first ? Number(first) : NaN;
-            } else {
-                parsedLimit = NaN;
-            }
-
-            const limit =
-              Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
-
-            const numbers = await this.callLogService.getCallerNumbers(companyId, limit);
-            res.json({ phoneNumbers: numbers });
+            const numbers = await this.callLogService.getCallerNumbers(companyId, parsedLimit);
+            res.json(numbers);
         } catch (error) {
             console.error("Failed to fetch caller numbers", error);
             res.status(500).json({ message: "Failed to fetch caller numbers." });
@@ -60,14 +49,30 @@ export class CallController {
                 return;
             }
 
+            const rawLimit = req.query.limit;
+            const limitValue = Array.isArray(rawLimit) ? rawLimit[0] : rawLimit;
+            const parsedLimit = limitValue !== undefined ? Number(limitValue) : undefined;
+            const safeLimit =
+                Number.isFinite(parsedLimit) && parsedLimit !== undefined
+                    ? Math.min(Math.max(Number(parsedLimit), 1), 200)
+                    : undefined;
+
             const calls = await this.callLogService.getCallsByPhoneNumber(companyId, phoneNumber);
-            res.json({ calls });
+            const sliced = safeLimit ? calls.slice(0, safeLimit) : calls;
+            res.json(
+                sliced.map((call) => ({
+                    callSid: call.callSid,
+                    fromNumber: call.fromNumber ?? null,
+                    startedAt: call.startedAt.toISOString(),
+                    endedAt: call.endedAt ? call.endedAt.toISOString() : null,
+                    vapiCallId: call.vapiCallId ?? undefined,
+                }))
+            );
         } catch (error) {
             console.error("Failed to fetch calls by phone number", error);
             res.status(500).json({ message: "Failed to fetch calls by phone number." });
         }
     }
-
 
     public async getCallDetails(req: AuthenticatedRequest, res: Response) {
         try {
@@ -84,19 +89,30 @@ export class CallController {
             }
 
             const details = await this.callLogService.getCallDetails(companyId, callSid);
-            res.json(details);
+            res.json({
+                callSid: details.callSid,
+                fromNumber: details.fromNumber ?? null,
+                vapiCallId: details.vapiCallId ?? undefined,
+                startedAt: details.startedAt.toISOString(),
+                endedAt: details.endedAt ? details.endedAt.toISOString() : null,
+                messages: details.messages.map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                    startTime: message.startTime,
+                })),
+            });
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to fetch call details.";
-            const lowered = message.toLowerCase();
-            const status = lowered.includes("not found")
-                ? 404
-                : lowered.includes("no vapi")
-                    ? 409
-                    : 400;
-            if (status >= 500 || (!lowered.includes("no vapi") && status !== 404)) {
-                console.error("Failed to fetch call details", error);
+            if (error instanceof ResourceNotFoundError) {
+                res.status(404).json({ message: error.message });
+                return;
             }
-            res.status(status).json({ message });
+            if (error instanceof TranscriptNotReadyError) {
+                res.status(409).json({ message: error.message });
+                return;
+            }
+
+            console.error("Failed to fetch call details", error);
+            res.status(500).json({ message: "Failed to fetch call details." });
         }
     }
 }

@@ -30,7 +30,7 @@ export class IntegrationModel {
 
     public toJSON(): Record<string, any> {
         return {
-            integrationId: this._integrationId,
+            id: this._integrationId,
             name: this._name,
             description: this._description,
             category: this._category,

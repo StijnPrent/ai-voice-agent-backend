@@ -7,8 +7,8 @@ const router = Router();
 const controller = new CompanyController();
 
 // Authentication & Company creation
+router.post("/register", controller.registerCompany.bind(controller));
 router.post("/login", controller.login.bind(controller));
-router.post("/", controller.createCompany.bind(controller));
 
 // Lookup by Twilio number
 router.get(
@@ -33,20 +33,10 @@ router.get(
     authenticateToken,
     controller.getCompanyDetails.bind(controller)
 );
-router.post(
-    "/details",
-    authenticateToken,
-    controller.addCompanyDetails.bind(controller)
-);
 router.put(
     "/details",
     authenticateToken,
     controller.updateCompanyDetails.bind(controller)
-);
-router.delete(
-    "/details/:id",
-    authenticateToken,
-    controller.deleteCompanyDetails.bind(controller)
 );
 
 // Company Contacts
@@ -55,20 +45,10 @@ router.get(
     authenticateToken,
     controller.getCompanyContact.bind(controller)
 );
-router.post(
-    "/contact",
-    authenticateToken,
-    controller.addCompanyContact.bind(controller)
-);
 router.put(
     "/contact",
     authenticateToken,
     controller.updateCompanyContact.bind(controller)
-);
-router.delete(
-    "/contact/:id",
-    authenticateToken,
-    controller.deleteCompanyContact.bind(controller)
 );
 
 // Company Hours
@@ -83,7 +63,7 @@ router.post(
     controller.addCompanyHour.bind(controller)
 );
 router.put(
-    "/hours",
+    "/hours/:id",
     authenticateToken,
     controller.updateCompanyHour.bind(controller)
 );

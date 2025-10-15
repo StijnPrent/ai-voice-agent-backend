@@ -2,6 +2,8 @@
 import { inject, injectable } from "tsyringe";
 import { ICallLogRepository } from "../../data/interfaces/ICallLogRepository";
 import { VapiClient } from "../../clients/VapiClient";
+import { ResourceNotFoundError } from "../errors/ResourceNotFoundError";
+import { TranscriptNotReadyError } from "../errors/TranscriptNotReadyError";
 
 export type CallTranscriptMessage = {
     role: string;
@@ -21,9 +23,10 @@ export type CallDetailsResponse = {
 
 export type CallSummaryResponse = {
     callSid: string;
-    phoneNumber: string | null;
+    fromNumber: string | null;
     startedAt: Date;
-    duration: number | null;
+    endedAt: Date | null;
+    vapiCallId: string | null;
 };
 
 @injectable()
@@ -52,7 +55,12 @@ export class CallLogService {
     }
 
     public async getCallerNumbers(companyId: bigint, limit?: number): Promise<string[]> {
-        return this.callLogRepository.getDistinctCallerNumbers(companyId, limit ?? 50);
+        const normalizedLimit = Number.isFinite(limit) ? Number(limit) : NaN;
+        const safeLimit =
+            Number.isFinite(normalizedLimit) && normalizedLimit > 0
+                ? Math.min(Math.floor(normalizedLimit), 200)
+                : 50;
+        return this.callLogRepository.getDistinctCallerNumbers(companyId, safeLimit);
     }
 
     public async getCallsByPhoneNumber(
@@ -71,20 +79,21 @@ export class CallLogService {
 
         return records.map((record) => ({
             callSid: record.callSid,
-            phoneNumber: record.fromNumber,
+            fromNumber: record.fromNumber,
             startedAt: record.startedAt,
-            duration: record.endedAt ? (record.endedAt.getTime() - record.startedAt.getTime()) / 1000 : null,
+            endedAt: record.endedAt,
+            vapiCallId: record.vapiCallId,
         }));
     }
 
     public async getCallDetails(companyId: bigint, callSid: string): Promise<CallDetailsResponse> {
         const record = await this.callLogRepository.getCallBySid(companyId, callSid);
         if (!record) {
-            throw new Error("Call not found for the specified company.");
+            throw new ResourceNotFoundError("Call not found for the specified company.");
         }
 
         if (!record.vapiCallId) {
-            throw new Error("No Vapi call ID stored for this call.");
+            throw new TranscriptNotReadyError("Call transcript is not ready yet.");
         }
 
         const details = await this.vapiClient.fetchCallDetails(record.vapiCallId);

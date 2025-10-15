@@ -10,6 +10,7 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { AssistantSyncService } from "./AssistantSyncService";
+import { InvalidAccessCodeError } from "../errors/InvalidAccessCodeError";
 
 @injectable()
 export class CompanyService {
@@ -19,16 +20,63 @@ export class CompanyService {
         @inject(AssistantSyncService) private readonly assistantSyncService: AssistantSyncService
     ) {}
 
+    private getAllowedAccessCodes(): string[] {
+        const envCodes =
+            process.env.COMPANY_ACCESS_CODES ?? process.env.COMPANY_ACCESS_CODE ?? "";
+
+        return envCodes
+            .split(/[,\s]+/)
+            .map((code) => code.trim())
+            .filter((code) => code.length > 0);
+    }
+
+    private async ensureValidAccessCode(accessCode?: string): Promise<void> {
+        const allowedCodes = this.getAllowedAccessCodes();
+        if (allowedCodes.length === 0) {
+            return;
+        }
+
+        const normalized = (accessCode ?? "").trim();
+        if (!normalized || !allowedCodes.includes(normalized)) {
+            throw new InvalidAccessCodeError();
+        }
+    }
+
+    public async registerCompany(params: {
+        companyName: string;
+        contactName?: string;
+        email: string;
+        password: string;
+        accessCode?: string;
+    }): Promise<CompanyModel> {
+        await this.ensureValidAccessCode(params.accessCode);
+
+        const company = await this.create(
+            params.companyName,
+            params.email,
+            "",
+            params.password
+        );
+
+        // Optionally seed initial details/contact information with provided data.
+        if (params.companyName?.trim()) {
+            await this.saveCompanyDetails(company.id, {
+                name: params.companyName.trim(),
+            });
+        }
+
+        return company;
+    }
+
     // Create and authenticate companies
     public async create(
         name: string,
         email: string,
-        twilioNumber: string,
-        website: string,
+        twilioNumber: string = "",
         password: string
-    ): Promise<void> {
+    ): Promise<CompanyModel> {
         const bytes = crypto.randomBytes(8);
-        const sanitizedTwilio = twilioNumber.replace(/\s+/g, "");
+        const sanitizedTwilio = (twilioNumber ?? "").replace(/\s+/g, "");
         const id = BigInt("0x" + bytes.toString("hex"));
 
         const company = new CompanyModel(
@@ -44,6 +92,7 @@ export class CompanyService {
 
         const hash = await bcrypt.hash(password, 10);
         await this.passwordRepo.createPassword(id, hash);
+        return company;
     }
 
     public async login(email: string, password: string): Promise<string | null> {
@@ -81,22 +130,24 @@ export class CompanyService {
     }
 
     // Company Info
-    public async addInfo(companyId: bigint, value: string): Promise<void> {
-        await this.companyRepo.addInfo(companyId, value);
+    public async addInfo(companyId: bigint, value: string): Promise<CompanyInfoModel> {
+        const info = await this.companyRepo.addInfo(companyId, value);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return info;
     }
 
     public async getCompanyInfo(companyId: bigint): Promise<CompanyInfoModel[]> {
         return this.companyRepo.fetchInfo(companyId);
     }
 
-    public async updateInfo(id: number, value: string): Promise<void> {
+    public async updateInfo(id: number, value: string): Promise<CompanyInfoModel> {
         const info = new CompanyInfoModel(id, value, new Date());
-        await this.companyRepo.updateInfo(info);
+        const updated = await this.companyRepo.updateInfo(info);
         const companyId = await this.companyRepo.getCompanyIdForInfo(id);
         if (companyId) {
             await this.assistantSyncService.syncCompanyAssistant(companyId);
         }
+        return updated;
     }
 
     public async removeInfo(infoId: number): Promise<void> {
@@ -108,38 +159,39 @@ export class CompanyService {
     }
 
     // Company Details
-    public async addCompanyDetails(
-        companyId: bigint,
-        name: string,
-        industry: string,
-        size: string,
-        foundedYear: number,
-        description: string
-    ): Promise<void> {
-        const details = new CompanyDetailsModel(
-            0,
-            companyId,
-            name,
-            industry,
-            size,
-            foundedYear,
-            description
-        );
-        await this.companyRepo.addCompanyDetails(details);
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
-    }
-
     public async getCompanyDetails(
         companyId: bigint
     ): Promise<CompanyDetailsModel | null> {
         return this.companyRepo.fetchCompanyDetails(companyId);
     }
 
-    public async updateCompanyDetails(
-        details: CompanyDetailsModel
-    ): Promise<void> {
-        await this.companyRepo.updateCompanyDetails(details);
-        await this.assistantSyncService.syncCompanyAssistant(details.companyId);
+    public async saveCompanyDetails(
+        companyId: bigint,
+        payload: {
+            name?: string;
+            industry?: string;
+            size?: string;
+            foundedYear?: number;
+            description?: string;
+        }
+    ): Promise<CompanyDetailsModel> {
+        const existing = await this.companyRepo.fetchCompanyDetails(companyId);
+        const details = new CompanyDetailsModel(
+            existing?.id ?? 0,
+            companyId,
+            payload.name ?? existing?.name ?? "",
+            payload.industry ?? existing?.industry ?? "",
+            payload.size ?? existing?.size ?? "",
+            payload.foundedYear ?? existing?.foundedYear ?? 0,
+            payload.description ?? existing?.description ?? ""
+        );
+
+        const saved = existing
+            ? await this.companyRepo.updateCompanyDetails(details)
+            : await this.companyRepo.addCompanyDetails(details);
+
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return saved;
     }
 
     public async deleteCompanyDetails(detailsId: number): Promise<void> {
@@ -151,36 +203,40 @@ export class CompanyService {
     }
 
     // Company Contact
-    public async addCompanyContact(
-        companyId: bigint,
-        website: string,
-        phone: string,
-        contact_email: string,
-        address: string
-    ): Promise<void> {
-        const contact = new CompanyContactModel(
-            0,
-            companyId,
-            website,
-            phone,
-            contact_email,
-            address
-        );
-        await this.companyRepo.addCompanyContact(contact);
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
-    }
-
     public async getCompanyContact(
         companyId: bigint
     ): Promise<CompanyContactModel | null> {
         return this.companyRepo.fetchCompanyContact(companyId);
     }
 
-    public async updateCompanyContact(
-        contact: CompanyContactModel
-    ): Promise<void> {
-        await this.companyRepo.updateCompanyContact(contact);
-        await this.assistantSyncService.syncCompanyAssistant(contact.companyId);
+    public async saveCompanyContact(
+        companyId: bigint,
+        payload: {
+            website?: string;
+            phone?: string;
+            email?: string;
+            contact_email?: string;
+            address?: string;
+        }
+    ): Promise<CompanyContactModel> {
+        const existing = await this.companyRepo.fetchCompanyContact(companyId);
+        const contact = new CompanyContactModel(
+            existing?.id ?? 0,
+            companyId,
+            payload.website ?? existing?.website ?? "",
+            payload.phone ?? existing?.phone ?? "",
+            payload.contact_email ?? payload.email ?? existing?.contact_email ?? "",
+            payload.address ?? existing?.address ?? ""
+        );
+
+        if (existing) {
+            await this.companyRepo.updateCompanyContact(contact);
+        } else {
+            await this.companyRepo.addCompanyContact(contact);
+        }
+
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return (await this.companyRepo.fetchCompanyContact(companyId)) ?? contact;
     }
 
     public async deleteCompanyContact(contactId: number): Promise<void> {
@@ -198,17 +254,21 @@ export class CompanyService {
         isOpen: boolean,
         openTime: string | null,
         closeTime: string | null
-    ): Promise<void> {
+    ): Promise<CompanyHourModel> {
+        const existing = await this.companyRepo.findCompanyHourByDay(companyId, dayOfWeek);
         const hour = new CompanyHourModel(
-            0,
+            existing?.id ?? 0,
             companyId,
             dayOfWeek,
             isOpen,
             openTime,
             closeTime
         );
-        await this.companyRepo.addCompanyHour(hour);
+        const saved = existing
+            ? await this.companyRepo.updateCompanyHour(hour)
+            : await this.companyRepo.addCompanyHour(hour);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return saved;
     }
 
     public async getCompanyHours(
@@ -219,9 +279,10 @@ export class CompanyService {
 
     public async updateCompanyHour(
         hour: CompanyHourModel
-    ): Promise<void> {
-        await this.companyRepo.updateCompanyHour(hour);
+    ): Promise<CompanyHourModel> {
+        const saved = await this.companyRepo.updateCompanyHour(hour);
         await this.assistantSyncService.syncCompanyAssistant(hour.companyId);
+        return saved;
     }
 
     public async deleteCompanyHour(hourId: number): Promise<void> {
