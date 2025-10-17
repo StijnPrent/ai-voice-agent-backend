@@ -157,13 +157,7 @@ export class VapiClient {
     VapiRealtimeSession,
     { callSid: string; callerNumber: string | null }
   >();
-
-  private company: CompanyModel | null = null;
-  private hasGoogleIntegration = false;
-  private replyStyle: ReplyStyleModel | null = null;
-  private companyContext: CompanyContext | null = null;
-  private schedulingContext: SchedulingContext | null = null;
-  private voiceSettings: VoiceSettingModel | null = null;
+  private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
   private currentConfig: VapiAssistantConfig | null = null;
 
   constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
@@ -207,6 +201,7 @@ export class VapiClient {
   }
 
   public setCompanyInfo(
+    callSid: string,
     company: CompanyModel,
     hasGoogleIntegration: boolean,
     replyStyle: ReplyStyleModel,
@@ -214,13 +209,7 @@ export class VapiClient {
     schedulingContext: SchedulingContext,
     voiceSettings: VoiceSettingModel,
   ) {
-    this.company = company;
-    this.hasGoogleIntegration = hasGoogleIntegration;
-    this.replyStyle = replyStyle;
-    this.companyContext = context;
-    this.schedulingContext = schedulingContext;
-    this.voiceSettings = voiceSettings;
-    this.currentConfig = {
+    const config: VapiAssistantConfig = {
       company,
       hasGoogleIntegration,
       replyStyle,
@@ -229,9 +218,23 @@ export class VapiClient {
       voiceSettings,
     };
 
+    this.sessionConfigs.set(callSid, config);
+    this.currentConfig = config;
+
     if (company.assistantId) {
       this.assistantCache.set(company.id.toString(), company.assistantId);
     }
+  }
+
+  public clearSessionConfig(callSid: string) {
+    this.sessionConfigs.delete(callSid);
+  }
+
+  private getConfigForCall(callSid: string | null | undefined): VapiAssistantConfig | null {
+    if (!callSid) {
+      return this.currentConfig;
+    }
+    return this.sessionConfigs.get(callSid) ?? this.currentConfig;
   }
 
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
@@ -411,7 +414,7 @@ export class VapiClient {
 
   /** ===== Tools (clean JSON Schema via `parameters`) ===== */
   public getTools(hasGoogleIntegration?: boolean) {
-    const enabled = hasGoogleIntegration ?? this.hasGoogleIntegration;
+    const enabled = Boolean(hasGoogleIntegration);
 
     const tools: any[] = [
       {
@@ -707,14 +710,14 @@ export class VapiClient {
     callbacks: VapiRealtimeCallbacks,
     options?: { callerNumber?: string | null },
   ): Promise<{ session: VapiRealtimeSession; callId: string | null }> {
-    const config = this.currentConfig;
-    if (!config || !this.company || !this.replyStyle || !this.companyContext || !this.schedulingContext) {
+    const config = this.getConfigForCall(callSid);
+    if (!config) {
       throw new Error('Company must be configured before opening a Vapi session');
     }
 
     const assistantId =
-      this.company?.assistantId ??
-      this.assistantCache.get(this.company!.id.toString()) ??
+      config.company?.assistantId ??
+      this.assistantCache.get(config.company.id.toString()) ??
       (await this.findAssistantIdByName(this.getAssistantName(config))) ??
       null;
 
@@ -786,12 +789,14 @@ export class VapiClient {
       clearInterval(keepAlive);
       callbacks.onSessionClosed?.();
       this.sessionContexts.delete(session);
+      this.clearSessionConfig(callSid);
     });
 
     ws.on('error', (error) => {
       console.error(`[${callSid}] [Vapi] realtime session error`, error);
       callbacks.onSessionError?.(error as Error);
       this.sessionContexts.delete(session);
+      this.clearSessionConfig(callSid);
     });
 
     return { session, callId: callId ?? null };
@@ -1160,11 +1165,6 @@ export class VapiClient {
     session: VapiRealtimeSession,
     callbacks: VapiRealtimeCallbacks,
   ) {
-    if (!this.company) {
-      console.warn('[VapiClient] Company not configured; cannot execute tool call.');
-      return;
-    }
-
     const normalizedToolName = this.normalizeToolName(call.name);
     const googleTools = new Set<
       (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]
@@ -1174,7 +1174,14 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    if (normalizedToolName && googleTools.has(normalizedToolName) && !this.hasGoogleIntegration) {
+    const sessionContext = this.sessionContexts.get(session);
+    const config = this.getConfigForCall(sessionContext?.callSid);
+    if (!config) {
+      console.warn('[VapiClient] Company not configured; cannot execute tool call.');
+      return;
+    }
+
+    if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
       console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
       session.sendToolResponse(call.id, { error: 'Google integration not available' });
       return;
@@ -1192,10 +1199,9 @@ export class VapiClient {
       });
     };
 
-    const companyId = this.company.id;
+    const companyId = config.company.id;
 
     const args = call.args ?? {};
-    const sessionContext = this.sessionContexts.get(session);
 
     const handlers: Record<string, () => Promise<void>> = {
       [TOOL_NAMES.transferCall]: async () => {
@@ -1225,7 +1231,7 @@ export class VapiClient {
           throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
         }
 
-        const { openHour, closeHour } = this.getBusinessHoursForDate(date);
+        const { openHour, closeHour } = this.getBusinessHoursForDate(config, date);
 
         const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
         sendSuccess({ date, openHour, closeHour, slots });
@@ -1347,10 +1353,13 @@ export class VapiClient {
     return null;
   }
 
-  private getBusinessHoursForDate(date: string): { openHour: number; closeHour: number } {
+  private getBusinessHoursForDate(
+    config: VapiAssistantConfig,
+    date: string,
+  ): { openHour: number; closeHour: number } {
     const defaultHours = { openHour: 9, closeHour: 17 };
 
-    if (!this.companyContext?.hours || this.companyContext.hours.length === 0) {
+    if (!config.companyContext?.hours || config.companyContext.hours.length === 0) {
       return defaultHours;
     }
 
@@ -1360,7 +1369,7 @@ export class VapiClient {
     }
 
     const dayOfWeek = parsedDate.getDay();
-    const entry = this.companyContext.hours.find((hour) => hour.dayOfWeek === dayOfWeek);
+    const entry = config.companyContext.hours.find((hour) => hour.dayOfWeek === dayOfWeek);
     if (!entry) {
       return defaultHours;
     }

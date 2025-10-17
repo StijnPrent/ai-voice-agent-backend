@@ -198,6 +198,7 @@ export class VoiceService {
             const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
 
             this.vapiClient.setCompanyInfo(
+                callSid,
                 company,
                 hasGoogleIntegration,
                 replyStyle,
@@ -256,7 +257,8 @@ export class VoiceService {
     }
 
     public sendAudio(payload: string) {
-        const callId = this.callSid ?? "unknown";
+        const activeCallSid = this.callSid;
+        const callId = activeCallSid ?? "unknown";
 
         if (!this.vapiSession) {
             console.log(`[${callId}] Vapi session is null, not sending audio`);
@@ -336,14 +338,15 @@ export class VoiceService {
 
         this.stopping = true;
 
-        const callId = this.callSid ?? "unknown";
+        const activeCallSid = this.callSid;
+        const callId = activeCallSid ?? "unknown";
         const formattedReason = reason ? ` (${reason})` : "";
         console.log(`[${callId}] Stopping Vapi voice session${formattedReason}`);
         this.logSessionSnapshot("twilio stop");
 
-        if (this.activeCompanyId && this.callStartedAt && this.callSid) {
+        if (this.activeCompanyId && this.callStartedAt && activeCallSid) {
             const companyId = this.activeCompanyId;
-            const callSid = this.callSid;
+            const callSid = activeCallSid;
             const startedAt = this.callStartedAt;
             const endedAt = new Date();
             const fromNumber = this.callerNumber;
@@ -381,6 +384,9 @@ export class VoiceService {
             try {
                 this.ws?.terminate();
             } catch {}
+        }
+        if (activeCallSid) {
+            this.vapiClient.clearSessionConfig(activeCallSid);
         }
         this.vapiSession = null;
         this.ws = null;
