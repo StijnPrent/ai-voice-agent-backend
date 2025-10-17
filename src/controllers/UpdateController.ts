@@ -12,7 +12,7 @@ export class UpdateController {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const updates = await this.service.fetchUpdates(companyId);

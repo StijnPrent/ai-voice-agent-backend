@@ -11,6 +11,7 @@ export class CompanyInfoModel {
         return {
             id: this.id,
             value: this.value,
+            infoValue: this.value,
             createdAt: this.createdAt.toISOString(),
         };
     }

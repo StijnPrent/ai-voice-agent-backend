@@ -1,16 +1,18 @@
-import {container} from "tsyringe";
-import {IntegrationService} from "../business/services/IntegrationService";
+import { container } from "tsyringe";
+import { Response } from "express";
+import { IntegrationService } from "../business/services/IntegrationService";
+import { AuthenticatedRequest } from "../middleware/auth";
 
 export class IntegrationController {
     private get service(): IntegrationService {
         return container.resolve(IntegrationService);
     }
 
-    public async getAllIntegrations(req: any, res: any): Promise<void> {
+    public async getAllIntegrations(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
             const companyId = req.companyId;
             if (!companyId) {
-                res.status(400).send("Company ID is missing from token.");
+                res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
             const integrations = await this.service.getAllWithStatus(companyId);
@@ -21,7 +23,7 @@ export class IntegrationController {
         }
     }
 
-    public async hasCalendarConnected(req: any, res: any): Promise<void> {
+    public async hasCalendarConnected(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
             const companyIdParam = req.params.id;
             if (!companyIdParam) {
