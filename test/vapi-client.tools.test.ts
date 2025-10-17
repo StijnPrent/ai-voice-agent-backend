@@ -34,6 +34,7 @@ describe('VapiClient tool dispatcher', () => {
     const voiceSettings = new VoiceSettingModel(1, 1, 'Welkom', 1, 'voice-1');
 
     client.setCompanyInfo(
+      'test-call',
       company,
       hasGoogleIntegration,
       replyStyle,
