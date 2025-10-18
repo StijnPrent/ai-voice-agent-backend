@@ -1132,9 +1132,7 @@ export class VapiClient {
     );
 
     // Handle nested function structure: { id, type, function: { name, arguments } }
-    let container = raw;
-    if (raw.function && typeof raw.function === 'object') {
-      // Extract ID from top level, but name/args from nested function
+    if (raw.function && typeof raw.function === 'object' && raw.function.name) {
       const id =
         raw.id ??
         raw.tool_call_id ??
@@ -1183,7 +1181,7 @@ export class VapiClient {
     }
 
     // Fallback to original flat structure handling
-    container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
+    const container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
 
     if (!container) {
       console.warn(`[VapiClient] No container found in raw tool call`);
