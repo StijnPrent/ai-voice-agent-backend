@@ -989,23 +989,42 @@ export class VapiClient {
         ? 1
         : 0;
 
-    console.log(`[VapiClient] 📨 Incoming event (${type ?? 'unknown'})`, {
-      eventKeys: eventKeys.join(', '),
-      isToolCallEventType,
-      hasToolCallsArray,
-      hasSingleToolCall,
-      toolCallCount,
+    const conversationEntries = Array.isArray(event?.conversation)
+      ? (event.conversation as any[])
+      : [];
+    const messagesEntries = Array.isArray(event?.messages)
+      ? (event.messages as any[])
+      : [];
+
+    const containsToolConversation = conversationEntries.some((item: any) => {
+      const role = item?.role;
+      return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
     });
 
-    logPayload(`[VapiClient] 🧾 Event payload (${type ?? 'unknown'})`, event);
+    const containsToolMessages = messagesEntries.some((item: any) => {
+      const role = item?.role;
+      return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
+    });
 
-    if (isToolCallEventType || hasToolCallsArray || hasSingleToolCall) {
-      console.log(`[VapiClient] 🛠️ Tool call event detected (${type ?? 'unknown'})`, {
-        toolCallCount,
+    const shouldLogToolEvent =
+      isToolCallEventType ||
+      hasToolCallsArray ||
+      hasSingleToolCall ||
+      containsToolConversation ||
+      containsToolMessages;
+
+    if (shouldLogToolEvent) {
+      console.log(`[VapiClient] 📨 Tool event (${type ?? 'unknown'})`, {
         eventKeys: eventKeys.join(', '),
+        isToolCallEventType,
+        hasToolCallsArray,
+        hasSingleToolCall,
+        containsToolConversation,
+        containsToolMessages,
+        toolCallCount,
       });
 
-      logPayload(`[VapiClient] 🧾 Tool call event payload (${type ?? 'unknown'})`, event);
+      logPayload(`[VapiClient] 🧾 Tool event payload (${type ?? 'unknown'})`, event);
 
       const rawToolCalls: unknown[] = [];
       if (hasToolCallsArray) {
@@ -1029,8 +1048,28 @@ export class VapiClient {
           `[VapiClient] 🧰 Tool call payload details (${rawToolCalls.length})`,
           payloadSummaries,
         );
-      } else {
-        console.log(`[VapiClient] 🧰 Tool call event contained no payload objects`);
+      }
+
+      const toolResults = [...conversationEntries, ...messagesEntries].filter((item: any) => {
+        const role = item?.role;
+        return role === 'tool' || role === 'tool_call_result';
+      });
+
+      if (toolResults.length > 0) {
+        console.log(`[VapiClient] 📦 Tool call results (${toolResults.length})`, toolResults);
+
+        const noResultEntries = toolResults.filter((item: any) => {
+          const content = typeof item?.content === 'string' ? item.content : null;
+          const result = typeof item?.result === 'string' ? item.result : null;
+          return content === 'No result returned.' || result === 'No result returned.';
+        });
+
+        if (noResultEntries.length > 0) {
+          console.warn(
+            `[VapiClient] ⚠️ Tool call returned no result (${noResultEntries.length})`,
+            noResultEntries,
+          );
+        }
       }
     }
 
@@ -1132,7 +1171,9 @@ export class VapiClient {
     );
 
     // Handle nested function structure: { id, type, function: { name, arguments } }
-    if (raw.function && typeof raw.function === 'object' && raw.function.name) {
+    let container = raw;
+    if (raw.function && typeof raw.function === 'object') {
+      // Extract ID from top level, but name/args from nested function
       const id =
         raw.id ??
         raw.tool_call_id ??
@@ -1181,7 +1222,7 @@ export class VapiClient {
     }
 
     // Fallback to original flat structure handling
-    const container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
+    container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
 
     if (!container) {
       console.warn(`[VapiClient] No container found in raw tool call`);
