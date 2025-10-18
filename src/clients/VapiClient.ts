@@ -150,37 +150,6 @@ class VapiRealtimeSession {
     // No-op: Vapi's websocket transport consumes raw binary frames only.
   }
 
-  public sendToolResponse(toolCallId: string, payload: unknown) {
-    if (this.closed) return;
-    const result =
-      typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
-
-    const message = {
-      type: 'tool.response.create',
-      tool_response: {
-        tool_call_id: toolCallId,
-        result,  // ✅ juist veldnaam
-      },
-    };
-
-    const messageKeys = Object.keys(message);
-    console.log(`[VapiRealtimeSession] 📤 Outgoing message (${message.type})`, {
-      toolCallId,
-      messageKeys: messageKeys.join(', '),
-      hasToolResponse: Boolean(message.tool_response),
-      outputLength: typeof result === 'string' ? result.length : undefined,
-    });
-
-    logPayload(`[VapiRealtimeSession] 🧾 Tool response payload (${toolCallId})`, payload, PAYLOAD_LOG_LIMIT);
-    logPayload(
-      `[VapiRealtimeSession] 📨 Outgoing event payload (${message.type})`,
-      message,
-      PAYLOAD_LOG_LIMIT,
-    );
-
-    this.socket.send(JSON.stringify(message));
-  }
-
   public close(code?: number, reason?: string) {
     if (this.closed) return;
     console.log(`[VapiRealtimeSession] Closing websocket with code ${code} and reason ${reason}`);
@@ -205,7 +174,11 @@ export class VapiClient {
   private readonly transportProvider: string;
   private readonly sessionContexts = new WeakMap<
     VapiRealtimeSession,
-    { callSid: string; callerNumber: string | null }
+    { callSid: string; callerNumber: string | null; callId: string | null }
+  >();
+  private readonly activeSessionsByCallId = new Map<
+    string,
+    { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string }
   >();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
   private readonly toolResponseLog = new Map<
@@ -673,7 +646,11 @@ export class VapiClient {
     this.sessionContexts.set(session, {
       callSid,
       callerNumber: options?.callerNumber ?? null,
+      callId: callId ?? null,
     });
+    if (callId) {
+      this.activeSessionsByCallId.set(callId, { session, callbacks, callSid });
+    }
 
     const keepAlive = setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -709,14 +686,14 @@ export class VapiClient {
       console.log(`[${callSid}] [Vapi] realtime session closed with code ${code}`);
       clearInterval(keepAlive);
       callbacks.onSessionClosed?.();
-      this.sessionContexts.delete(session);
+      this.unregisterActiveSession(session);
       this.clearSessionConfig(callSid);
     });
 
     ws.on('error', (error) => {
       console.error(`[${callSid}] [Vapi] realtime session error`, error);
       callbacks.onSessionError?.(error as Error);
-      this.sessionContexts.delete(session);
+      this.unregisterActiveSession(session);
       this.clearSessionConfig(callSid);
     });
 
@@ -1129,7 +1106,7 @@ export class VapiClient {
         const toolCall = this.normalizeToolCall(event);
         if (toolCall) {
           console.log(`[VapiClient] ✅ Normalized tool call:`, toolCall);
-          await this.executeToolCall(toolCall, session, callbacks);
+          callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
         } else {
           console.warn(
             `[VapiClient] ❌ Failed to normalize tool call. Raw event:`,
@@ -1147,7 +1124,7 @@ export class VapiClient {
             const toolCall = this.normalizeToolCall(raw);
             if (toolCall) {
               console.log(`[VapiClient] ✅ Normalized tool call from array:`, toolCall);
-              await this.executeToolCall(toolCall, session, callbacks);
+              callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
             } else {
               console.warn(
                 `[VapiClient] ❌ Failed to normalize tool call from array:`,
@@ -1320,7 +1297,7 @@ export class VapiClient {
     call: NormalizedToolCall,
     session: VapiRealtimeSession,
     callbacks: VapiRealtimeCallbacks,
-  ) {
+  ): Promise<unknown> {
     console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
     console.log(`[VapiClient] Tool ID: ${call.id}`);
     console.log(`[VapiClient] Tool Name: ${call.name}`);
@@ -1338,15 +1315,21 @@ export class VapiClient {
     const sessionContext = this.sessionContexts.get(session);
     const config = this.getConfigForCall(sessionContext?.callSid);
 
+    const commitPayload = (payload: unknown) => {
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      return payload;
+    };
+
+    let finalPayload: unknown = null;
+
     if (!config) {
       console.error('[VapiClient] ❌ No config found for session');
       const payload = {
         success: false,
         error: 'Session not configured',
       };
-      this.recordToolResponse(call.id, payload, normalizedToolName);
-      session.sendToolResponse(call.id, payload);
-      return;
+      finalPayload = commitPayload(payload);
+      return finalPayload;
     }
 
     console.log(
@@ -1359,9 +1342,8 @@ export class VapiClient {
         success: false,
         error: 'Google integration not available',
       };
-      this.recordToolResponse(call.id, payload, normalizedToolName);
-      session.sendToolResponse(call.id, payload);
-      return;
+      finalPayload = commitPayload(payload);
+      return finalPayload;
     }
 
     const sendSuccess = (data: unknown) => {
@@ -1370,8 +1352,8 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      this.recordToolResponse(call.id, payload, normalizedToolName);
-      session.sendToolResponse(call.id, payload);
+      finalPayload = commitPayload(payload);
+      return payload;
     };
 
     const sendError = (message: string, details?: unknown) => {
@@ -1384,8 +1366,8 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      this.recordToolResponse(call.id, payload, normalizedToolName);
-      session.sendToolResponse(call.id, payload);
+      finalPayload = commitPayload(payload);
+      return payload;
     };
 
     const companyId = config.company.id;
@@ -1568,6 +1550,82 @@ export class VapiClient {
       console.error(`[VapiClient] ❌ Handler threw error:`, error);
       sendError(message);
     }
+
+    if (!finalPayload) {
+      const payload = {
+        success: false,
+        error: `Tool ${call.name} executed without response`,
+      };
+      console.warn(`[VapiClient] ⚠️ Tool handler completed without setting payload`, {
+        toolCallId: call.id,
+      });
+      finalPayload = commitPayload(payload);
+    }
+
+    return finalPayload;
+  }
+
+  public async handleToolWebhookRequest(
+    body: unknown,
+  ): Promise<{ toolCallId: string; result: string }> {
+    console.log('[VapiClient] 🌐 Received tool webhook payload');
+    logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
+
+    const raw = body as Record<string, unknown> | null | undefined;
+    const callId = this.extractCallIdFromWebhook(raw);
+    const rawToolCall = this.extractToolCallPayload(raw);
+    const normalized = this.normalizeToolCall(rawToolCall);
+    const fallbackToolCallId = this.extractToolCallId(raw);
+    const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
+
+    console.log('[VapiClient] 🌐 Tool webhook identifiers', {
+      callId,
+      toolCallId,
+      hasNormalized: Boolean(normalized),
+    });
+
+    if (!normalized) {
+      const payload = {
+        success: false,
+        error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).',
+      };
+      this.recordToolResponse(toolCallId, payload, null);
+      return { toolCallId, result: this.formatToolResultString(payload) };
+    }
+
+    const normalizedToolName = this.normalizeToolName(normalized.name);
+    const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
+
+    if (!sessionInfo) {
+      const recorded = this.toolResponseLog.get(toolCallId);
+      if (recorded) {
+        console.warn('[VapiClient] ⚠️ Returning cached tool response for webhook', {
+          toolCallId,
+        });
+        return {
+          toolCallId,
+          result: this.formatToolResultString(recorded.payload),
+        };
+      }
+
+      const payload = {
+        success: false,
+        error: callId
+          ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
+          : 'callId ontbreekt in tool webhook payload.',
+      };
+      this.recordToolResponse(toolCallId, payload, normalizedToolName);
+      return { toolCallId, result: this.formatToolResultString(payload) };
+    }
+
+    const payload = await this.executeToolCall(
+      normalized,
+      sessionInfo.session,
+      sessionInfo.callbacks,
+    );
+
+    const result = this.formatToolResultString(payload);
+    return { toolCallId: normalized.id, result };
   }
 
   private recordToolResponse(
@@ -1587,6 +1645,156 @@ export class VapiClient {
       payload,
       normalizedName,
     });
+  }
+
+  private unregisterActiveSession(session: VapiRealtimeSession) {
+    const context = this.sessionContexts.get(session);
+    if (context?.callId) {
+      this.activeSessionsByCallId.delete(context.callId);
+    }
+    this.sessionContexts.delete(session);
+  }
+
+  private extractToolCallPayload(body: any): any {
+    if (!body || typeof body !== 'object') {
+      return body;
+    }
+
+    const arrayCandidates = [
+      body.tool_calls,
+      body.toolCalls,
+      body.tools,
+      body?.data?.tool_calls,
+      body?.data?.toolCalls,
+      body?.data?.tools,
+      body?.event?.tool_calls,
+      body?.event?.toolCalls,
+    ];
+
+    for (const candidate of arrayCandidates) {
+      if (Array.isArray(candidate) && candidate.length > 0) {
+        return candidate[0];
+      }
+    }
+
+    const candidates = [
+      body.toolCall,
+      body.tool_call,
+      body.tool,
+      body.function,
+      body?.data?.toolCall,
+      body?.data?.tool_call,
+      body?.data?.tool,
+      body?.event?.toolCall,
+      body?.event?.tool_call,
+      body?.event?.tool,
+      body?.payload?.toolCall,
+      body?.payload?.tool,
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate) {
+        return candidate;
+      }
+    }
+
+    return body;
+  }
+
+  private extractToolCallId(body: any): string | null {
+    if (!body || typeof body !== 'object') {
+      return null;
+    }
+
+    const candidates: unknown[] = [
+      body.toolCallId,
+      body.tool_call_id,
+      body.tool_callId,
+      body.tool?.id,
+      body.toolCall?.id,
+      body.tool_call?.id,
+      body?.data?.tool?.id,
+      body?.data?.toolCall?.id,
+      body?.event?.tool?.id,
+      body?.event?.toolCall?.id,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) return trimmed;
+      }
+    }
+
+    return null;
+  }
+
+  private extractCallIdFromWebhook(body: any): string | null {
+    if (!body || typeof body !== 'object') {
+      return null;
+    }
+
+    const candidates: unknown[] = [
+      body.callId,
+      body.call_id,
+      body?.call?.id,
+      body?.call?.callId,
+      body?.call?.call_id,
+      body?.call?.vapi_call_id,
+      body?.data?.callId,
+      body?.data?.call_id,
+      body?.data?.call?.id,
+      body?.event?.callId,
+      body?.event?.call_id,
+      body?.event?.call?.id,
+      body?.session?.callId,
+      body?.session?.call_id,
+      body?.session?.call?.id,
+      body?.toolCall?.callId,
+      body?.tool_call?.call_id,
+      body?.tool?.callId,
+      body?.tool?.call_id,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) return trimmed;
+      }
+      if (typeof candidate === 'number' || typeof candidate === 'bigint') {
+        const text = candidate.toString();
+        if (text.trim()) return text.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private formatToolResultString(payload: unknown): string {
+    let result: string | undefined;
+
+    if (typeof payload === 'string') {
+      result = payload;
+    } else {
+      try {
+        result = JSON.stringify(payload ?? {});
+      } catch (error) {
+        console.warn('[VapiClient] ⚠️ Failed to stringify tool payload', error);
+        result = String(payload ?? '');
+      }
+    }
+
+    if (!result) {
+      result = JSON.stringify({});
+    }
+
+    result = result.replace(/[\r\n]+/g, ' ').trim();
+
+    if (!result) {
+      result = JSON.stringify({});
+    }
+
+    return result;
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
