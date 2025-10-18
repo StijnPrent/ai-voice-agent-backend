@@ -253,12 +253,6 @@ export class VapiClient {
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
-    if (effectiveConfig.voiceSettings?.welcomePhrase) {
-      instructions.push(
-        `Start elk gesprek vriendelijk met de welkomstboodschap: "${effectiveConfig.voiceSettings.welcomePhrase}".`,
-      );
-    }
-
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
         `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie`,
