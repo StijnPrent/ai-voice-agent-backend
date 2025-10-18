@@ -168,7 +168,7 @@ class VapiRealtimeSession {
       toolCallId,
       messageKeys: messageKeys.join(', '),
       hasToolResponse: Boolean(message.tool_response),
-      outputLength: typeof output === 'string' ? output.length : undefined,
+      outputLength: typeof result === 'string' ? result.length : undefined,
     });
 
     logPayload(`[VapiRealtimeSession] 🧾 Tool response payload (${toolCallId})`, payload, PAYLOAD_LOG_LIMIT);
