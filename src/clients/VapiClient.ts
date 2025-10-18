@@ -945,32 +945,35 @@ export class VapiClient {
       'function_call',
     ]);
 
+    const eventKeys = Object.keys(event || {});
     const hasToolCallsArray = Array.isArray(event?.tool_calls);
     const hasSingleToolCall = Boolean(
       event?.tool_call ?? event?.toolCall ?? event?.tool ?? event?.function,
     );
     const isToolCallEventType = toolCallEventTypes.has(type);
+    const toolCallCount = hasToolCallsArray
+      ? event.tool_calls.length
+      : hasSingleToolCall
+        ? 1
+        : 0;
+
+    console.log(`[VapiClient] 📨 Incoming event (${type ?? 'unknown'})`, {
+      eventKeys: eventKeys.join(', '),
+      isToolCallEventType,
+      hasToolCallsArray,
+      hasSingleToolCall,
+      toolCallCount,
+    });
+
+    this.logRealtimePayload(`[VapiClient] 🧾 Event payload (${type ?? 'unknown'})`, event);
 
     if (isToolCallEventType || hasToolCallsArray || hasSingleToolCall) {
-      const toolCallCount = hasToolCallsArray
-        ? event.tool_calls.length
-        : hasSingleToolCall
-          ? 1
-          : 0;
-
       console.log(`[VapiClient] 🛠️ Tool call event detected (${type ?? 'unknown'})`, {
         toolCallCount,
-        eventKeys: Object.keys(event || {}).join(', '),
+        eventKeys: eventKeys.join(', '),
       });
 
-      try {
-        console.log(`[VapiClient] 🧾 Tool call event payload: ${JSON.stringify(event, null, 2)}`);
-      } catch (error) {
-        console.log(`[VapiClient] 🧾 Tool call event payload (stringify failed)`, {
-          error,
-          event,
-        });
-      }
+      this.logRealtimePayload(`[VapiClient] 🧾 Tool call event payload (${type ?? 'unknown'})`, event);
 
       const rawToolCalls: unknown[] = [];
       if (hasToolCallsArray) {
@@ -1161,6 +1164,28 @@ export class VapiClient {
 
     console.log(`[VapiClient] ✅ Successfully normalized tool call:`, result);
     return result;
+  }
+
+  private logRealtimePayload(label: string, payload: unknown, options?: { limit?: number }) {
+    const limit = options?.limit ?? 8000;
+    try {
+      const serialized = JSON.stringify(payload, null, 2);
+      if (!serialized) {
+        console.log(`${label}: <empty>`);
+        return;
+      }
+
+      if (serialized.length <= limit) {
+        console.log(`${label}: ${serialized}`);
+        return;
+      }
+
+      console.log(
+        `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}…`,
+      );
+    } catch (error) {
+      console.log(`${label} (stringify failed)`, { error, payload });
+    }
   }
 
   private async executeToolCall(
