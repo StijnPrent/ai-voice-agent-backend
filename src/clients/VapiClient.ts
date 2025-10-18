@@ -79,6 +79,41 @@ export type NormalizedToolCall = {
   args: Record<string, unknown>;
 };
 
+const PAYLOAD_LOG_LIMIT = 8000;
+
+const formatDutchDate = (date: Date): string => {
+  const formatter = new Intl.DateTimeFormat('nl-NL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const formatted = formatter.format(date);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+};
+
+const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) => {
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    if (!serialized) {
+      console.log(`${label}: <empty>`);
+      return;
+    }
+
+    if (serialized.length <= limit) {
+      console.log(`${label}: ${serialized}`);
+      return;
+    }
+
+    console.log(
+      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}…`,
+    );
+  } catch (error) {
+    console.log(`${label} (stringify failed)`, { error, payload });
+  }
+};
+
 const TOOL_NAMES = {
   transferCall: 'transfer_call',
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
@@ -117,18 +152,33 @@ class VapiRealtimeSession {
 
   public sendToolResponse(toolCallId: string, payload: unknown) {
     if (this.closed) return;
-    this.socket.send(
-      JSON.stringify({
-        type: 'tool.response.create',
-        tool_response: {
-          tool_call_id: toolCallId,
-          output:
-            typeof payload === 'string'
-              ? payload
-              : JSON.stringify(payload ?? {}),
-        },
-      }),
+    const output =
+      typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
+
+    const message = {
+      type: 'tool.response.create',
+      tool_response: {
+        tool_call_id: toolCallId,
+        output,
+      },
+    };
+
+    const messageKeys = Object.keys(message);
+    console.log(`[VapiRealtimeSession] 📤 Outgoing message (${message.type})`, {
+      toolCallId,
+      messageKeys: messageKeys.join(', '),
+      hasToolResponse: Boolean(message.tool_response),
+      outputLength: typeof output === 'string' ? output.length : undefined,
+    });
+
+    logPayload(`[VapiRealtimeSession] 🧾 Tool response payload (${toolCallId})`, payload, PAYLOAD_LOG_LIMIT);
+    logPayload(
+      `[VapiRealtimeSession] 📨 Outgoing event payload (${message.type})`,
+      message,
+      PAYLOAD_LOG_LIMIT,
     );
+
+    this.socket.send(JSON.stringify(message));
   }
 
   public close(code?: number, reason?: string) {
@@ -158,6 +208,10 @@ export class VapiClient {
     { callSid: string; callerNumber: string | null }
   >();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
+  private readonly toolResponseLog = new Map<
+    string,
+    { timestamp: number; payload: unknown; normalizedName?: string | null }
+  >();
   private currentConfig: VapiAssistantConfig | null = null;
 
   constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
@@ -245,9 +299,12 @@ export class VapiClient {
       );
     }
 
+    const todayText = formatDutchDate(new Date());
+
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
+      `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
@@ -564,139 +621,9 @@ export class VapiClient {
     ];
   }
 
-  private buildModelApiTools(config: VapiAssistantConfig) {
-    if (!this.toolBaseUrl?.startsWith('https://')) {
-      console.warn('[VapiClient] Skipping apiRequest tools: VAPI_TOOL_BASE_URL must be https.');
-      return [];
-    }
-
-    const join = (p: string) => `${this.toolBaseUrl}${p.startsWith('/') ? p : `/${p}`}`;
-
-    const addCompanyContext = (schema: Record<string, any>) => {
-      const companyId = config.company.id.toString();
-      const properties = {
-        ...(schema.properties ?? {}),
-        companyId: {
-          type: 'string',
-          description: 'Identifier of the company for which the action is performed. Must always match the current company.',
-          const: companyId,
-          default: companyId,
-          enum: [companyId],
-          examples: [companyId],
-        },
-      };
-
-      const required = Array.isArray(schema.required)
-        ? Array.from(new Set([...(schema.required as string[]), 'companyId']))
-        : ['companyId'];
-
-      return {
-        ...schema,
-        type: 'object',
-        properties,
-        required,
-        additionalProperties: schema.additionalProperties ?? false,
-      };
-    };
-
-    const createApiRequestTool = (
-      name: string,
-      path: string,
-      schema: Record<string, unknown>,
-      method: 'POST' | 'GET' | 'PATCH' | 'DELETE' = 'POST',
-      description?: string,
-    ) => ({
-      type: 'apiRequest',
-      name,
-      ...(description ? { description } : {}),
-      method,
-      url: join(path),
-      timeoutSeconds: 15,
-      // ⬇️ GEEN wrapper meer; body is direct het schema
-      body: schema,
-    });
-
-    const tools: any[] = [
-      createApiRequestTool(
-        'transfer_call_http',          // ⬅️ andere naam dan function tool
-        '/voice/transfer',
-        {
-          type: 'object',
-          properties: {
-            phoneNumber: { type: 'string' },
-            callSid: { type: 'string' },
-            callerId: { type: 'string' },
-            reason: { type: 'string' },
-          },
-          required: ['phoneNumber', 'callSid', 'callerId', 'reason'],
-        },
-        'POST',
-        'Verbind de beller door via backend endpoint.',
-      ),
-    ];
-
-    if (config.hasGoogleIntegration) {
-      tools.push(
-        createApiRequestTool(
-          'check_google_calendar_availability',
-          '/google/availability',
-          addCompanyContext({
-            type: 'object',
-            properties: {
-              companyId: { type: 'string' }, // ⬅️ altijd constant
-              date: {
-                type: 'string',
-                format: 'date',
-                pattern: '^\\d{4}-\\d{2}-\\d{2}$',
-                description: 'Date (YYYY-MM-DD) for which availability must be checked.',
-                examples: ['2024-05-30'],
-              },
-            },
-            required: ['date'],
-          }),
-          'POST',
-          'Beschikbaarheid op datum',
-        ),
-        createApiRequestTool(
-          'schedule_google_calendar_event',
-          '/google/schedule',
-          addCompanyContext({
-            type: 'object',
-            properties: {
-              summary: { type: 'string' },
-              start: { type: 'string' },
-              end: { type: 'string' },
-              name: { type: 'string' },
-              dateOfBirth: { type: 'string' },
-              description: { type: 'string' },
-              location: { type: 'string' },
-              attendeeEmail: { type: 'string' },
-            },
-            required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
-          }),
-          'POST',
-          'Nieuwe afspraak plannen',
-        ),
-        createApiRequestTool(
-          'cancel_google_calendar_event',
-          '/google/cancel',
-          addCompanyContext({
-            type: 'object',
-            properties: {
-              eventId: { type: 'string' },
-              name: { type: 'string' },
-              dateOfBirth: { type: 'string' },
-              reason: { type: 'string' },
-            },
-            required: ['eventId', 'name', 'dateOfBirth', 'reason'],
-          }),
-          'POST',
-          'Afspraak annuleren',
-        ),
-      );
-    }
-
-    return tools;
+  // Deprecated: kept for reference in case API tools are reintroduced.
+  private buildModelApiTools_NOT_USED(_config: VapiAssistantConfig) {
+    return [];
   }
 
   public async openRealtimeSession(
@@ -1060,6 +987,119 @@ export class VapiClient {
     callbacks: VapiRealtimeCallbacks,
   ) {
     const type = event?.type;
+
+    const toolCallEventTypes = new Set([
+      'response.tool_call',
+      'tool.call',
+      'session.tool_call',
+      'tool_calls',
+      'function_call',
+    ]);
+
+    const eventKeys = Object.keys(event || {});
+    const hasToolCallsArray = Array.isArray(event?.tool_calls);
+    const hasSingleToolCall = Boolean(
+      event?.tool_call ?? event?.toolCall ?? event?.tool ?? event?.function,
+    );
+    const isToolCallEventType = toolCallEventTypes.has(type);
+    const toolCallCount = hasToolCallsArray
+      ? event.tool_calls.length
+      : hasSingleToolCall
+        ? 1
+        : 0;
+
+    const conversationEntries = Array.isArray(event?.conversation)
+      ? (event.conversation as any[])
+      : [];
+    const messagesEntries = Array.isArray(event?.messages)
+      ? (event.messages as any[])
+      : [];
+
+    const containsToolConversation = conversationEntries.some((item: any) => {
+      const role = item?.role;
+      return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
+    });
+
+    const containsToolMessages = messagesEntries.some((item: any) => {
+      const role = item?.role;
+      return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
+    });
+
+    const shouldLogToolEvent =
+      isToolCallEventType ||
+      hasToolCallsArray ||
+      hasSingleToolCall ||
+      containsToolConversation ||
+      containsToolMessages;
+
+    if (shouldLogToolEvent) {
+      console.log(`[VapiClient] 📨 Tool event (${type ?? 'unknown'})`, {
+        eventKeys: eventKeys.join(', '),
+        isToolCallEventType,
+        hasToolCallsArray,
+        hasSingleToolCall,
+        containsToolConversation,
+        containsToolMessages,
+        toolCallCount,
+      });
+
+      logPayload(`[VapiClient] 🧾 Tool event payload (${type ?? 'unknown'})`, event);
+
+      const rawToolCalls: unknown[] = [];
+      if (hasToolCallsArray) {
+        rawToolCalls.push(...event.tool_calls);
+      }
+
+      for (const candidate of [event?.tool_call, event?.toolCall, event?.tool, event?.function]) {
+        if (candidate && !rawToolCalls.includes(candidate)) {
+          rawToolCalls.push(candidate);
+        }
+      }
+
+      if (rawToolCalls.length > 0) {
+        const payloadSummaries = rawToolCalls.map((payload, index) => ({
+          index,
+          keys: payload && typeof payload === 'object' ? Object.keys(payload as Record<string, unknown>) : [],
+          payload,
+        }));
+
+        console.log(
+          `[VapiClient] 🧰 Tool call payload details (${rawToolCalls.length})`,
+          payloadSummaries,
+        );
+      }
+
+      const toolResults = [...conversationEntries, ...messagesEntries].filter((item: any) => {
+        const role = item?.role;
+        return role === 'tool' || role === 'tool_call_result';
+      });
+
+      if (toolResults.length > 0) {
+        console.log(`[VapiClient] 📦 Tool call results (${toolResults.length})`, toolResults);
+
+        const noResultEntries = toolResults.filter((item: any) => {
+          const content = typeof item?.content === 'string' ? item.content : null;
+          const result = typeof item?.result === 'string' ? item.result : null;
+          return content === 'No result returned.' || result === 'No result returned.';
+        });
+
+        if (noResultEntries.length > 0) {
+          for (const entry of noResultEntries) {
+            const toolCallId =
+              entry?.tool_call_id ?? entry?.toolCallId ?? entry?.id ?? null;
+
+            const recorded = toolCallId ? this.toolResponseLog.get(toolCallId) : null;
+
+            console.warn(`[VapiClient] ⚠️ Tool call returned no result`, {
+              toolCallId,
+              entry,
+              recordedResponse: recorded ?? null,
+            });
+          }
+        }
+      }
+    }
+
     switch (type) {
       case 'response.audio.delta': {
         const audio = event.audio ?? event.delta ?? event.data;
@@ -1082,16 +1122,38 @@ export class VapiClient {
       }
       case 'response.tool_call':
       case 'tool.call':
-      case 'session.tool_call': {
+      case 'session.tool_call':
+      case 'tool_calls':
+      case 'function_call': {
+        console.log(`[VapiClient] 🔧 Tool call event detected!`);
         const toolCall = this.normalizeToolCall(event);
-        if (toolCall) await this.executeToolCall(toolCall, session, callbacks);
+        if (toolCall) {
+          console.log(`[VapiClient] ✅ Normalized tool call:`, toolCall);
+          await this.executeToolCall(toolCall, session, callbacks);
+        } else {
+          console.warn(
+            `[VapiClient] ❌ Failed to normalize tool call. Raw event:`,
+            JSON.stringify(event, null, 2),
+          );
+        }
         break;
       }
       default: {
         if (event?.tool_calls && Array.isArray(event.tool_calls)) {
+          console.log(
+            `[VapiClient] 🔧 Found tool_calls array (${event.tool_calls.length} items)`,
+          );
           for (const raw of event.tool_calls) {
             const toolCall = this.normalizeToolCall(raw);
-            if (toolCall) await this.executeToolCall(toolCall, session, callbacks);
+            if (toolCall) {
+              console.log(`[VapiClient] ✅ Normalized tool call from array:`, toolCall);
+              await this.executeToolCall(toolCall, session, callbacks);
+            } else {
+              console.warn(
+                `[VapiClient] ❌ Failed to normalize tool call from array:`,
+                JSON.stringify(raw, null, 2),
+              );
+            }
           }
         }
         break;
@@ -1125,33 +1187,133 @@ export class VapiClient {
   }
 
   private normalizeToolCall(raw: any): NormalizedToolCall | null {
-    if (!raw) return null;
-    const container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
-    if (!container) return null;
+    if (!raw) {
+      console.warn(`[VapiClient] normalizeToolCall received null/undefined`);
+      return null;
+    }
 
-    const id = container.id ?? container.tool_call_id ?? container.call_id ?? container.callId;
+    console.log(
+      `[VapiClient] 🔍 Normalizing tool call. Raw keys:`,
+      Object.keys(raw).join(', '),
+    );
+
+    // Handle nested function structure: { id, type, function: { name, arguments } }
+    let container = raw;
+    if (raw.function && typeof raw.function === 'object') {
+      // Extract ID from top level, but name/args from nested function
+      const id =
+        raw.id ??
+        raw.tool_call_id ??
+        raw.call_id ??
+        raw.callId ??
+        `tool_${Date.now()}`;
+
+      const name = raw.function.name ?? raw.function.function_name;
+      let argsRaw = raw.function.arguments ?? raw.function.input;
+
+      console.log(`[VapiClient] 🔍 Found nested function structure - ID: ${id}, Name: ${name}`);
+
+      if (!name) {
+        console.warn(
+          `[VapiClient] ❌ No tool name found in nested function. Raw:`,
+          JSON.stringify(raw, null, 2),
+        );
+        return null;
+      }
+
+      // Parse arguments if string
+      if (typeof argsRaw === 'string') {
+        console.log(`[VapiClient] 🔍 Arguments is string, parsing...`);
+        try {
+          argsRaw = JSON.parse(argsRaw);
+          console.log(`[VapiClient] ✅ Parsed arguments:`, argsRaw);
+        } catch (error) {
+          console.error(`[VapiClient] ❌ Failed to parse arguments string:`, argsRaw);
+          argsRaw = {};
+        }
+      }
+
+      if (!argsRaw || typeof argsRaw !== 'object') {
+        console.log(`[VapiClient] ⚠️ No valid arguments found, using empty object`);
+        argsRaw = {};
+      }
+
+      const result = {
+        id,
+        name,
+        args: argsRaw as Record<string, unknown>,
+      };
+
+      console.log(`[VapiClient] ✅ Successfully normalized nested function call:`, result);
+      return result;
+    }
+
+    // Fallback to original flat structure handling
+    container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
+
+    if (!container) {
+      console.warn(`[VapiClient] No container found in raw tool call`);
+      return null;
+    }
+
+    const id =
+      container.id ??
+      container.tool_call_id ??
+      container.call_id ??
+      container.callId ??
+      container.function_call_id ??
+      `tool_${Date.now()}`;
+
     const name =
-      container.name ?? container.tool_name ?? container.function?.name ?? container.action;
-    if (!id || !name) return null;
+      container.name ??
+      container.tool_name ??
+      container.function?.name ??
+      container.action ??
+      container.function_name;
+
+    console.log(`[VapiClient] 🔍 Extracted - ID: ${id}, Name: ${name}`);
+
+    if (!name) {
+      console.warn(
+        `[VapiClient] ❌ No tool name found. Container:`,
+        JSON.stringify(container, null, 2),
+      );
+      return null;
+    }
 
     let argsRaw =
       container.arguments ??
       container.input ??
       container.payload ??
+      container.parameters ??
       container.function?.arguments ??
-      container.tool_arguments;
+      container.tool_arguments ??
+      container.args;
 
     if (typeof argsRaw === 'string') {
+      console.log(`[VapiClient] 🔍 Arguments is string, parsing...`);
       try {
         argsRaw = JSON.parse(argsRaw);
+        console.log(`[VapiClient] ✅ Parsed arguments:`, argsRaw);
       } catch (error) {
-        console.warn(`[VapiClient] Failed to parse tool arguments for ${name}:`, error);
+        console.error(`[VapiClient] ❌ Failed to parse arguments string:`, argsRaw);
         argsRaw = {};
       }
     }
-    if (!argsRaw || typeof argsRaw !== 'object') argsRaw = {};
 
-    return { id, name, args: argsRaw as Record<string, unknown> };
+    if (!argsRaw || typeof argsRaw !== 'object') {
+      console.log(`[VapiClient] ⚠️ No valid arguments found, using empty object`);
+      argsRaw = {};
+    }
+
+    const result = {
+      id,
+      name,
+      args: argsRaw as Record<string, unknown>,
+    };
+
+    console.log(`[VapiClient] ✅ Successfully normalized tool call:`, result);
+    return result;
   }
 
   private async executeToolCall(
@@ -1159,10 +1321,15 @@ export class VapiClient {
     session: VapiRealtimeSession,
     callbacks: VapiRealtimeCallbacks,
   ) {
+    console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
+    console.log(`[VapiClient] Tool ID: ${call.id}`);
+    console.log(`[VapiClient] Tool Name: ${call.name}`);
+    console.log(`[VapiClient] Tool Args:`, JSON.stringify(call.args, null, 2));
+
     const normalizedToolName = this.normalizeToolName(call.name);
-    const googleTools = new Set<
-      (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]
-    >([
+    console.log(`[VapiClient] Normalized name: ${normalizedToolName}`);
+
+    const googleTools = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
       TOOL_NAMES.scheduleGoogleCalendarEvent,
       TOOL_NAMES.checkGoogleCalendarAvailability,
       TOOL_NAMES.cancelGoogleCalendarEvent,
@@ -1170,35 +1337,64 @@ export class VapiClient {
 
     const sessionContext = this.sessionContexts.get(session);
     const config = this.getConfigForCall(sessionContext?.callSid);
+
     if (!config) {
-      console.warn('[VapiClient] Company not configured; cannot execute tool call.');
+      console.error('[VapiClient] ❌ No config found for session');
+      const payload = {
+        success: false,
+        error: 'Session not configured',
+      };
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
       return;
     }
 
+    console.log(
+      `[VapiClient] Config found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
+    );
+
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
-      console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
-      session.sendToolResponse(call.id, { error: 'Google integration not available' });
+      console.warn(`[VapiClient] ⚠️ Google tool called but integration disabled`);
+      const payload = {
+        success: false,
+        error: 'Google integration not available',
+      };
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
       return;
     }
 
     const sendSuccess = (data: unknown) => {
-      session.sendToolResponse(call.id, { success: true, data });
+      const payload = { success: true, data };
+      console.log(`[VapiClient] ✅ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
+      });
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
     };
 
     const sendError = (message: string, details?: unknown) => {
-      session.sendToolResponse(call.id, {
+      const payload = {
         success: false,
         error: message,
         details,
+      };
+      console.error(`[VapiClient] ❌ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
       });
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
     };
 
     const companyId = config.company.id;
-
     const args = call.args ?? {};
 
     const handlers: Record<string, () => Promise<void>> = {
       [TOOL_NAMES.transferCall]: async () => {
+        console.log(`[VapiClient] 📞 === TRANSFER CALL ===`);
+
         if (!callbacks.onTransferCall) {
           throw new Error('Doorverbinden is niet beschikbaar in deze sessie.');
         }
@@ -1210,6 +1406,8 @@ export class VapiClient {
         const callerId = this.normalizeStringArg(args['callerId']);
         const reason = this.normalizeStringArg(args['reason']);
 
+        console.log(`[VapiClient] Transfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
+
         const result = await callbacks.onTransferCall({ phoneNumber, callSid, callerId, reason });
 
         sendSuccess({
@@ -1220,17 +1418,43 @@ export class VapiClient {
         });
       },
       [TOOL_NAMES.checkGoogleCalendarAvailability]: async () => {
+        console.log(`[VapiClient] 📅 === CHECK CALENDAR AVAILABILITY ===`);
+
         const date = this.normalizeStringArg(args['date']);
+        console.log(`[VapiClient] Requested date: ${date}`);
+        console.log(`[VapiClient] All args:`, args);
+
         if (!date) {
           throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
         }
 
+        console.log(`[VapiClient] Getting business hours for date...`);
         const { openHour, closeHour } = this.getBusinessHoursForDate(config, date);
+        console.log(`[VapiClient] Business hours: ${openHour}:00 - ${closeHour}:00`);
 
-        const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
-        sendSuccess({ date, openHour, closeHour, slots });
+        console.log(
+          `[VapiClient] Calling GoogleService.getAvailableSlots(${companyId}, ${date}, ${openHour}, ${closeHour})...`,
+        );
+
+        try {
+          const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
+          console.log(`[VapiClient] ✅ Received ${slots?.length || 0} slots:`, slots);
+
+          sendSuccess({
+            date,
+            openHour,
+            closeHour,
+            slots,
+            message: `Found ${slots?.length || 0} available time slots`,
+          });
+        } catch (error) {
+          console.error(`[VapiClient] ❌ Error getting slots:`, error);
+          throw error;
+        }
       },
       [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
+        console.log(`[VapiClient] 📝 === SCHEDULE CALENDAR EVENT ===`);
+
         const summary = this.normalizeStringArg(args['summary']);
         const start = this.normalizeStringArg(args['start']);
         const end = this.normalizeStringArg(args['end']);
@@ -1241,6 +1465,15 @@ export class VapiClient {
         const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
         const callerNumber = sessionContext?.callerNumber ?? null;
 
+        console.log(`[VapiClient] Event params:`, {
+          summary,
+          start,
+          end,
+          name,
+          dateOfBirth,
+          callerNumber,
+        });
+
         if (!summary || !start || !end || !name || !dateOfBirth) {
           throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
         }
@@ -1249,9 +1482,7 @@ export class VapiClient {
         if (description) details.push(description);
         details.push(`Naam: ${name}`);
         details.push(`Geboortedatum: ${dateOfBirth}`);
-        if (callerNumber) {
-          details.push(`Telefoonnummer: ${callerNumber}`);
-        }
+        if (callerNumber) details.push(`Telefoonnummer: ${callerNumber}`);
         const compiledDescription = details.join('\n');
 
         const event: calendar_v3.Schema$Event = {
@@ -1263,12 +1494,7 @@ export class VapiClient {
         };
 
         if (attendeeEmail) {
-          event.attendees = [
-            {
-              email: attendeeEmail,
-              displayName: name,
-            },
-          ];
+          event.attendees = [{ email: attendeeEmail, displayName: name }];
         }
 
         const privateProperties: Record<string, string> = {
@@ -1282,20 +1508,35 @@ export class VapiClient {
 
         event.extendedProperties = { private: privateProperties };
 
+        console.log(`[VapiClient] Creating event in calendar...`);
         const created = await this.googleService.scheduleEvent(companyId, event);
+        console.log(`[VapiClient] ✅ Event created:`, created.id);
+
         sendSuccess({ event: created });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
+        console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
+
         const eventId = this.normalizeStringArg(args['eventId']);
         const name = this.normalizeStringArg(args['name']);
         const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
         const reason = this.normalizeStringArg(args['reason']);
 
+        console.log(`[VapiClient] Cancel params:`, { eventId, name, dateOfBirth, reason });
+
         if (!eventId) {
           throw new Error('Ontbreekt eventId om te annuleren.');
         }
 
-        await this.googleService.cancelEvent(companyId, eventId, name ?? undefined, dateOfBirth ?? undefined);
+        console.log(`[VapiClient] Calling GoogleService.cancelEvent...`);
+        await this.googleService.cancelEvent(
+          companyId,
+          eventId,
+          name ?? undefined,
+          dateOfBirth ?? undefined,
+        );
+        console.log(`[VapiClient] ✅ Event cancelled`);
+
         sendSuccess({
           eventId,
           cancelled: true,
@@ -1307,20 +1548,45 @@ export class VapiClient {
     const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
 
     if (!handler) {
+      console.error(`[VapiClient] ❌ No handler found!`);
+      console.error(`[VapiClient] Looking for: ${normalizedToolName}`);
+      console.error(`[VapiClient] Available handlers:`, Object.keys(handlers));
       sendError(`Onbekende tool: ${call.name}`);
       return;
     }
 
+    console.log(`[VapiClient] 🎯 Handler found, executing...`);
+
     try {
       await handler();
+      console.log(`[VapiClient] ✅ Handler completed successfully`);
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
           : `Onbekende fout bij uitvoeren van ${call.name}`;
-      console.error(`[VapiClient] Error executing tool '${call.name}':`, error);
+      console.error(`[VapiClient] ❌ Handler threw error:`, error);
       sendError(message);
     }
+  }
+
+  private recordToolResponse(
+    toolCallId: string,
+    payload: unknown,
+    normalizedName?: string | null,
+  ) {
+    if (this.toolResponseLog.size > 100) {
+      const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
+      if (oldestKey) {
+        this.toolResponseLog.delete(oldestKey);
+      }
+    }
+
+    this.toolResponseLog.set(toolCallId, {
+      timestamp: Date.now(),
+      payload,
+      normalizedName,
+    });
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
@@ -1474,13 +1740,7 @@ export class VapiClient {
     const instructions = this.buildSystemPrompt(config);
     const companyContext = this.buildCompanySnapshot(config);
 
-    const functionTools = this.getTools(config.hasGoogleIntegration) || [];
-    const apiRequestTools = this.buildModelApiTools(config) || [];
-
-    const mergedTools = [
-      ...functionTools,
-      ...apiRequestTools.filter(t => !functionTools.some(ft => ft.name === t.name)),
-    ];
+    const tools = this.getTools(config.hasGoogleIntegration);
 
     const modelMessages = this.buildModelMessages(instructions, companyContext, config);
 
@@ -1492,7 +1752,7 @@ export class VapiClient {
         model: this.modelName,
         maxTokens: 10000,
         messages: modelMessages,
-        tools: mergedTools,  // ⬅️ gebruik de merge
+        tools,
       },
       firstMessageInterruptionsEnabled: false,
       firstMessageMode: 'assistant-speaks-first',
@@ -1504,7 +1764,7 @@ export class VapiClient {
     if (firstMessage) payload.firstMessage = firstMessage;
 
     const voiceId = config.voiceSettings?.voiceId?.trim();
-    if (voiceId) payload.voice = { provider: '11labs', voiceId};
+    if (voiceId) payload.voice = { provider: '11labs', voiceId };
 
     return payload;
   }
