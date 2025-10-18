@@ -79,6 +79,29 @@ export type NormalizedToolCall = {
   args: Record<string, unknown>;
 };
 
+const PAYLOAD_LOG_LIMIT = 8000;
+
+const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) => {
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    if (!serialized) {
+      console.log(`${label}: <empty>`);
+      return;
+    }
+
+    if (serialized.length <= limit) {
+      console.log(`${label}: ${serialized}`);
+      return;
+    }
+
+    console.log(
+      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}…`,
+    );
+  } catch (error) {
+    console.log(`${label} (stringify failed)`, { error, payload });
+  }
+};
+
 const TOOL_NAMES = {
   transferCall: 'transfer_call',
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
@@ -128,11 +151,20 @@ class VapiRealtimeSession {
       },
     };
 
-    console.log(`[VapiRealtimeSession] 📤 Sending tool response`, {
+    const messageKeys = Object.keys(message);
+    console.log(`[VapiRealtimeSession] 📤 Outgoing message (${message.type})`, {
       toolCallId,
-      payload,
-      message,
+      messageKeys: messageKeys.join(', '),
+      hasToolResponse: Boolean(message.tool_response),
+      outputLength: typeof output === 'string' ? output.length : undefined,
     });
+
+    logPayload(`[VapiRealtimeSession] 🧾 Tool response payload (${toolCallId})`, payload, PAYLOAD_LOG_LIMIT);
+    logPayload(
+      `[VapiRealtimeSession] 📨 Outgoing event payload (${message.type})`,
+      message,
+      PAYLOAD_LOG_LIMIT,
+    );
 
     this.socket.send(JSON.stringify(message));
   }
@@ -965,7 +997,7 @@ export class VapiClient {
       toolCallCount,
     });
 
-    this.logRealtimePayload(`[VapiClient] 🧾 Event payload (${type ?? 'unknown'})`, event);
+    logPayload(`[VapiClient] 🧾 Event payload (${type ?? 'unknown'})`, event);
 
     if (isToolCallEventType || hasToolCallsArray || hasSingleToolCall) {
       console.log(`[VapiClient] 🛠️ Tool call event detected (${type ?? 'unknown'})`, {
@@ -973,7 +1005,7 @@ export class VapiClient {
         eventKeys: eventKeys.join(', '),
       });
 
-      this.logRealtimePayload(`[VapiClient] 🧾 Tool call event payload (${type ?? 'unknown'})`, event);
+      logPayload(`[VapiClient] 🧾 Tool call event payload (${type ?? 'unknown'})`, event);
 
       const rawToolCalls: unknown[] = [];
       if (hasToolCallsArray) {
@@ -1164,28 +1196,6 @@ export class VapiClient {
 
     console.log(`[VapiClient] ✅ Successfully normalized tool call:`, result);
     return result;
-  }
-
-  private logRealtimePayload(label: string, payload: unknown, options?: { limit?: number }) {
-    const limit = options?.limit ?? 8000;
-    try {
-      const serialized = JSON.stringify(payload, null, 2);
-      if (!serialized) {
-        console.log(`${label}: <empty>`);
-        return;
-      }
-
-      if (serialized.length <= limit) {
-        console.log(`${label}: ${serialized}`);
-        return;
-      }
-
-      console.log(
-        `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}…`,
-      );
-    } catch (error) {
-      console.log(`${label} (stringify failed)`, { error, payload });
-    }
   }
 
   private async executeToolCall(
