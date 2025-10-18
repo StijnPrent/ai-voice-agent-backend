@@ -22,7 +22,23 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 ## 4. Handle Real-Time Events
 1. Listen for JSON events from Vapi alongside the audio, such as partial transcripts, final messages, or tool calls.
 2. When Vapi issues a tool call (e.g., `schedule_google_calendar_event`), invoke the appropriate downstream service or internal API from your backend.
-3. Respond to Vapi with a `tool.response` message over the same WebSocket so the assistant can continue the conversation with the new information.
+3. Note the `toolCallId` from the event but do **not** send the result back over the WebSocket. Vapi expects tool executions to be resolved via the HTTP webhook.
+4. Vapi will POST the tool payload to your configured webhook (`POST /voice/vapi/tool`). Reply with HTTP 200 and the following shape so the assistant can continue the conversation:
+
+   ```json
+   {
+     "results": [
+       {
+         "toolCallId": "call_123",
+         "result": "Single-line string result"
+       }
+     ]
+   }
+   ```
+
+   - The array is mandatory, even when returning a single result.
+   - `toolCallId` must match the ID Vapi sent in the webhook.
+   - `result` should be a single-line string; stringify objects yourself and strip newline characters.
 
 ## 5. Manage Call Lifecycle
 1. When the telephony provider signals that the call ended, close the Vapi WebSocket connection.
