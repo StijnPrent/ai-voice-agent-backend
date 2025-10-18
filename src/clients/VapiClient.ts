@@ -152,14 +152,14 @@ class VapiRealtimeSession {
 
   public sendToolResponse(toolCallId: string, payload: unknown) {
     if (this.closed) return;
-    const output =
+    const result =
       typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
 
     const message = {
       type: 'tool.response.create',
       tool_response: {
         tool_call_id: toolCallId,
-        output,
+        result,  // ✅ juist veldnaam
       },
     };
 
