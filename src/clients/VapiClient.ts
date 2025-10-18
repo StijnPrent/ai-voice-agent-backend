@@ -117,18 +117,23 @@ class VapiRealtimeSession {
 
   public sendToolResponse(toolCallId: string, payload: unknown) {
     if (this.closed) return;
-    this.socket.send(
-      JSON.stringify({
-        type: 'tool.response.create',
-        tool_response: {
-          tool_call_id: toolCallId,
-          output:
-            typeof payload === 'string'
-              ? payload
-              : JSON.stringify(payload ?? {}),
-        },
-      }),
-    );
+    const output =
+      typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
+
+    const message = {
+      type: 'tool.response.create',
+      tool_response: {
+        tool_call_id: toolCallId,
+        output,
+      },
+    };
+
+    console.log(`[VapiRealtimeSession] 📤 Sending tool response`, {
+      toolCallId,
+      output,
+    });
+
+    this.socket.send(JSON.stringify(message));
   }
 
   public close(code?: number, reason?: string) {
@@ -931,10 +936,29 @@ export class VapiClient {
   ) {
     const type = event?.type;
 
-    if (type !== 'response.audio.delta') {
-      console.log(`[VapiClient] 📨 Event type: ${type}`, {
-        hasToolCall: !!event?.tool_call,
-        hasToolCalls: Array.isArray(event?.tool_calls),
+    const toolCallEventTypes = new Set([
+      'response.tool_call',
+      'tool.call',
+      'session.tool_call',
+      'tool_calls',
+      'function_call',
+    ]);
+
+    const hasToolCallsArray = Array.isArray(event?.tool_calls);
+    const hasSingleToolCall = Boolean(
+      event?.tool_call ?? event?.toolCall ?? event?.tool ?? event?.function,
+    );
+    const isToolCallEventType = toolCallEventTypes.has(type);
+
+    if (isToolCallEventType || hasToolCallsArray || hasSingleToolCall) {
+      const toolCallCount = hasToolCallsArray
+        ? event.tool_calls.length
+        : hasSingleToolCall
+          ? 1
+          : 0;
+
+      console.log(`[VapiClient] 🛠️ Tool call event detected (${type ?? 'unknown'})`, {
+        toolCallCount,
         eventKeys: Object.keys(event || {}).join(', '),
       });
     }
