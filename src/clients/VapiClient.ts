@@ -81,6 +81,18 @@ export type NormalizedToolCall = {
 
 const PAYLOAD_LOG_LIMIT = 8000;
 
+const formatDutchDate = (date: Date): string => {
+  const formatter = new Intl.DateTimeFormat('nl-NL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const formatted = formatter.format(date);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+};
+
 const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) => {
   try {
     const serialized = JSON.stringify(payload, null, 2);
@@ -196,6 +208,10 @@ export class VapiClient {
     { callSid: string; callerNumber: string | null }
   >();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
+  private readonly toolResponseLog = new Map<
+    string,
+    { timestamp: number; payload: unknown; normalizedName?: string | null }
+  >();
   private currentConfig: VapiAssistantConfig | null = null;
 
   constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
@@ -283,9 +299,12 @@ export class VapiClient {
       );
     }
 
+    const todayText = formatDutchDate(new Date());
+
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
+      `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
@@ -1065,10 +1084,18 @@ export class VapiClient {
         });
 
         if (noResultEntries.length > 0) {
-          console.warn(
-            `[VapiClient] ⚠️ Tool call returned no result (${noResultEntries.length})`,
-            noResultEntries,
-          );
+          for (const entry of noResultEntries) {
+            const toolCallId =
+              entry?.tool_call_id ?? entry?.toolCallId ?? entry?.id ?? null;
+
+            const recorded = toolCallId ? this.toolResponseLog.get(toolCallId) : null;
+
+            console.warn(`[VapiClient] ⚠️ Tool call returned no result`, {
+              toolCallId,
+              entry,
+              recordedResponse: recorded ?? null,
+            });
+          }
         }
       }
     }
@@ -1313,10 +1340,12 @@ export class VapiClient {
 
     if (!config) {
       console.error('[VapiClient] ❌ No config found for session');
-      session.sendToolResponse(call.id, {
+      const payload = {
         success: false,
         error: 'Session not configured',
-      });
+      };
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
       return;
     }
 
@@ -1326,10 +1355,12 @@ export class VapiClient {
 
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
       console.warn(`[VapiClient] ⚠️ Google tool called but integration disabled`);
-      session.sendToolResponse(call.id, {
+      const payload = {
         success: false,
         error: 'Google integration not available',
-      });
+      };
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      session.sendToolResponse(call.id, payload);
       return;
     }
 
@@ -1339,6 +1370,7 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
+      this.recordToolResponse(call.id, payload, normalizedToolName);
       session.sendToolResponse(call.id, payload);
     };
 
@@ -1352,6 +1384,7 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
+      this.recordToolResponse(call.id, payload, normalizedToolName);
       session.sendToolResponse(call.id, payload);
     };
 
@@ -1535,6 +1568,25 @@ export class VapiClient {
       console.error(`[VapiClient] ❌ Handler threw error:`, error);
       sendError(message);
     }
+  }
+
+  private recordToolResponse(
+    toolCallId: string,
+    payload: unknown,
+    normalizedName?: string | null,
+  ) {
+    if (this.toolResponseLog.size > 100) {
+      const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
+      if (oldestKey) {
+        this.toolResponseLog.delete(oldestKey);
+      }
+    }
+
+    this.toolResponseLog.set(toolCallId, {
+      timestamp: Date.now(),
+      payload,
+      normalizedName,
+    });
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
