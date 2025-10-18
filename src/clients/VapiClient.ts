@@ -1131,7 +1131,59 @@ export class VapiClient {
       Object.keys(raw).join(', '),
     );
 
-    const container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw.function ?? raw;
+    // Handle nested function structure: { id, type, function: { name, arguments } }
+    let container = raw;
+    if (raw.function && typeof raw.function === 'object') {
+      // Extract ID from top level, but name/args from nested function
+      const id =
+        raw.id ??
+        raw.tool_call_id ??
+        raw.call_id ??
+        raw.callId ??
+        `tool_${Date.now()}`;
+
+      const name = raw.function.name ?? raw.function.function_name;
+      let argsRaw = raw.function.arguments ?? raw.function.input;
+
+      console.log(`[VapiClient] 🔍 Found nested function structure - ID: ${id}, Name: ${name}`);
+
+      if (!name) {
+        console.warn(
+          `[VapiClient] ❌ No tool name found in nested function. Raw:`,
+          JSON.stringify(raw, null, 2),
+        );
+        return null;
+      }
+
+      // Parse arguments if string
+      if (typeof argsRaw === 'string') {
+        console.log(`[VapiClient] 🔍 Arguments is string, parsing...`);
+        try {
+          argsRaw = JSON.parse(argsRaw);
+          console.log(`[VapiClient] ✅ Parsed arguments:`, argsRaw);
+        } catch (error) {
+          console.error(`[VapiClient] ❌ Failed to parse arguments string:`, argsRaw);
+          argsRaw = {};
+        }
+      }
+
+      if (!argsRaw || typeof argsRaw !== 'object') {
+        console.log(`[VapiClient] ⚠️ No valid arguments found, using empty object`);
+        argsRaw = {};
+      }
+
+      const result = {
+        id,
+        name,
+        args: argsRaw as Record<string, unknown>,
+      };
+
+      console.log(`[VapiClient] ✅ Successfully normalized nested function call:`, result);
+      return result;
+    }
+
+    // Fallback to original flat structure handling
+    container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
 
     if (!container) {
       console.warn(`[VapiClient] No container found in raw tool call`);
