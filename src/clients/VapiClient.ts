@@ -130,7 +130,8 @@ class VapiRealtimeSession {
 
     console.log(`[VapiRealtimeSession] 📤 Sending tool response`, {
       toolCallId,
-      output,
+      payload,
+      message,
     });
 
     this.socket.send(JSON.stringify(message));
@@ -961,6 +962,41 @@ export class VapiClient {
         toolCallCount,
         eventKeys: Object.keys(event || {}).join(', '),
       });
+
+      try {
+        console.log(`[VapiClient] 🧾 Tool call event payload: ${JSON.stringify(event, null, 2)}`);
+      } catch (error) {
+        console.log(`[VapiClient] 🧾 Tool call event payload (stringify failed)`, {
+          error,
+          event,
+        });
+      }
+
+      const rawToolCalls: unknown[] = [];
+      if (hasToolCallsArray) {
+        rawToolCalls.push(...event.tool_calls);
+      }
+
+      for (const candidate of [event?.tool_call, event?.toolCall, event?.tool, event?.function]) {
+        if (candidate && !rawToolCalls.includes(candidate)) {
+          rawToolCalls.push(candidate);
+        }
+      }
+
+      if (rawToolCalls.length > 0) {
+        const payloadSummaries = rawToolCalls.map((payload, index) => ({
+          index,
+          keys: payload && typeof payload === 'object' ? Object.keys(payload as Record<string, unknown>) : [],
+          payload,
+        }));
+
+        console.log(
+          `[VapiClient] 🧰 Tool call payload details (${rawToolCalls.length})`,
+          payloadSummaries,
+        );
+      } else {
+        console.log(`[VapiClient] 🧰 Tool call event contained no payload objects`);
+      }
     }
 
     switch (type) {
@@ -1172,17 +1208,25 @@ export class VapiClient {
     }
 
     const sendSuccess = (data: unknown) => {
-      console.log(`[VapiClient] ✅ Sending success response:`, JSON.stringify(data, null, 2));
-      session.sendToolResponse(call.id, { success: true, data });
+      const payload = { success: true, data };
+      console.log(`[VapiClient] ✅ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
+      });
+      session.sendToolResponse(call.id, payload);
     };
 
     const sendError = (message: string, details?: unknown) => {
-      console.error(`[VapiClient] ❌ Sending error response: ${message}`, details);
-      session.sendToolResponse(call.id, {
+      const payload = {
         success: false,
         error: message,
         details,
+      };
+      console.error(`[VapiClient] ❌ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
       });
+      session.sendToolResponse(call.id, payload);
     };
 
     const companyId = config.company.id;
