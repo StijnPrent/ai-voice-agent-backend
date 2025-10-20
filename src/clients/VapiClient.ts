@@ -150,6 +150,8 @@ class VapiRealtimeSession {
     if (this.closed) return;
 
     try {
+      const type = typeof (frame as any)?.type === 'string' ? (frame as any).type : 'unknown';
+      logPayload(`[VapiRealtimeSession] ⇨ Sending JSON frame (${type})`, frame, PAYLOAD_LOG_LIMIT);
       const payload = JSON.stringify(frame);
       this.socket.send(payload);
     } catch (error) {
@@ -694,7 +696,14 @@ export class VapiClient {
       if (!s.trim().startsWith('{') && !s.trim().startsWith('[')) return;
 
       try {
-        await this.handleRealtimeEvent(JSON.parse(s), session, callbacks);
+        const parsed = JSON.parse(s);
+        const frameType = typeof parsed?.type === 'string' ? parsed.type : 'unknown';
+        logPayload(
+          `[${callSid}] [Vapi] ⇦ Received frame (${frameType})`,
+          parsed,
+          PAYLOAD_LOG_LIMIT,
+        );
+        await this.handleRealtimeEvent(parsed, session, callbacks);
       } catch (e) {
         console.error(`[${callSid}] [Vapi] Bad JSON frame`, s.slice(0, 120), e);
       }
@@ -1665,6 +1674,12 @@ export class VapiClient {
       toolCallId,
       result: resultString,
     });
+
+    logPayload(
+      `[VapiClient] 📦 Tool result payload (${toolCallId})`,
+      payload,
+      PAYLOAD_LOG_LIMIT,
+    );
 
     session.sendJsonFrame({
       type: 'tool.call.result',
