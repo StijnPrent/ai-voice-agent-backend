@@ -21,6 +21,8 @@ const app = express();
 
 const voiceSessionManager = container.resolve(VoiceSessionManager);
 
+app.set("trust proxy", true);
+
 app.use(cors({
     origin: process.env.FRONTEND_URL,
     methods: ["GET","POST","PUT","DELETE","OPTIONS"],

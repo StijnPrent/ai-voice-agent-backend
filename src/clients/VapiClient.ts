@@ -708,11 +708,6 @@ export class VapiClient {
       try {
         const parsed = JSON.parse(s);
         const frameType = typeof parsed?.type === 'string' ? parsed.type : 'unknown';
-        logPayload(
-          `[${callSid}] [Vapi] ⇦ Received frame (${frameType})`,
-          parsed,
-          PAYLOAD_LOG_LIMIT,
-        );
         await this.handleRealtimeEvent(parsed, session, callbacks);
       } catch (e) {
         console.error(`[${callSid}] [Vapi] Bad JSON frame`, s.slice(0, 120), e);
@@ -1476,7 +1471,6 @@ export class VapiClient {
       console.log(
         `[VapiClient] ♻️ Returning cached tool response for ${toolCall.id}`,
       );
-      this.sendToolResultFrame(session, toolCall.id, recorded.payload);
       callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
       return;
     }
@@ -1510,7 +1504,6 @@ export class VapiClient {
     }
 
     console.log(`[VapiClient] 📤 About to send tool result frame with payload:`, payload);
-    this.sendToolResultFrame(session, toolCall.id, payload);
     callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
   }
 
@@ -1586,7 +1579,7 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      return commitPayload(payload);
+      return payload;
     };
 
     const sendError = (message: string, details?: unknown) => {
@@ -1599,7 +1592,7 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      return commitPayload(payload);
+      return payload;
     };
 
     const companyId = config.company.id;
@@ -1805,6 +1798,9 @@ export class VapiClient {
         console.log(`[VapiClient] Using handler return value as payload`);
         finalPayload = handlerResult;
         this.recordToolResponse(call.id, handlerResult, normalizedToolName);
+      } else if (!payloadWasSet) {
+        console.log(`[VapiClient] Handler returned no result, setting finalPayload to null`);
+        finalPayload = null;
       }
     } catch (error) {
       const message =
@@ -1821,8 +1817,7 @@ export class VapiClient {
         success: false,
         error: `Tool ${call.name} executed without response`,
       };
-      this.recordToolResponse(call.id, payload, normalizedToolName);
-      finalPayload = payload;
+      commitPayload(payload);
     }
 
     return finalPayload;
@@ -1925,53 +1920,9 @@ export class VapiClient {
     return guardedPromise;
   }
 
-  private sendToolResultFrame(
-    session: VapiRealtimeSession,
-    toolCallId: string,
-    payload: unknown,
-  ) {
-    const transmission = this.buildSingleLineResultOrError(payload);
-    let payloadPreview: string | undefined;
-    try {
-      payloadPreview = JSON.stringify(payload).slice(0, 200);
-    } catch (error) {
-      console.warn('[VapiClient] ⚠️ Failed to stringify payload for result preview', error);
-    }
-
-    console.log(`[VapiClient] 📤 Sending tool.call.result frame`, {
-      toolCallId,
-      result: transmission.result ?? null,
-      error: transmission.error ?? null,
-      payloadPreview,
-    });
-
-    const frame: Record<string, unknown> = {
-      type: 'tool.call.result',
-      tool_call_id: toolCallId,
-    };
-
-    if (transmission.error) {
-      frame.error = transmission.error;
-    } else {
-      frame.result = transmission.result;
-    }
-
-    console.log(`[VapiClient] 📤 Actual frame being sent:`, JSON.stringify(frame, null, 2));
-
-    logPayload(
-      `[VapiClient] 📦 Tool result payload (${toolCallId})`,
-      payload,
-      PAYLOAD_LOG_LIMIT,
-    );
-
-    session.sendJsonFrame(frame);
-  }
-
   public async handleToolWebhookRequest(
     body: unknown,
-  ): Promise<{
-    results: Array<{ toolCallId: string; result?: string; error?: string }>;
-  }> {
+  ): Promise<{ results: Array<{ toolCallId: string; result?: any; error?: any }> }> {
     console.log('[VapiClient] 🌐 Received tool webhook payload');
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
@@ -1982,54 +1933,34 @@ export class VapiClient {
     const fallbackToolCallId = this.extractToolCallId(raw);
     const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
 
-    console.log('[VapiClient] 🌐 Tool webhook identifiers', {
-      callId,
-      toolCallId,
-      hasNormalized: Boolean(normalized),
-    });
-
     if (!normalized) {
-      const payload = {
-        success: false,
-        error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).',
-      };
+      const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
       this.recordToolResponse(toolCallId, payload, null);
-      const transmission = this.buildSingleLineResultOrError(payload);
-      return this.buildWebhookResponsePayload(toolCallId, transmission);
+      return { results: [{ toolCallId, result: payload }] };
     }
 
-    const normalizedToolName = this.normalizeToolName(normalized.name);
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
-
     if (!sessionInfo) {
       const recorded = this.toolResponseLog.get(toolCallId);
-      if (recorded) {
-        console.warn('[VapiClient] ⚠️ Returning cached tool response for webhook', {
-          toolCallId,
-        });
-        const cachedTransmission = this.buildSingleLineResultOrError(recorded.payload);
-        return this.buildWebhookResponsePayload(toolCallId, cachedTransmission);
+      if (recorded?.payload) {
+        return { results: [{ toolCallId, result: recorded.payload }] };
       }
-
       const payload = {
         success: false,
         error: callId
           ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
           : 'callId ontbreekt in tool webhook payload.',
       };
-      this.recordToolResponse(toolCallId, payload, normalizedToolName);
-      const transmission = this.buildSingleLineResultOrError(payload);
-      return this.buildWebhookResponsePayload(toolCallId, transmission);
+      this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
+      return { results: [{ toolCallId, result: payload }] };
     }
 
-    const payload = await this.executeToolCall(
-      normalized,
-      sessionInfo.session,
-      sessionInfo.callbacks,
-    );
+    const payload =
+      await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks)
+      ?? { success: false, error: 'Tool execution returned empty result.' };
 
-    const transmission = this.buildSingleLineResultOrError(payload);
-    return this.buildWebhookResponsePayload(normalized.id, transmission);
+    // IMPORTANT: return the RAW payload object (not stringified, not just a message)
+    return { results: [{ toolCallId: normalized.id, result: payload }] };
   }
 
   private recordToolResponse(
@@ -2172,71 +2103,6 @@ export class VapiClient {
     }
 
     return null;
-  }
-
-  private buildWebhookResponsePayload(
-    toolCallId: string,
-    transmission: { result?: string; error?: string },
-  ): { results: Array<{ toolCallId: string; result?: string; error?: string }> } {
-    const item: { toolCallId: string; result?: string; error?: string } = { toolCallId };
-    if (transmission.error) {
-      item.error = transmission.error;
-    } else {
-      item.result = transmission.result ?? 'OK';
-    }
-
-    return { results: [item] };
-  }
-
-  private buildSingleLineResultOrError(payload: unknown): { result?: string; error?: string } {
-    const sanitize = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
-    const asString = (value: unknown): string | null => {
-      if (value == null) return null;
-      if (typeof value === 'string') {
-        const sanitized = sanitize(value);
-        return sanitized.length > 0 ? sanitized : null;
-      }
-      if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-        const sanitized = sanitize(String(value));
-        return sanitized.length > 0 ? sanitized : null;
-      }
-      try {
-        const sanitized = sanitize(JSON.stringify(value));
-        return sanitized.length > 0 ? sanitized : null;
-      } catch {
-        return null;
-      }
-    };
-
-    if (payload == null) {
-      return { error: 'No result generated' };
-    }
-
-    if (typeof payload === 'object' && 'success' in (payload as any)) {
-      const p = payload as {
-        success?: boolean;
-        data?: unknown;
-        error?: unknown;
-        result?: unknown;
-        [key: string]: unknown;
-      };
-
-      if (p.success === false) {
-        return { error: asString(p.error) ?? 'Tool execution failed' };
-      }
-
-      const preferred = asString(p.data ?? p.result);
-      if (preferred) {
-        return { result: preferred };
-      }
-
-      const { success: _s, data: _d, error: _e, result: _r, ...rest } = p;
-      const restStr = asString(rest);
-      return restStr ? { result: restStr } : { result: 'OK' };
-    }
-
-    const direct = asString(payload);
-    return direct ? { result: direct } : { error: 'Empty result' };
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
