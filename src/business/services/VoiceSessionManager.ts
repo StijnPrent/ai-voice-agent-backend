@@ -61,14 +61,6 @@ export class VoiceSessionManager {
         return session;
     }
 
-    public findSessionByVapiCallId(callId: string | undefined | null): VoiceService | undefined {
-        if (!callId) {
-            return undefined;
-        }
-
-        return this.sessionsByVapiCallId.get(callId);
-    }
-
     /**
      * Resolve an active session when the callSid is optional. If the caller
      * does not provide a callSid we only return a session when there is a

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { container, injectable } from "tsyringe";
 import type { VoiceService } from "../business/services/VoiceService";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
-import { VapiClient } from "../clients/VapiClient";
+import { VapiClient, VapiToolLogContext } from "../clients/VapiClient";
 
 @injectable()
 export class VapiRoute {
@@ -20,35 +20,56 @@ export class VapiRoute {
   private registerRoutes() {
     this.router.post("/tools", async (req, res) => {
       try {
-        this.logJsonPreview("[VapiRoute] ⇦ Incoming tool webhook body", req.body);
-
         const callId = VapiClient.extractCallIdFromWebhook(req.body);
+        const toolCallId = this.extractToolCallId(req.body);
+        const toolContext: VapiToolLogContext = {
+          callId: callId ?? null,
+          toolCallId,
+        };
+        const contextLabel = VapiClient.formatToolLogContext(toolContext);
+
+        this.logJsonPreview(`[VapiRoute] ⇦ Incoming tool webhook body ${contextLabel}`, req.body);
+
         const activeCallSids = this.sessionManager.listActiveCallSids();
         console.log(
-          `[VapiRoute] 🔍 Extracted callId=${callId ?? "<none>"} (activeCallSids=${
+          `[VapiRoute] 🔍 Extracted callId=${callId ?? "<none>"}, toolCallId=${
+            toolCallId ?? "<none>"
+          } ${contextLabel} (activeCallSids=${
             activeCallSids.length > 0 ? activeCallSids.join(", ") : "<none>"
           })`,
         );
 
         const voiceService = this.resolveVoiceService(req.body, callId);
         if (voiceService) {
+          toolContext.callSid = voiceService.getCallSid?.() ?? toolContext.callSid ?? null;
+          const resolvedContext = VapiClient.formatToolLogContext(toolContext);
           console.log(
-            `[VapiRoute] 🧭 Resolved active VoiceService for webhook`,
+            `[VapiRoute] 🧭 Resolved active VoiceService for webhook ${resolvedContext}`,
             this.describeVoiceService(voiceService),
           );
         } else {
-          console.warn(`[VapiRoute] ⚠️ Falling back to transient VapiClient for tool webhook`);
+          console.warn(
+            `[VapiRoute] ⚠️ Falling back to transient VapiClient for tool webhook ${contextLabel}`,
+          );
         }
 
         const result = voiceService
           ? await voiceService.handleVapiToolWebhook(req.body)
           : await container.resolve(VapiClient).handleToolWebhookRequest(req.body);
 
-        this.logJsonPreview("[VapiRoute] ⇨ Tool webhook response", result);
+        const responseContextLabel = VapiClient.formatToolLogContext(toolContext);
+        this.logJsonPreview(`[VapiRoute] ⇨ Tool webhook response ${responseContextLabel}`, result);
         res.status(200).json(result);
       } catch (error) {
         console.error("[VapiRoute] Tool webhook error", error);
-        this.logJsonPreview("[VapiRoute] ⇨ Tool webhook error response payload", error);
+        const contextLabel = VapiClient.formatToolLogContext({
+          callId: VapiClient.extractCallIdFromWebhook(req.body),
+          toolCallId: this.extractToolCallId(req.body),
+        });
+        this.logJsonPreview(
+          `[VapiRoute] ⇨ Tool webhook error response payload ${contextLabel}`,
+          error,
+        );
         res.status(200).json({
           results: [
             {
