@@ -158,7 +158,6 @@ export class VapiClient {
     { callSid: string; callerNumber: string | null }
   >();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
-  private currentConfig: VapiAssistantConfig | null = null;
 
   constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
     this.apiKey = process.env.VAPI_API_KEY || '';
@@ -219,7 +218,6 @@ export class VapiClient {
     };
 
     this.sessionConfigs.set(callSid, config);
-    this.currentConfig = config;
 
     if (company.assistantId) {
       this.assistantCache.set(company.id.toString(), company.assistantId);
@@ -230,30 +228,29 @@ export class VapiClient {
     this.sessionConfigs.delete(callSid);
   }
 
-  private getConfigForCall(callSid: string | null | undefined): VapiAssistantConfig | null {
+  private getConfigForCall(callSid: string | null | undefined): VapiAssistantConfig {
     if (!callSid) {
-      return this.currentConfig;
+      throw new Error('Call SID is required to resolve Vapi assistant configuration.');
     }
-    return this.sessionConfigs.get(callSid) ?? this.currentConfig;
+
+    const config = this.sessionConfigs.get(callSid);
+    if (!config) {
+      throw new Error(`No Vapi assistant configuration found for call '${callSid}'.`);
+    }
+
+    return config;
   }
 
-  public buildSystemPrompt(config?: VapiAssistantConfig): string {
-    const effectiveConfig = config ?? this.currentConfig;
-    if (!effectiveConfig) {
-      throw new Error(
-        'Company info, reply style, context, and scheduling context must be set before generating a system prompt.',
-      );
-    }
-
+  public buildSystemPrompt(config: VapiAssistantConfig): string {
     const instructions: string[] = [
-      `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
+      `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${config.company.name}'. ${config.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
-    if (effectiveConfig.hasGoogleIntegration) {
+    if (config.hasGoogleIntegration) {
       instructions.push(
         `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie`,
       );
@@ -704,9 +701,12 @@ export class VapiClient {
     callbacks: VapiRealtimeCallbacks,
     options?: { callerNumber?: string | null },
   ): Promise<{ session: VapiRealtimeSession; callId: string | null }> {
-    const config = this.getConfigForCall(callSid);
-    if (!config) {
-      throw new Error('Company must be configured before opening a Vapi session');
+    let config: VapiAssistantConfig;
+    try {
+      config = this.getConfigForCall(callSid);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Company must be configured before opening a Vapi session: ${reason}`);
     }
 
     const assistantId =
@@ -1170,10 +1170,6 @@ export class VapiClient {
 
     const sessionContext = this.sessionContexts.get(session);
     const config = this.getConfigForCall(sessionContext?.callSid);
-    if (!config) {
-      console.warn('[VapiClient] Company not configured; cannot execute tool call.');
-      return;
-    }
 
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
       console.warn(`[VapiClient] Tool call '${call.name}' ignored because Google integration is disabled.`);
@@ -1392,41 +1388,26 @@ export class VapiClient {
   }
 
   /** ===== Assistant lifecycle ===== */
-  public async createAssistantWithConfig(config?: VapiAssistantConfig): Promise<string> {
-    const effectiveConfig = config ?? this.currentConfig;
-    if (!effectiveConfig) {
-      throw new Error('Company configuration must be set before creating a Vapi assistant');
-    }
-
-    const payload = this.buildAssistantPayload(effectiveConfig);
+  public async createAssistantWithConfig(config: VapiAssistantConfig): Promise<string> {
+    const payload = this.buildAssistantPayload(config);
     const assistantId = await this.createAssistant(payload);
-    this.assistantCache.set(effectiveConfig.company.id.toString(), assistantId);
+    this.assistantCache.set(config.company.id.toString(), assistantId);
     return assistantId;
   }
 
   public async updateAssistantWithConfig(
     assistantId: string,
-    config?: VapiAssistantConfig,
+    config: VapiAssistantConfig,
   ): Promise<void> {
-    const effectiveConfig = config ?? this.currentConfig;
-    if (!effectiveConfig) {
-      throw new Error('Company configuration must be set before updating a Vapi assistant');
-    }
-
-    const payload = this.buildAssistantPayload(effectiveConfig);
-    this.assistantCache.delete(effectiveConfig.company.id.toString());
+    const payload = this.buildAssistantPayload(config);
+    this.assistantCache.delete(config.company.id.toString());
     await this.updateAssistant(assistantId, payload);
   }
 
-  public async syncAssistant(config?: VapiAssistantConfig): Promise<string> {
-    const effectiveConfig = config ?? this.currentConfig;
-    if (!effectiveConfig) {
-      throw new Error('Company configuration must be set before syncing a Vapi assistant');
-    }
-
-    const assistantName = this.getAssistantName(effectiveConfig);
-    const cacheKey = effectiveConfig.company.id.toString();
-    const payload = this.buildAssistantPayload(effectiveConfig);
+  public async syncAssistant(config: VapiAssistantConfig): Promise<string> {
+    const assistantName = this.getAssistantName(config);
+    const cacheKey = config.company.id.toString();
+    const payload = this.buildAssistantPayload(config);
 
     try {
       const cachedId = this.assistantCache.get(cacheKey);

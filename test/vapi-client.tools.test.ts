@@ -13,7 +13,7 @@ describe('VapiClient tool dispatcher', () => {
   let session: { sendToolResponse: jest.Mock };
   let baseCallbacks: VapiRealtimeCallbacks;
 
-  const createCompany = (hasGoogleIntegration = true) => {
+  const createCompany = (hasGoogleIntegration = true, callSid = 'test-call') => {
     const company = new CompanyModel(1n, 'Test Company', 'info@test.com', '+31123456789', new Date(), new Date(), 'assistant-1');
     const replyStyle = new ReplyStyleModel(
       1,
@@ -34,7 +34,7 @@ describe('VapiClient tool dispatcher', () => {
     const voiceSettings = new VoiceSettingModel(1, 1, 'Welkom', 1, 'voice-1');
 
     client.setCompanyInfo(
-      'test-call',
+      callSid,
       company,
       hasGoogleIntegration,
       replyStyle,
@@ -42,6 +42,11 @@ describe('VapiClient tool dispatcher', () => {
       schedulingContext,
       voiceSettings,
     );
+
+    (client as any).sessionContexts.set(session, {
+      callSid,
+      callerNumber: '+31111222333',
+    });
   };
 
   beforeEach(() => {
@@ -75,7 +80,7 @@ describe('VapiClient tool dispatcher', () => {
 
     expect(transferHandler).toHaveBeenCalledWith({
       phoneNumber: '+31881234567',
-      callSid: null,
+      callSid: 'test-call',
       callerId: null,
       reason: null,
     });
@@ -94,7 +99,7 @@ describe('VapiClient tool dispatcher', () => {
     const transferHandler = jest.fn().mockResolvedValue({});
     const callbacks: VapiRealtimeCallbacks = { ...baseCallbacks, onTransferCall: transferHandler };
 
-    (client as any).sessionContexts.set(session, { callSid: 'CA1234567890', callerNumber: '+31111222333' });
+    createCompany(true, 'CA1234567890');
 
     await execute(
       { id: 'tool-1', name: 'transfer_call', args: { phoneNumber: '+31881234567' } },
