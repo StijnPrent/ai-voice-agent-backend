@@ -1,9 +1,7 @@
 // src/routes/VoiceRoute.ts
 import { Router } from "express";
-import { container } from "tsyringe";
 import { VoiceController } from "../controllers/VoiceController";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
-import { VapiClient } from "../clients/VapiClient";
 
 export function voiceRoutes(sessionManager: VoiceSessionManager) {
   const router = Router();
@@ -67,59 +65,6 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         .status(409)
         .json({ success: false, error: e?.message || "transfer failed" });
       return;
-    }
-  });
-
-  router.post("/vapi/tool", async (req, res) => {
-    const vapiClient = container.resolve(VapiClient);
-
-    const extractToolCallId = (body: any): string | null => {
-      if (!body || typeof body !== "object") {
-        return null;
-      }
-
-      const candidates: unknown[] = [
-        (body as any).toolCallId,
-        (body as any).tool_call_id,
-        (body as any).tool?.id,
-        (body as any).toolCall?.id,
-        (body as any).tool_call?.id,
-      ];
-
-      for (const candidate of candidates) {
-        if (typeof candidate === "string") {
-          const trimmed = candidate.trim();
-          if (trimmed) {
-            return trimmed;
-          }
-        }
-      }
-
-      return null;
-    };
-
-    try {
-      const result = await vapiClient.handleToolWebhookRequest(req.body);
-      res.status(200).json(result);
-    } catch (error) {
-      console.error("[/voice/vapi/tool] Failed to handle tool webhook", error);
-      const fallbackToolCallId = extractToolCallId(req.body) ?? `tool_${Date.now()}`;
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Onbekende fout bij verwerken van tool webhook.";
-      const sanitizedError = (errorMessage ?? "Onbekende fout bij verwerken van tool webhook.")
-        .toString()
-        .replace(/[\r\n]+/g, " ")
-        .trim();
-      res.status(200).json({
-        results: [
-          {
-            toolCallId: fallbackToolCallId,
-            error: sanitizedError.length > 0 ? sanitizedError : "Onbekende fout bij verwerken van tool webhook.",
-          },
-        ],
-      });
     }
   });
 
