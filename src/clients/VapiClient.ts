@@ -146,6 +146,17 @@ class VapiRealtimeSession {
     this.socket.send(chunk);
   }
 
+  public sendJsonFrame(frame: Record<string, unknown>) {
+    if (this.closed) return;
+
+    try {
+      const payload = JSON.stringify(frame);
+      this.socket.send(payload);
+    } catch (error) {
+      console.error('[VapiRealtimeSession] Failed to send JSON frame', error, frame);
+    }
+  }
+
   public commitUserAudio() {
     if (this.closed) return;
 
@@ -972,6 +983,12 @@ export class VapiClient {
   ) {
     const type = event?.type;
 
+    const toolCallCandidates: { raw: any; source: string }[] = [];
+    const enqueueToolCall = (raw: any, source: string) => {
+      if (!raw) return;
+      toolCallCandidates.push({ raw, source });
+    };
+
     const toolCallEventTypes = new Set([
       'response.tool_call',
       'tool.call',
@@ -1051,6 +1068,8 @@ export class VapiClient {
           `[VapiClient] 🧰 Tool call payload details (${rawToolCalls.length})`,
           payloadSummaries,
         );
+
+        rawToolCalls.forEach((payload, index) => enqueueToolCall(payload, `payload[${index}]`));
       }
 
       const toolResults = [...conversationEntries, ...messagesEntries].filter((item: any) => {
@@ -1110,16 +1129,7 @@ export class VapiClient {
       case 'tool_calls':
       case 'function_call': {
         console.log(`[VapiClient] 🔧 Tool call event detected!`);
-        const toolCall = this.normalizeToolCall(event);
-        if (toolCall) {
-          console.log(`[VapiClient] ✅ Normalized tool call:`, toolCall);
-          callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
-        } else {
-          console.warn(
-            `[VapiClient] ❌ Failed to normalize tool call. Raw event:`,
-            JSON.stringify(event, null, 2),
-          );
-        }
+        enqueueToolCall(event, type ?? 'unknown');
         break;
       }
       default: {
@@ -1128,19 +1138,41 @@ export class VapiClient {
             `[VapiClient] 🔧 Found tool_calls array (${event.tool_calls.length} items)`,
           );
           for (const raw of event.tool_calls) {
-            const toolCall = this.normalizeToolCall(raw);
-            if (toolCall) {
-              console.log(`[VapiClient] ✅ Normalized tool call from array:`, toolCall);
-              callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
-            } else {
-              console.warn(
-                `[VapiClient] ❌ Failed to normalize tool call from array:`,
-                JSON.stringify(raw, null, 2),
-              );
-            }
+            enqueueToolCall(raw, 'tool_calls[]');
           }
         }
         break;
+      }
+    }
+
+    if (toolCallCandidates.length === 0 && hasSingleToolCall) {
+      for (const candidate of [event?.tool_call, event?.toolCall, event?.tool, event?.function]) {
+        enqueueToolCall(candidate, 'single-tool-call');
+      }
+    }
+
+    if (toolCallCandidates.length > 0) {
+      const processedIds = new Set<string>();
+
+      for (const { raw, source } of toolCallCandidates) {
+        const toolCall = this.normalizeToolCall(raw);
+        if (!toolCall) {
+          console.warn(
+            `[VapiClient] ❌ Failed to normalize tool call from ${source}. Raw event:`,
+            JSON.stringify(raw, null, 2),
+          );
+          continue;
+        }
+
+        if (processedIds.has(toolCall.id)) {
+          console.log(
+            `[VapiClient] 🔁 Skipping duplicate tool call ${toolCall.id} from ${source}`,
+          );
+          continue;
+        }
+
+        processedIds.add(toolCall.id);
+        await this.handleNormalizedToolCall(toolCall, session, callbacks, source);
       }
     }
   }
@@ -1298,6 +1330,57 @@ export class VapiClient {
 
     console.log(`[VapiClient] ✅ Successfully normalized tool call:`, result);
     return result;
+  }
+
+  private async handleNormalizedToolCall(
+    toolCall: NormalizedToolCall,
+    session: VapiRealtimeSession,
+    callbacks: VapiRealtimeCallbacks,
+    source: string,
+  ) {
+    console.log(`[VapiClient] 🔧 Handling normalized tool call from ${source}`);
+    console.log(`[VapiClient] ✅ Normalized tool call:`, toolCall);
+
+    callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
+
+    const recorded = this.toolResponseLog.get(toolCall.id);
+    if (recorded) {
+      console.log(
+        `[VapiClient] ♻️ Returning cached tool response for ${toolCall.id} (source: ${source})`,
+      );
+      this.sendToolResultFrame(session, toolCall.id, recorded.payload);
+      callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
+      return;
+    }
+
+    let payload: unknown;
+
+    try {
+      payload = await this.executeToolCall(toolCall, session, callbacks);
+    } catch (error) {
+      console.error(`[VapiClient] ❌ Failed to execute tool call ${toolCall.name}`, error);
+      const fallbackPayload = {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message || `Onbekende fout bij uitvoeren van ${toolCall.name}`
+            : `Onbekende fout bij uitvoeren van ${toolCall.name}`,
+      };
+      this.recordToolResponse(toolCall.id, fallbackPayload, this.normalizeToolName(toolCall.name));
+      payload = fallbackPayload;
+    }
+
+    if (typeof payload === 'undefined') {
+      const fallbackPayload = {
+        success: false,
+        error: `Tool ${toolCall.name} executed without response`,
+      };
+      this.recordToolResponse(toolCall.id, fallbackPayload, this.normalizeToolName(toolCall.name));
+      payload = fallbackPayload;
+    }
+
+    this.sendToolResultFrame(session, toolCall.id, payload);
+    callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
   }
 
   private async executeToolCall(
@@ -1570,6 +1653,25 @@ export class VapiClient {
     }
 
     return finalPayload;
+  }
+
+  private sendToolResultFrame(
+    session: VapiRealtimeSession,
+    toolCallId: string,
+    payload: unknown,
+  ) {
+    const resultString = this.formatToolResultString(payload);
+    console.log(`[VapiClient] 📤 Sending tool.call.result frame`, {
+      toolCallId,
+      result: resultString,
+    });
+
+    session.sendJsonFrame({
+      type: 'tool.call.result',
+      tool_call_id: toolCallId,
+      result: resultString,
+      result_json: payload ?? null,
+    });
   }
 
   public async handleToolWebhookRequest(
