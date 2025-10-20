@@ -993,8 +993,23 @@ export class VapiClient {
     const type = event?.type;
 
     const toolCallCandidates: { raw: any; source: string }[] = [];
+    const isToolCallsWrapper = (value: any): boolean => {
+      if (!value || typeof value !== 'object') return false;
+      if (value.role !== 'tool_calls') return false;
+      const hasDirectName = typeof value.name === 'string' && value.name.length > 0;
+      const hasNestedCalls = Array.isArray(value.tool_calls);
+      return hasNestedCalls || !hasDirectName;
+    };
     const enqueueToolCall = (raw: any, source: string) => {
       if (!raw) return;
+      if (isToolCallsWrapper(raw)) {
+        const nestedCount = Array.isArray(raw.tool_calls) ? raw.tool_calls.length : 0;
+        console.warn(
+          `[VapiClient] ⚠️ Skipping tool_calls wrapper from ${source}` +
+            (nestedCount ? ` (${nestedCount} nested call(s))` : ''),
+        );
+        return;
+      }
       toolCallCandidates.push({ raw, source });
     };
 
@@ -1143,10 +1158,20 @@ export class VapiClient {
         callbacks.onToolStatus?.('response-completed');
         break;
       }
+      case 'tool_calls': {
+        console.log(`[VapiClient] 🔧 Tool call event detected!`);
+        if (Array.isArray(event?.tool_calls) && event.tool_calls.length > 0) {
+          event.tool_calls.forEach((raw: any, index: number) => {
+            enqueueToolCall(raw, `${type ?? 'unknown'}[${index}]`);
+          });
+        } else {
+          enqueueToolCall(event, type ?? 'unknown');
+        }
+        break;
+      }
       case 'response.tool_call':
       case 'tool.call':
       case 'session.tool_call':
-      case 'tool_calls':
       case 'function_call': {
         console.log(`[VapiClient] 🔧 Tool call event detected!`);
         enqueueToolCall(event, type ?? 'unknown');
@@ -1194,12 +1219,19 @@ export class VapiClient {
           if (entry.role === 'tool_calls') {
             if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
               entry.tool_calls.forEach((raw: any, toolIndex: number) => {
-                enqueueToolCall(raw, `${sourcePrefix}[${index}](role=tool_calls).tool_calls[${toolIndex}]`);
+                enqueueToolCall(
+                  raw,
+                  `${sourcePrefix}[${index}](role=tool_calls).tool_calls[${toolIndex}]`,
+                );
                 extracted += 1;
               });
-            } else {
+            } else if (typeof entry?.name === 'string' && entry.name.length > 0) {
               enqueueToolCall(entry, `${sourcePrefix}[${index}](role=tool_calls)`);
               extracted += 1;
+            } else {
+              console.warn(
+                `[VapiClient] ⚠️ Skipping tool_calls wrapper from ${sourcePrefix}[${index}] (no direct name)`,
+              );
             }
           }
         });
@@ -1221,10 +1253,21 @@ export class VapiClient {
       for (const { raw, source } of toolCallCandidates) {
         const toolCall = this.normalizeToolCall(raw);
         if (!toolCall) {
-          console.warn(
-            `[VapiClient] ❌ Failed to normalize tool call from ${source}. Raw event:`,
-            JSON.stringify(raw, null, 2),
-          );
+          if (
+            raw?.role === 'tool_calls' &&
+            (!raw?.name || typeof raw.name !== 'string') &&
+            Array.isArray(raw?.tool_calls)
+          ) {
+            console.warn(
+              `[VapiClient] ⚠️ Skipping tool_calls wrapper from ${source}. Raw event:`,
+              JSON.stringify(raw, null, 2),
+            );
+          } else {
+            console.warn(
+              `[VapiClient] ❌ Failed to normalize tool call from ${source}. Raw event:`,
+              JSON.stringify(raw, null, 2),
+            );
+          }
           continue;
         }
 
@@ -1270,6 +1313,17 @@ export class VapiClient {
     if (!raw) {
       console.warn(`[VapiClient] normalizeToolCall received null/undefined`);
       return null;
+    }
+
+    if (raw?.role === 'tool_calls') {
+      const nestedCount = Array.isArray(raw.tool_calls) ? raw.tool_calls.length : 0;
+      const hasDirectName = typeof raw.name === 'string' && raw.name.length > 0;
+      if (nestedCount > 0 || !hasDirectName) {
+        console.warn(
+          `[VapiClient] ⚠️ normalizeToolCall skipping tool_calls wrapper (${nestedCount} nested call(s))`,
+        );
+        return null;
+      }
     }
 
     console.log(
