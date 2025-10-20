@@ -1,5 +1,6 @@
 // src/business/services/VoiceService.ts
 import { inject, injectable } from "tsyringe";
+import type { VoiceSessionManager } from "./VoiceSessionManager";
 import WebSocket from "ws";
 import { VapiClient, VapiRealtimeSession } from "../../clients/VapiClient";
 import { CompanyService } from "./CompanyService";
@@ -32,6 +33,7 @@ export class VoiceService {
     private companyTwilioNumber: string | null = null;
     private companyTransferNumber: string | null = null;
     private usageRecorded = false;
+    private sessionManager: VoiceSessionManager | null = null;
     private readonly handleTwilioStreamMessage = (rawMessage: WebSocket.RawData) => {
         let messageString: string;
 
@@ -99,6 +101,10 @@ export class VoiceService {
         @inject(CallLogService) private readonly callLogService: CallLogService,
         @inject("TwilioClient") private readonly twilioClient: TwilioClient
     ) {}
+
+    public bindSessionManager(sessionManager: VoiceSessionManager) {
+        this.sessionManager = sessionManager;
+    }
 
     /**
      * Initializes a Twilio <-> Vapi streaming session for an inbound or outbound call.
@@ -243,7 +249,14 @@ export class VoiceService {
             );
 
             this.vapiSession = session;
+            const previousCallId = this.vapiCallId;
+            if (previousCallId && previousCallId !== callId) {
+                this.sessionManager?.releaseVapiCallId(previousCallId, this);
+            }
             this.vapiCallId = callId ?? null;
+            if (this.vapiCallId) {
+                this.sessionManager?.associateVapiCallId(this.vapiCallId, this);
+            }
 
             console.log(`[${callSid}] Vapi session created`);
             this.logSessionSnapshot("vapi session created");
@@ -388,6 +401,9 @@ export class VoiceService {
         if (activeCallSid) {
             this.vapiClient.clearSessionConfig(activeCallSid);
         }
+        if (this.vapiCallId) {
+            this.sessionManager?.releaseVapiCallId(this.vapiCallId, this);
+        }
         this.vapiSession = null;
         this.ws = null;
         this.callSid = null;
@@ -401,6 +417,14 @@ export class VoiceService {
         this.companyTwilioNumber = null;
         this.companyTransferNumber = null;
         this.resetSpeechTracking();
+    }
+
+    public getVapiCallId(): string | null {
+        return this.vapiCallId;
+    }
+
+    public async handleVapiToolWebhook(body: unknown) {
+        return this.vapiClient.handleToolWebhookRequest(body);
     }
 
     public async transferCall(
