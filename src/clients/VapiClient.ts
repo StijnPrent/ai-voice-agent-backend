@@ -1805,18 +1805,26 @@ export class VapiClient {
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
-    const normalized = this.normalizeStringArg(name)?.toLowerCase();
+    const normalized = this.normalizeStringArg(name);
     if (!normalized) {
       return null;
     }
 
-    const alias = LEGACY_TOOL_ALIASES.get(normalized);
+    const snakeCase = normalized
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-z0-9_]+/gi, '_')
+      .replace(/_{2,}/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+
+    const alias =
+      LEGACY_TOOL_ALIASES.get(snakeCase) ?? LEGACY_TOOL_ALIASES.get(normalized.toLowerCase());
     if (alias) {
       return alias;
     }
 
-    return KNOWN_TOOL_NAMES.has(normalized as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
-      ? (normalized as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
+    return KNOWN_TOOL_NAMES.has(snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
+      ? (snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
       : null;
   }
 
