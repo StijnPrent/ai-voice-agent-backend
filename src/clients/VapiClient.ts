@@ -1035,6 +1035,17 @@ export class VapiClient {
       return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
     });
 
+    const assistantConversationToolCalls = conversationEntries.some((item: any) => {
+      return item?.role === 'assistant' && Array.isArray(item?.tool_calls) && item.tool_calls.length > 0;
+    });
+
+    const assistantMessageToolCalls = messagesEntries.some((item: any) => {
+      return item?.role === 'assistant' && Array.isArray(item?.tool_calls) && item.tool_calls.length > 0;
+    });
+
+    const toolCallRoleInConversation = conversationEntries.some((item: any) => item?.role === 'tool_calls');
+    const toolCallRoleInMessages = messagesEntries.some((item: any) => item?.role === 'tool_calls');
+
     const shouldLogToolEvent =
       isToolCallEventType ||
       hasToolCallsArray ||
@@ -1157,6 +1168,50 @@ export class VapiClient {
     if (toolCallCandidates.length === 0 && hasSingleToolCall) {
       for (const candidate of [event?.tool_call, event?.toolCall, event?.tool, event?.function]) {
         enqueueToolCall(candidate, 'single-tool-call');
+      }
+    }
+
+    if (
+      toolCallCandidates.length === 0 &&
+      (assistantConversationToolCalls ||
+        assistantMessageToolCalls ||
+        toolCallRoleInConversation ||
+        toolCallRoleInMessages)
+    ) {
+      let extracted = 0;
+
+      const extractFromEntries = (entries: any[], sourcePrefix: string) => {
+        entries.forEach((entry, index) => {
+          if (!entry || typeof entry !== 'object') return;
+
+          if (entry.role === 'assistant' && Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
+            entry.tool_calls.forEach((raw: any, toolIndex: number) => {
+              enqueueToolCall(raw, `${sourcePrefix}[${index}].tool_calls[${toolIndex}]`);
+              extracted += 1;
+            });
+          }
+
+          if (entry.role === 'tool_calls') {
+            if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
+              entry.tool_calls.forEach((raw: any, toolIndex: number) => {
+                enqueueToolCall(raw, `${sourcePrefix}[${index}](role=tool_calls).tool_calls[${toolIndex}]`);
+                extracted += 1;
+              });
+            } else {
+              enqueueToolCall(entry, `${sourcePrefix}[${index}](role=tool_calls)`);
+              extracted += 1;
+            }
+          }
+        });
+      };
+
+      extractFromEntries(conversationEntries, 'conversation');
+      extractFromEntries(messagesEntries, 'messages');
+
+      if (extracted > 0) {
+        console.log(
+          `[VapiClient] 🔍 Extracted ${extracted} tool call(s) from conversation history`,
+        );
       }
     }
 
