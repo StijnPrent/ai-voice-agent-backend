@@ -108,12 +108,16 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         error instanceof Error
           ? error.message
           : "Onbekende fout bij verwerken van tool webhook.";
-      const serialized = JSON.stringify({ success: false, error: errorMessage }).replace(/[\r\n]+/g, " ");
+      const sanitizedError = (errorMessage ?? "Onbekende fout bij verwerken van tool webhook.")
+        .toString()
+        .replace(/[\r\n]+/g, " ")
+        .trim();
       res.status(200).json({
         results: [
           {
             toolCallId: fallbackToolCallId,
-            result: serialized,
+            tool_call_id: fallbackToolCallId,
+            error: sanitizedError.length > 0 ? sanitizedError : "Onbekende fout bij verwerken van tool webhook.",
           },
         ],
       });
