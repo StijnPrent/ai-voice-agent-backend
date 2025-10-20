@@ -1503,7 +1503,7 @@ export class VapiClient {
       this.recordToolResponse(toolCall.id, payload, this.normalizeToolName(toolCall.name));
     }
 
-    console.log(`[VapiClient] 📤 About to send tool result frame with payload:`, payload);
+    // Vapi tools return via HTTP webhook; websocket does not carry tool results.
     callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
   }
 
