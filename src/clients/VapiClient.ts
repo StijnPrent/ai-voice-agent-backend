@@ -1927,7 +1927,7 @@ export class VapiClient {
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
-    const callId = this.extractCallIdFromWebhook(raw);
+    const callId = VapiClient.extractCallIdFromWebhook(raw);
     const rawToolCall = this.extractToolCallPayload(raw);
     const normalized = this.normalizeToolCall(rawToolCall);
     const fallbackToolCallId = this.extractToolCallId(raw);
@@ -2064,7 +2064,7 @@ export class VapiClient {
     return null;
   }
 
-  private extractCallIdFromWebhook(body: any): string | null {
+  public static extractCallIdFromWebhook(body: any): string | null {
     if (!body || typeof body !== 'object') {
       return null;
     }

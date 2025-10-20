@@ -1,12 +1,14 @@
 import { Router } from "express";
-import { injectable } from "tsyringe";
+import { container, injectable } from "tsyringe";
+import type { VoiceService } from "../business/services/VoiceService";
+import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 import { VapiClient } from "../clients/VapiClient";
 
 @injectable()
 export class VapiRoute {
   private readonly router: Router;
 
-  constructor(private readonly vapiClient: VapiClient) {
+  constructor(private readonly sessionManager: VoiceSessionManager) {
     this.router = Router();
     this.registerRoutes();
   }
@@ -18,7 +20,10 @@ export class VapiRoute {
   private registerRoutes() {
     this.router.post("/tools", async (req, res) => {
       try {
-        const result = await this.vapiClient.handleToolWebhookRequest(req.body);
+        const voiceService = this.resolveVoiceService(req.body);
+        const result = voiceService
+          ? await voiceService.handleVapiToolWebhook(req.body)
+          : await container.resolve(VapiClient).handleToolWebhookRequest(req.body);
         res.status(200).json(result);
       } catch (error) {
         console.error("[VapiRoute] Tool webhook error", error);
@@ -32,6 +37,23 @@ export class VapiRoute {
         });
       }
     });
+  }
+
+  private resolveVoiceService(body: unknown): VoiceService | undefined {
+    const callId = VapiClient.extractCallIdFromWebhook(body);
+    if (callId) {
+      const byCallId = this.sessionManager.findSessionByVapiCallId(callId);
+      if (byCallId) {
+        return byCallId;
+      }
+
+      const byCallSid = this.sessionManager.getSession(callId);
+      if (byCallSid) {
+        return byCallSid;
+      }
+    }
+
+    return this.sessionManager.resolveActiveSession();
   }
 
   private extractToolCallId(body: unknown): string | null {

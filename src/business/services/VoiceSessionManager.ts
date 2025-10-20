@@ -5,6 +5,7 @@ import { VoiceService } from "./VoiceService";
 @injectable()
 export class VoiceSessionManager {
     private readonly sessions = new Map<string, VoiceService>();
+    private readonly sessionsByVapiCallId = new Map<string, VoiceService>();
 
     /**
      * Create a new VoiceService instance for the provided callSid and keep
@@ -14,6 +15,7 @@ export class VoiceSessionManager {
      */
     public createSession(callSid: string): VoiceService {
         const voiceService = container.resolve(VoiceService);
+        voiceService.bindSessionManager(this);
         const originalStop = voiceService.stopStreaming.bind(voiceService);
 
         voiceService.stopStreaming = ((reason?: string) => {
@@ -37,6 +39,14 @@ export class VoiceSessionManager {
         }
 
         return this.sessions.get(callSid);
+    }
+
+    public findSessionByVapiCallId(callId: string | undefined | null): VoiceService | undefined {
+        if (!callId) {
+            return undefined;
+        }
+
+        return this.sessionsByVapiCallId.get(callId);
     }
 
     /**
@@ -73,6 +83,8 @@ export class VoiceSessionManager {
             return;
         }
 
+        this.releaseVapiCallId(existing.getVapiCallId(), existing);
+
         if (!voiceService || existing === voiceService) {
             this.sessions.delete(callSid);
         }
@@ -84,5 +96,28 @@ export class VoiceSessionManager {
      */
     public listActiveCallSids(): string[] {
         return Array.from(this.sessions.keys());
+    }
+
+    public associateVapiCallId(callId: string | null | undefined, voiceService: VoiceService) {
+        if (!callId) {
+            return;
+        }
+
+        this.sessionsByVapiCallId.set(callId, voiceService);
+    }
+
+    public releaseVapiCallId(callId: string | null | undefined, voiceService?: VoiceService) {
+        if (!callId) {
+            return;
+        }
+
+        const existing = this.sessionsByVapiCallId.get(callId);
+        if (!existing) {
+            return;
+        }
+
+        if (!voiceService || existing === voiceService) {
+            this.sessionsByVapiCallId.delete(callId);
+        }
     }
 }
