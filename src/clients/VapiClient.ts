@@ -1035,6 +1035,17 @@ export class VapiClient {
       return role === 'tool' || role === 'tool_call_result' || role === 'tool_calls';
     });
 
+    const assistantConversationToolCalls = conversationEntries.some((item: any) => {
+      return item?.role === 'assistant' && Array.isArray(item?.tool_calls) && item.tool_calls.length > 0;
+    });
+
+    const assistantMessageToolCalls = messagesEntries.some((item: any) => {
+      return item?.role === 'assistant' && Array.isArray(item?.tool_calls) && item.tool_calls.length > 0;
+    });
+
+    const toolCallRoleInConversation = conversationEntries.some((item: any) => item?.role === 'tool_calls');
+    const toolCallRoleInMessages = messagesEntries.some((item: any) => item?.role === 'tool_calls');
+
     const shouldLogToolEvent =
       isToolCallEventType ||
       hasToolCallsArray ||
@@ -1157,6 +1168,50 @@ export class VapiClient {
     if (toolCallCandidates.length === 0 && hasSingleToolCall) {
       for (const candidate of [event?.tool_call, event?.toolCall, event?.tool, event?.function]) {
         enqueueToolCall(candidate, 'single-tool-call');
+      }
+    }
+
+    if (
+      toolCallCandidates.length === 0 &&
+      (assistantConversationToolCalls ||
+        assistantMessageToolCalls ||
+        toolCallRoleInConversation ||
+        toolCallRoleInMessages)
+    ) {
+      let extracted = 0;
+
+      const extractFromEntries = (entries: any[], sourcePrefix: string) => {
+        entries.forEach((entry, index) => {
+          if (!entry || typeof entry !== 'object') return;
+
+          if (entry.role === 'assistant' && Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
+            entry.tool_calls.forEach((raw: any, toolIndex: number) => {
+              enqueueToolCall(raw, `${sourcePrefix}[${index}].tool_calls[${toolIndex}]`);
+              extracted += 1;
+            });
+          }
+
+          if (entry.role === 'tool_calls') {
+            if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
+              entry.tool_calls.forEach((raw: any, toolIndex: number) => {
+                enqueueToolCall(raw, `${sourcePrefix}[${index}](role=tool_calls).tool_calls[${toolIndex}]`);
+                extracted += 1;
+              });
+            } else {
+              enqueueToolCall(entry, `${sourcePrefix}[${index}](role=tool_calls)`);
+              extracted += 1;
+            }
+          }
+        });
+      };
+
+      extractFromEntries(conversationEntries, 'conversation');
+      extractFromEntries(messagesEntries, 'messages');
+
+      if (extracted > 0) {
+        console.log(
+          `[VapiClient] 🔍 Extracted ${extracted} tool call(s) from conversation history`,
+        );
       }
     }
 
@@ -1355,7 +1410,7 @@ export class VapiClient {
     const recorded = this.toolResponseLog.get(toolCall.id);
     if (recorded) {
       console.log(
-        `[VapiClient] ♻️ Returning cached tool response for ${toolCall.id} (source: ${source})`,
+        `[VapiClient] ♻️ Returning cached tool response for ${toolCall.id}`,
       );
       this.sendToolResultFrame(session, toolCall.id, recorded.payload);
       callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
@@ -1366,28 +1421,31 @@ export class VapiClient {
 
     try {
       payload = await this.executeToolCall(toolCall, session, callbacks);
+      if (!payload) {
+        console.error(`[VapiClient] ❌ executeToolCall returned null/undefined`);
+        payload = {
+          success: false,
+          error: `Tool ${toolCall.name} returned no result`,
+        };
+      }
+      console.log(`[VapiClient] 📦 Got payload from executeToolCall:`, payload);
     } catch (error) {
       console.error(`[VapiClient] ❌ Failed to execute tool call ${toolCall.name}`, error);
-      const fallbackPayload = {
+      payload = {
         success: false,
         error:
           error instanceof Error
             ? error.message || `Onbekende fout bij uitvoeren van ${toolCall.name}`
             : `Onbekende fout bij uitvoeren van ${toolCall.name}`,
       };
-      this.recordToolResponse(toolCall.id, fallbackPayload, this.normalizeToolName(toolCall.name));
-      payload = fallbackPayload;
     }
 
-    if (typeof payload === 'undefined') {
-      const fallbackPayload = {
-        success: false,
-        error: `Tool ${toolCall.name} executed without response`,
-      };
-      this.recordToolResponse(toolCall.id, fallbackPayload, this.normalizeToolName(toolCall.name));
-      payload = fallbackPayload;
+    const alreadyRecorded = this.toolResponseLog.get(toolCall.id);
+    if (!alreadyRecorded) {
+      this.recordToolResponse(toolCall.id, payload, this.normalizeToolName(toolCall.name));
     }
 
+    console.log(`[VapiClient] 📤 About to send tool result frame with payload:`, payload);
     this.sendToolResultFrame(session, toolCall.id, payload);
     callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
   }
@@ -1414,12 +1472,27 @@ export class VapiClient {
     const sessionContext = this.sessionContexts.get(session);
     const config = this.getConfigForCall(sessionContext?.callSid);
 
+    let finalPayload: unknown = null;
+    let payloadWasSet = false;
+
     const commitPayload = (payload: unknown) => {
+      let payloadPreview: string | undefined;
+      try {
+        payloadPreview = JSON.stringify(payload).slice(0, 200);
+      } catch (error) {
+        console.warn('[VapiClient] ⚠️ Failed to stringify payload for preview', error);
+      }
+
+      console.log(`[VapiClient] 💾 Recording tool response`, {
+        toolCallId: call.id,
+        payloadType: typeof payload,
+        payloadPreview,
+      });
       this.recordToolResponse(call.id, payload, normalizedToolName);
+      finalPayload = payload;
+      payloadWasSet = true;
       return payload;
     };
-
-    let finalPayload: unknown = null;
 
     if (!config) {
       console.error('[VapiClient] ❌ No config found for session');
@@ -1427,8 +1500,7 @@ export class VapiClient {
         success: false,
         error: 'Session not configured',
       };
-      finalPayload = commitPayload(payload);
-      return finalPayload;
+      return commitPayload(payload);
     }
 
     console.log(
@@ -1441,8 +1513,7 @@ export class VapiClient {
         success: false,
         error: 'Google integration not available',
       };
-      finalPayload = commitPayload(payload);
-      return finalPayload;
+      return commitPayload(payload);
     }
 
     const sendSuccess = (data: unknown) => {
@@ -1451,8 +1522,7 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      finalPayload = commitPayload(payload);
-      return payload;
+      return commitPayload(payload);
     };
 
     const sendError = (message: string, details?: unknown) => {
@@ -1465,14 +1535,13 @@ export class VapiClient {
         toolCallId: call.id,
         payload,
       });
-      finalPayload = commitPayload(payload);
-      return payload;
+      return commitPayload(payload);
     };
 
     const companyId = config.company.id;
     const args = call.args ?? {};
 
-    const handlers: Record<string, () => Promise<void>> = {
+    const handlers: Record<string, () => Promise<unknown>> = {
       [TOOL_NAMES.transferCall]: async () => {
         console.log(`[VapiClient] 📞 === TRANSFER CALL ===`);
 
@@ -1491,7 +1560,7 @@ export class VapiClient {
 
         const result = await callbacks.onTransferCall({ phoneNumber, callSid, callerId, reason });
 
-        sendSuccess({
+        return sendSuccess({
           message: 'Doorverbinden gestart',
           transferredTo: result?.transferredTo ?? phoneNumber ?? null,
           callSid: result?.callSid ?? callSid ?? sessionCallSid ?? null,
@@ -1521,7 +1590,7 @@ export class VapiClient {
           const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
           console.log(`[VapiClient] ✅ Received ${slots?.length || 0} slots:`, slots);
 
-          sendSuccess({
+          return sendSuccess({
             date,
             openHour,
             closeHour,
@@ -1530,7 +1599,10 @@ export class VapiClient {
           });
         } catch (error) {
           console.error(`[VapiClient] ❌ Error getting slots:`, error);
-          throw error;
+          return sendError(
+            error instanceof Error ? error.message : 'Failed to get availability',
+            error,
+          );
         }
       },
       [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
@@ -1593,7 +1665,7 @@ export class VapiClient {
         const created = await this.googleService.scheduleEvent(companyId, event);
         console.log(`[VapiClient] ✅ Event created:`, created.id);
 
-        sendSuccess({ event: created });
+        return sendSuccess({ event: created });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
         console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
@@ -1618,7 +1690,7 @@ export class VapiClient {
         );
         console.log(`[VapiClient] ✅ Event cancelled`);
 
-        sendSuccess({
+        return sendSuccess({
           eventId,
           cancelled: true,
           reason: reason ?? null,
@@ -1632,33 +1704,37 @@ export class VapiClient {
       console.error(`[VapiClient] ❌ No handler found!`);
       console.error(`[VapiClient] Looking for: ${normalizedToolName}`);
       console.error(`[VapiClient] Available handlers:`, Object.keys(handlers));
-      sendError(`Onbekende tool: ${call.name}`);
-      return;
+      return sendError(`Onbekende tool: ${call.name}`);
     }
 
     console.log(`[VapiClient] 🎯 Handler found, executing...`);
 
     try {
-      await handler();
-      console.log(`[VapiClient] ✅ Handler completed successfully`);
+      const handlerResult = await handler();
+      console.log(`[VapiClient] ✅ Handler completed with result:`, handlerResult);
+
+      if (!payloadWasSet && handlerResult) {
+        console.log(`[VapiClient] Using handler return value as payload`);
+        finalPayload = handlerResult;
+        this.recordToolResponse(call.id, handlerResult, normalizedToolName);
+      }
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
           : `Onbekende fout bij uitvoeren van ${call.name}`;
       console.error(`[VapiClient] ❌ Handler threw error:`, error);
-      sendError(message);
+      return sendError(message, error);
     }
 
     if (!finalPayload) {
+      console.error(`[VapiClient] ❌ CRITICAL: No payload was set after execution!`);
       const payload = {
         success: false,
         error: `Tool ${call.name} executed without response`,
       };
-      console.warn(`[VapiClient] ⚠️ Tool handler completed without setting payload`, {
-        toolCallId: call.id,
-      });
-      finalPayload = commitPayload(payload);
+      this.recordToolResponse(call.id, payload, normalizedToolName);
+      finalPayload = payload;
     }
 
     return finalPayload;
@@ -1670,10 +1746,26 @@ export class VapiClient {
     payload: unknown,
   ) {
     const resultString = this.formatToolResultString(payload);
+    let payloadPreview: string | undefined;
+    try {
+      payloadPreview = JSON.stringify(payload).slice(0, 200);
+    } catch (error) {
+      console.warn('[VapiClient] ⚠️ Failed to stringify payload for result preview', error);
+    }
+
     console.log(`[VapiClient] 📤 Sending tool.call.result frame`, {
       toolCallId,
       result: resultString,
+      payloadPreview,
     });
+
+    const frame = {
+      type: 'tool.call.result',
+      tool_call_id: toolCallId,
+      result: resultString,
+    };
+
+    console.log(`[VapiClient] 📤 Actual frame being sent:`, JSON.stringify(frame, null, 2));
 
     logPayload(
       `[VapiClient] 📦 Tool result payload (${toolCallId})`,
@@ -1681,12 +1773,7 @@ export class VapiClient {
       PAYLOAD_LOG_LIMIT,
     );
 
-    session.sendJsonFrame({
-      type: 'tool.call.result',
-      tool_call_id: toolCallId,
-      result: resultString,
-      result_json: payload ?? null,
-    });
+    session.sendJsonFrame(frame);
   }
 
   public async handleToolWebhookRequest(
@@ -1895,30 +1982,31 @@ export class VapiClient {
   }
 
   private formatToolResultString(payload: unknown): string {
-    let result: string | undefined;
+    if (payload === null || payload === undefined) {
+      console.warn('[VapiClient] ⚠️ Tool payload is null/undefined, using empty object');
+      return JSON.stringify({ success: false, error: 'No result generated' });
+    }
 
     if (typeof payload === 'string') {
-      result = payload;
-    } else {
-      try {
-        result = JSON.stringify(payload ?? {});
-      } catch (error) {
-        console.warn('[VapiClient] ⚠️ Failed to stringify tool payload', error);
-        result = String(payload ?? '');
+      const trimmed = payload.trim();
+      if (!trimmed) {
+        console.warn('[VapiClient] ⚠️ Tool payload string is empty');
+        return JSON.stringify({ success: false, error: 'Empty result' });
       }
+      return trimmed;
     }
 
-    if (!result) {
-      result = JSON.stringify({});
+    try {
+      const result = JSON.stringify(payload);
+      if (!result || result === '{}' || result === 'null') {
+        console.warn('[VapiClient] ⚠️ Stringified payload is empty/null', { payload });
+        return JSON.stringify({ success: false, error: 'Payload serialized to empty result' });
+      }
+      return result;
+    } catch (error) {
+      console.error('[VapiClient] ❌ Failed to stringify tool payload', error, { payload });
+      return JSON.stringify({ success: false, error: 'Failed to serialize result' });
     }
-
-    result = result.replace(/[\r\n]+/g, ' ').trim();
-
-    if (!result) {
-      result = JSON.stringify({});
-    }
-
-    return result;
   }
 
   private normalizeToolName(name: string): (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES] | null {
