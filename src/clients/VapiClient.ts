@@ -2006,6 +2006,16 @@ export class VapiClient {
     const normalized = this.normalizeToolCall(rawToolCall);
     const fallbackToolCallId = this.extractToolCallId(raw);
     const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
+    console.log(
+      '[VapiClient] 🔎 Extracted webhook context',
+      {
+        callId: callId ?? '<none>',
+        normalizedName: normalized?.name ?? '<unknown>',
+        normalizedId: normalized?.id ?? '<none>',
+        fallbackToolCallId: fallbackToolCallId ?? '<none>',
+        finalToolCallId: toolCallId,
+      },
+    );
 
     const toolFlowContext: VapiToolLogContext = {
       callId: callId ?? null,
