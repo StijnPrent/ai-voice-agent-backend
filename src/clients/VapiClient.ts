@@ -147,7 +147,14 @@ class VapiRealtimeSession {
   }
 
   public commitUserAudio() {
-    // No-op: Vapi's websocket transport consumes raw binary frames only.
+    if (this.closed) return;
+
+    try {
+      const frame = JSON.stringify({ type: 'input_audio_buffer.commit' });
+      this.socket.send(frame);
+    } catch (error) {
+      console.error('[VapiRealtimeSession] Failed to commit user audio', error);
+    }
   }
 
   public close(code?: number, reason?: string) {
