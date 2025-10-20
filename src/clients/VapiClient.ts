@@ -190,6 +190,16 @@ export class VapiClient {
   private readonly modelProvider: string;
   private readonly modelName: string;
   private readonly assistantCache = new Map<string, string>();
+  private readonly availabilityCache = new Map<
+    string,
+    { slots: string[]; expiresAt: number }
+  >();
+  private readonly availabilityPending = new Map<
+    string,
+    { promise: Promise<string[]>; startedAt: number }
+  >();
+  private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
+  private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
   private readonly toolBaseUrl: string;
   private readonly transportProvider: string;
   private readonly sessionContexts = new WeakMap<
@@ -1641,7 +1651,23 @@ export class VapiClient {
         );
 
         try {
-          const slots = await this.googleService.getAvailableSlots(companyId, date, openHour, closeHour);
+          const availability = await this.getAvailabilitySlotsWithCache(
+            companyId,
+            date,
+            openHour,
+            closeHour,
+          );
+
+          if (availability.durationMs > 0) {
+            console.log(
+              `[VapiClient] ⏱️ Google availability resolved in ${availability.durationMs}ms (${availability.source})`,
+            );
+          } else {
+            console.log(`[VapiClient] ♻️ Using cached availability result`);
+          }
+
+          const slots = availability.slots;
+          const isCacheHit = availability.source === 'cache';
           console.log(`[VapiClient] ✅ Received ${slots?.length || 0} slots:`, slots);
 
           return sendSuccess({
@@ -1649,14 +1675,22 @@ export class VapiClient {
             openHour,
             closeHour,
             slots,
-            message: `Found ${slots?.length || 0} available time slots`,
+            cached: isCacheHit,
+            sharedRequest: availability.source === 'pending' ? true : undefined,
+            retrievalDurationMs: availability.durationMs,
+            message: `Found ${slots?.length || 0} available time slots${
+              isCacheHit ? ' (cached)' : ''
+            }`,
           });
         } catch (error) {
           console.error(`[VapiClient] ❌ Error getting slots:`, error);
-          return sendError(
-            error instanceof Error ? error.message : 'Failed to get availability',
-            error,
-          );
+          const fallbackMessage =
+            error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
+              ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
+              : error instanceof Error
+                ? error.message
+                : 'Failed to get availability';
+          return sendError(fallbackMessage, error);
         }
       },
       [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
@@ -1792,6 +1826,103 @@ export class VapiClient {
     }
 
     return finalPayload;
+  }
+
+  private async getAvailabilitySlotsWithCache(
+    companyId: bigint,
+    date: string,
+    openHour: number,
+    closeHour: number,
+  ): Promise<{ slots: string[]; source: 'fresh' | 'cache' | 'pending'; durationMs: number }> {
+    const key = this.buildAvailabilityCacheKey(companyId, date, openHour, closeHour);
+    const now = Date.now();
+    const cached = this.availabilityCache.get(key);
+
+    if (cached) {
+      if (cached.expiresAt > now) {
+        return { slots: cached.slots, source: 'cache', durationMs: 0 };
+      }
+
+      this.availabilityCache.delete(key);
+    }
+
+    const pending = this.availabilityPending.get(key);
+    if (pending) {
+      console.log(`[VapiClient] ⏳ Awaiting in-flight availability request for ${key}`);
+      const slots = await pending.promise;
+      return { slots, source: 'pending', durationMs: Date.now() - pending.startedAt };
+    }
+
+    const startedAt = Date.now();
+    const availabilityPromise = (async () =>
+      this.googleService.getAvailableSlots(companyId, date, openHour, closeHour)
+    )();
+    const fetchPromise = this.runWithTimeout(
+      availabilityPromise,
+      this.availabilityRequestTimeoutMs,
+      `Beschikbaarheidsaanvraag duurde langer dan ${this.availabilityRequestTimeoutMs}ms`,
+    );
+
+    this.availabilityPending.set(key, { promise: fetchPromise, startedAt });
+
+    try {
+      const slots = await fetchPromise;
+      this.availabilityCache.set(key, {
+        slots,
+        expiresAt: Date.now() + this.availabilityCacheTtlMs,
+      });
+      return { slots, source: 'fresh', durationMs: Date.now() - startedAt };
+    } finally {
+      this.availabilityPending.delete(key);
+    }
+  }
+
+  private buildAvailabilityCacheKey(
+    companyId: bigint,
+    date: string,
+    openHour: number,
+    closeHour: number,
+  ): string {
+    return [companyId.toString(), date, openHour, closeHour].join('|');
+  }
+
+  private runWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    const guardedPromise = new Promise<T>((resolve, reject) => {
+      let settled = false;
+
+      const clear = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = null;
+        }
+      };
+
+      promise
+        .then((value) => {
+          if (settled) return;
+          settled = true;
+          clear();
+          resolve(value);
+        })
+        .catch((error) => {
+          if (settled) return;
+          settled = true;
+          clear();
+          reject(error);
+        });
+
+      timeoutHandle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        console.warn(`[VapiClient] ⚠️ Operation timed out after ${timeoutMs}ms`);
+        clear();
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
+    });
+
+    return guardedPromise;
   }
 
   private sendToolResultFrame(
