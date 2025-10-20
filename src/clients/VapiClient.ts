@@ -1503,7 +1503,7 @@ export class VapiClient {
       this.recordToolResponse(toolCall.id, payload, this.normalizeToolName(toolCall.name));
     }
 
-    console.log(`[VapiClient] 📤 About to send tool result frame with payload:`, payload);
+    // Vapi tools return via HTTP webhook; websocket does not carry tool results.
     callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
   }
 
@@ -1927,23 +1927,49 @@ export class VapiClient {
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
-    const callId = this.extractCallIdFromWebhook(raw);
+    const callId = VapiClient.extractCallIdFromWebhook(raw);
     const rawToolCall = this.extractToolCallPayload(raw);
     const normalized = this.normalizeToolCall(rawToolCall);
     const fallbackToolCallId = this.extractToolCallId(raw);
     const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
+    console.log(
+      '[VapiClient] 🔎 Extracted webhook context',
+      {
+        callId: callId ?? '<none>',
+        normalizedName: normalized?.name ?? '<unknown>',
+        normalizedId: normalized?.id ?? '<none>',
+        fallbackToolCallId: fallbackToolCallId ?? '<none>',
+        finalToolCallId: toolCallId,
+      },
+    );
 
     if (!normalized) {
+      console.warn('[VapiClient] ⚠️ Unable to normalize tool call payload');
       const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
       this.recordToolResponse(toolCallId, payload, null);
-      return { results: [{ toolCallId, result: payload }] };
+      const response = { results: [{ toolCallId, result: payload }] };
+      logPayload('[VapiClient] ⇨ Tool webhook response (normalization error)', response);
+      return response;
     }
 
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
+    console.log(
+      '[VapiClient] 🔍 Session lookup result',
+      {
+        callId: callId ?? '<none>',
+        sessionFound: Boolean(sessionInfo),
+        activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
+      },
+    );
     if (!sessionInfo) {
       const recorded = this.toolResponseLog.get(toolCallId);
       if (recorded?.payload) {
-        return { results: [{ toolCallId, result: recorded.payload }] };
+        console.log(
+          `[VapiClient] ♻️ Returning cached tool response for ${toolCallId} (no active session)`,
+        );
+        const response = { results: [{ toolCallId, result: recorded.payload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+        return response;
       }
       const payload = {
         success: false,
@@ -1952,7 +1978,9 @@ export class VapiClient {
           : 'callId ontbreekt in tool webhook payload.',
       };
       this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
-      return { results: [{ toolCallId, result: payload }] };
+      const response = { results: [{ toolCallId, result: payload }] };
+      logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
+      return response;
     }
 
     const payload =
@@ -1960,7 +1988,10 @@ export class VapiClient {
       ?? { success: false, error: 'Tool execution returned empty result.' };
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
-    return { results: [{ toolCallId: normalized.id, result: payload }] };
+    logPayload('[VapiClient] 📦 Tool execution payload', payload);
+    const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+    logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
+    return response;
   }
 
   private recordToolResponse(
@@ -1971,10 +2002,16 @@ export class VapiClient {
     if (this.toolResponseLog.size > 100) {
       const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
       if (oldestKey) {
+        console.log(`[VapiClient] 🧹 Evicting cached tool response ${oldestKey}`);
         this.toolResponseLog.delete(oldestKey);
       }
     }
 
+    console.log('[VapiClient] 🗂️ Recording tool response', {
+      toolCallId,
+      normalizedName: normalizedName ?? '<unknown>',
+    });
+    logPayload('[VapiClient] 🗂️ Tool response payload (cached)', payload);
     this.toolResponseLog.set(toolCallId, {
       timestamp: Date.now(),
       payload,
@@ -1985,6 +2022,10 @@ export class VapiClient {
   private unregisterActiveSession(session: VapiRealtimeSession) {
     const context = this.sessionContexts.get(session);
     if (context?.callId) {
+      console.log(
+        '[VapiClient] 🔻 Removing active session for callId',
+        context.callId,
+      );
       this.activeSessionsByCallId.delete(context.callId);
     }
     this.sessionContexts.delete(session);
@@ -2064,7 +2105,7 @@ export class VapiClient {
     return null;
   }
 
-  private extractCallIdFromWebhook(body: any): string | null {
+  public static extractCallIdFromWebhook(body: any): string | null {
     if (!body || typeof body !== 'object') {
       return null;
     }

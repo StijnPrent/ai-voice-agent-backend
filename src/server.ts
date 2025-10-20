@@ -16,10 +16,12 @@ import updateRoute from "./routes/UpdateRoute";
 import schedulingRoute from "./routes/SchedulingRoute";
 import callRoute from "./routes/CallRoute";
 import analyticsRoute from "./routes/AnalyticsRoute";
+import { VapiRoute } from "./routes/VapiRoute";
 
 const app = express();
 
 const voiceSessionManager = container.resolve(VoiceSessionManager);
+const vapiRoute = container.resolve(VapiRoute);
 
 app.set("trust proxy", true);
 
@@ -29,7 +31,7 @@ app.use(cors({
     allowedHeaders: ["Content-Type","Authorization","X-Internal-Api-Key"]
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/voice", voiceRoutes(voiceSessionManager));
 app.use('/company', companyRoutes);
@@ -41,6 +43,7 @@ app.use("/updates", updateRoute)
 app.use("/scheduling", schedulingRoute)
 app.use("/calls", callRoute)
 app.use("/analytics", analyticsRoute)
+app.use("/vapi", vapiRoute.getRouter())
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
