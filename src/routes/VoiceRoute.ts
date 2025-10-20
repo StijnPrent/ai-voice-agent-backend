@@ -116,6 +116,7 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         results: [
           {
             toolCallId: fallbackToolCallId,
+            tool_call_id: fallbackToolCallId,
             error: sanitizedError.length > 0 ? sanitizedError : "Onbekende fout bij verwerken van tool webhook.",
           },
         ],

@@ -1816,8 +1816,20 @@ export class VapiClient {
 
     const frame: Record<string, unknown> = {
       type: 'tool.call.result',
-      toolCallId,
+      tool_call_id: toolCallId,
     };
+
+    if ('toolCallId' in frame) {
+      console.error(
+        '[VapiClient] ❌ tool.call.result frame still contains camelCase toolCallId key',
+        frame,
+      );
+      const camel = frame['toolCallId'];
+      delete frame['toolCallId'];
+      if (!('tool_call_id' in frame) && typeof camel === 'string') {
+        frame['tool_call_id'] = camel;
+      }
+    }
 
     if (transmission.error) {
       frame.error = transmission.error;
@@ -1838,7 +1850,7 @@ export class VapiClient {
 
   public async handleToolWebhookRequest(
     body: unknown,
-  ): Promise<{ toolCallId: string; result?: string; error?: string }> {
+  ): Promise<{ toolCallId: string; tool_call_id: string; result?: string; error?: string }> {
     console.log('[VapiClient] 🌐 Received tool webhook payload');
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
@@ -1862,9 +1874,7 @@ export class VapiClient {
       };
       this.recordToolResponse(toolCallId, payload, null);
       const transmission = this.buildToolResultTransmission(payload);
-      return transmission.error
-        ? { toolCallId, error: transmission.error }
-        : { toolCallId, result: transmission.result ?? 'OK' };
+      return this.buildWebhookResponsePayload(toolCallId, transmission);
     }
 
     const normalizedToolName = this.normalizeToolName(normalized.name);
@@ -1877,9 +1887,7 @@ export class VapiClient {
           toolCallId,
         });
         const cachedTransmission = this.buildToolResultTransmission(recorded.payload);
-        return cachedTransmission.error
-          ? { toolCallId, error: cachedTransmission.error }
-          : { toolCallId, result: cachedTransmission.result ?? 'OK' };
+        return this.buildWebhookResponsePayload(toolCallId, cachedTransmission);
       }
 
       const payload = {
@@ -1890,9 +1898,7 @@ export class VapiClient {
       };
       this.recordToolResponse(toolCallId, payload, normalizedToolName);
       const transmission = this.buildToolResultTransmission(payload);
-      return transmission.error
-        ? { toolCallId, error: transmission.error }
-        : { toolCallId, result: transmission.result ?? 'OK' };
+      return this.buildWebhookResponsePayload(toolCallId, transmission);
     }
 
     const payload = await this.executeToolCall(
@@ -1902,9 +1908,7 @@ export class VapiClient {
     );
 
     const transmission = this.buildToolResultTransmission(payload);
-    return transmission.error
-      ? { toolCallId: normalized.id, error: transmission.error }
-      : { toolCallId: normalized.id, result: transmission.result ?? 'OK' };
+    return this.buildWebhookResponsePayload(normalized.id, transmission);
   }
 
   private recordToolResponse(
@@ -2047,6 +2051,24 @@ export class VapiClient {
     }
 
     return null;
+  }
+
+  private buildWebhookResponsePayload(
+    toolCallId: string,
+    transmission: { result?: string; error?: string },
+  ): { toolCallId: string; tool_call_id: string; result?: string; error?: string } {
+    const base = { toolCallId, tool_call_id: toolCallId } as {
+      toolCallId: string;
+      tool_call_id: string;
+      result?: string;
+      error?: string;
+    };
+
+    if (transmission.error) {
+      return { ...base, error: transmission.error };
+    }
+
+    return { ...base, result: transmission.result ?? 'OK' };
   }
 
   private buildToolResultTransmission(payload: unknown): { result?: string; error?: string } {
