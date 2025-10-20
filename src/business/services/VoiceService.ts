@@ -251,11 +251,19 @@ export class VoiceService {
             this.vapiSession = session;
             const previousCallId = this.vapiCallId;
             if (previousCallId && previousCallId !== callId) {
+                console.log(
+                    `[${callSid}] [VoiceService] Releasing previous Vapi callId ${previousCallId} before registering new one`
+                );
                 this.sessionManager?.releaseVapiCallId(previousCallId, this);
             }
             this.vapiCallId = callId ?? null;
+            console.log(
+                `[${callSid}] [VoiceService] Vapi realtime session ready (callId=${this.vapiCallId ?? "none"})`
+            );
             if (this.vapiCallId) {
                 this.sessionManager?.associateVapiCallId(this.vapiCallId, this);
+            } else {
+                console.warn(`[${callSid}] [VoiceService] No Vapi callId returned for realtime session`);
             }
 
             console.log(`[${callSid}] Vapi session created`);
@@ -423,8 +431,29 @@ export class VoiceService {
         return this.vapiCallId;
     }
 
+    public getCallSid(): string | null {
+        return this.callSid;
+    }
+
     public async handleVapiToolWebhook(body: unknown) {
-        return this.vapiClient.handleToolWebhookRequest(body);
+        const callSid = this.callSid ?? "unknown";
+        try {
+            const preview = this.safeSerialize(body);
+            console.log(`[${callSid}] [VoiceService] ⇦ Delegated tool webhook payload`, preview);
+        } catch (error) {
+            console.warn(`[${callSid}] [VoiceService] ⚠️ Failed to preview incoming tool webhook`, error);
+        }
+
+        const result = await this.vapiClient.handleToolWebhookRequest(body);
+
+        try {
+            const preview = this.safeSerialize(result);
+            console.log(`[${callSid}] [VoiceService] ⇨ Tool webhook response`, preview);
+        } catch (error) {
+            console.warn(`[${callSid}] [VoiceService] ⚠️ Failed to preview outgoing tool webhook response`, error);
+        }
+
+        return result;
     }
 
     public async transferCall(
@@ -507,6 +536,23 @@ export class VoiceService {
         }
 
         return cleaned.replace(/[^\d]/g, "");
+    }
+
+    private safeSerialize(value: unknown, limit = 2000): string {
+        try {
+            const serialized = JSON.stringify(value, null, 2);
+            if (!serialized) {
+                return "<empty>";
+            }
+
+            if (serialized.length <= limit) {
+                return serialized;
+            }
+
+            return `${serialized.slice(0, limit)}… (truncated ${serialized.length - limit} chars)`;
+        } catch (error) {
+            return `[unserializable: ${(error as Error)?.message ?? "unknown error"}]`;
+        }
     }
 
     private finalizeUserSpeechSegment(

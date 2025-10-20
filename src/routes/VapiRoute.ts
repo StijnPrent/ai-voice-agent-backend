@@ -20,13 +20,35 @@ export class VapiRoute {
   private registerRoutes() {
     this.router.post("/tools", async (req, res) => {
       try {
-        const voiceService = this.resolveVoiceService(req.body);
+        this.logJsonPreview("[VapiRoute] ⇦ Incoming tool webhook body", req.body);
+
+        const callId = VapiClient.extractCallIdFromWebhook(req.body);
+        const activeCallSids = this.sessionManager.listActiveCallSids();
+        console.log(
+          `[VapiRoute] 🔍 Extracted callId=${callId ?? "<none>"} (activeCallSids=${
+            activeCallSids.length > 0 ? activeCallSids.join(", ") : "<none>"
+          })`,
+        );
+
+        const voiceService = this.resolveVoiceService(req.body, callId);
+        if (voiceService) {
+          console.log(
+            `[VapiRoute] 🧭 Resolved active VoiceService for webhook`,
+            this.describeVoiceService(voiceService),
+          );
+        } else {
+          console.warn(`[VapiRoute] ⚠️ Falling back to transient VapiClient for tool webhook`);
+        }
+
         const result = voiceService
           ? await voiceService.handleVapiToolWebhook(req.body)
           : await container.resolve(VapiClient).handleToolWebhookRequest(req.body);
+
+        this.logJsonPreview("[VapiRoute] ⇨ Tool webhook response", result);
         res.status(200).json(result);
       } catch (error) {
         console.error("[VapiRoute] Tool webhook error", error);
+        this.logJsonPreview("[VapiRoute] ⇨ Tool webhook error response payload", error);
         res.status(200).json({
           results: [
             {
@@ -39,21 +61,33 @@ export class VapiRoute {
     });
   }
 
-  private resolveVoiceService(body: unknown): VoiceService | undefined {
-    const callId = VapiClient.extractCallIdFromWebhook(body);
+  private resolveVoiceService(body: unknown, providedCallId?: string | null): VoiceService | undefined {
+    const callId = providedCallId ?? VapiClient.extractCallIdFromWebhook(body);
+    console.log(`[VapiRoute] 🔁 Resolving VoiceService (callId=${callId ?? "<none>"})`);
     if (callId) {
       const byCallId = this.sessionManager.findSessionByVapiCallId(callId);
       if (byCallId) {
+        console.log(`[VapiRoute] ✅ Found session by Vapi callId ${callId}`);
         return byCallId;
       }
 
       const byCallSid = this.sessionManager.getSession(callId);
       if (byCallSid) {
+        console.log(`[VapiRoute] ✅ Found session by callSid ${callId}`);
         return byCallSid;
       }
+
+      console.warn(`[VapiRoute] ⚠️ No session found for callId ${callId}`);
     }
 
-    return this.sessionManager.resolveActiveSession();
+    const fallback = this.sessionManager.resolveActiveSession();
+    if (fallback) {
+      console.log(`[VapiRoute] ℹ️ Using single active session as fallback`);
+    } else {
+      console.warn(`[VapiRoute] ⚠️ Unable to resolve active session for tool webhook`);
+    }
+
+    return fallback;
   }
 
   private extractToolCallId(body: unknown): string | null {
@@ -97,6 +131,34 @@ export class VapiRoute {
 
     const sanitized = rawMessage.replace(/[\r\n\t]+/g, " ").trim();
     return sanitized.length > 0 ? sanitized : fallback;
+  }
+
+  private logJsonPreview(label: string, value: unknown, limit = 4000) {
+    try {
+      const serialized = JSON.stringify(value, null, 2);
+      if (!serialized) {
+        console.log(`${label}: <empty>`);
+        return;
+      }
+
+      if (serialized.length <= limit) {
+        console.log(`${label}: ${serialized}`);
+        return;
+      }
+
+      console.log(
+        `${label}: ${serialized.slice(0, limit)}… (truncated ${serialized.length - limit} chars)`,
+      );
+    } catch (error) {
+      console.log(`${label}: [unserializable: ${(error as Error)?.message ?? "unknown"}]`);
+    }
+  }
+
+  private describeVoiceService(service: VoiceService) {
+    return {
+      callSid: service.getCallSid?.() ?? "<unknown>",
+      vapiCallId: service.getVapiCallId?.() ?? "<unknown>",
+    };
   }
 }
 

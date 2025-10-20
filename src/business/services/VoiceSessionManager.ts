@@ -27,6 +27,10 @@ export class VoiceSessionManager {
         }) as typeof voiceService.stopStreaming;
 
         this.sessions.set(callSid, voiceService);
+        console.log(
+            `[VoiceSessionManager] 🆕 Created VoiceService session`,
+            this.describeSession(voiceService, callSid)
+        );
         return voiceService;
     }
 
@@ -38,7 +42,23 @@ export class VoiceSessionManager {
             return undefined;
         }
 
-        return this.sessions.get(callSid);
+        const session = this.sessions.get(callSid);
+        console.log(
+            `[VoiceSessionManager] 🔎 Lookup by callSid ${callSid}: ${session ? "found" : "missing"}`
+        );
+        return session;
+    }
+
+    public findSessionByVapiCallId(callId: string | undefined | null): VoiceService | undefined {
+        if (!callId) {
+            return undefined;
+        }
+
+        const session = this.sessionsByVapiCallId.get(callId);
+        console.log(
+            `[VoiceSessionManager] 🔎 Lookup by Vapi callId ${callId}: ${session ? "found" : "missing"}`
+        );
+        return session;
     }
 
     public findSessionByVapiCallId(callId: string | undefined | null): VoiceService | undefined {
@@ -56,15 +76,26 @@ export class VoiceSessionManager {
      */
     public resolveActiveSession(callSid?: string | null): VoiceService | undefined {
         if (callSid) {
-            return this.sessions.get(callSid);
+            const session = this.sessions.get(callSid);
+            console.log(
+                `[VoiceSessionManager] 🔁 resolveActiveSession explicit callSid=${callSid} -> ${
+                    session ? "found" : "missing"
+                }`
+            );
+            return session;
         }
 
         if (this.sessions.size === 1) {
-            for (const service of this.sessions.values()) {
-                return service;
+            const single = this.sessions.values().next().value as VoiceService | undefined;
+            if (single) {
+                console.log("[VoiceSessionManager] 🔁 resolveActiveSession using sole active session");
+                return single;
             }
         }
 
+        console.warn(
+            `[VoiceSessionManager] ⚠️ resolveActiveSession ambiguous (active=${this.sessions.size})`
+        );
         return undefined;
     }
 
@@ -87,6 +118,10 @@ export class VoiceSessionManager {
 
         if (!voiceService || existing === voiceService) {
             this.sessions.delete(callSid);
+            console.log(
+                `[VoiceSessionManager] 🗑️ Released VoiceService session`,
+                this.describeSession(existing, callSid)
+            );
         }
     }
 
@@ -104,6 +139,10 @@ export class VoiceSessionManager {
         }
 
         this.sessionsByVapiCallId.set(callId, voiceService);
+        console.log(
+            `[VoiceSessionManager] 🔗 Associated Vapi callId ${callId}`,
+            this.describeSession(voiceService)
+        );
     }
 
     public releaseVapiCallId(callId: string | null | undefined, voiceService?: VoiceService) {
@@ -118,6 +157,19 @@ export class VoiceSessionManager {
 
         if (!voiceService || existing === voiceService) {
             this.sessionsByVapiCallId.delete(callId);
+            console.log(
+                `[VoiceSessionManager] 🔓 Released Vapi callId ${callId}`,
+                this.describeSession(existing)
+            );
         }
+    }
+
+    private describeSession(service: VoiceService, callSidOverride?: string) {
+        return {
+            callSid: callSidOverride ?? service.getCallSid?.() ?? "<unknown>",
+            vapiCallId: service.getVapiCallId?.() ?? "<unknown>",
+            activeSessions: Array.from(this.sessions.keys()),
+            mappedCallIds: Array.from(this.sessionsByVapiCallId.keys()),
+        };
     }
 }
