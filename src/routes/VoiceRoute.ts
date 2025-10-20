@@ -100,7 +100,7 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
 
     try {
       const result = await vapiClient.handleToolWebhookRequest(req.body);
-      res.status(200).json({ results: [result] });
+      res.status(200).json(result);
     } catch (error) {
       console.error("[/voice/vapi/tool] Failed to handle tool webhook", error);
       const fallbackToolCallId = extractToolCallId(req.body) ?? `tool_${Date.now()}`;
@@ -116,7 +116,6 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         results: [
           {
             toolCallId: fallbackToolCallId,
-            tool_call_id: fallbackToolCallId,
             error: sanitizedError.length > 0 ? sanitizedError : "Onbekende fout bij verwerken van tool webhook.",
           },
         ],
