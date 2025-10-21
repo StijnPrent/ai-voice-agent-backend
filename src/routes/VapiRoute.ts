@@ -74,7 +74,7 @@ export class VapiRoute {
           results: [
             {
               toolCallId: this.extractToolCallId(req.body) ?? "unknown",
-              error: this.sanitizeErrorMessage(error),
+              result: { error: this.sanitizeErrorMessage(error) },
             },
           ],
         });

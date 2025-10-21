@@ -214,7 +214,6 @@ export class VapiClient {
   >();
   private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
   private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
-  private readonly toolBaseUrl: string;
   private readonly transportProvider: string;
   private readonly sessionContexts = new WeakMap<
     VapiRealtimeSession,
@@ -241,8 +240,6 @@ export class VapiClient {
     this.modelName = process.env.VAPI_MODEL_NAME || 'gpt-4o-mini';
     this.transportProvider = 'vapi.websocket';
 
-    this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
-
     this.http = axios.create({
       baseURL: apiBaseUrl,
       headers: {
@@ -251,10 +248,6 @@ export class VapiClient {
       },
       timeout: 15000,
     });
-  }
-
-  private getToolServerUrl(): string {
-    return `${this.toolBaseUrl}/vapi/tools`;
   }
 
   private hasRecordedPayload(entry?: ToolResponseEntry | null): entry is ToolResponseEntry & {
@@ -1662,7 +1655,6 @@ export class VapiClient {
         if (!result) {
           this.logToolFlow('Realtime execution returned empty payload', toolFlowContext, undefined, 'warn');
           result = {
-            success: false,
             error: `Tool ${toolCall.name} returned no result`,
           };
         }
@@ -1676,7 +1668,6 @@ export class VapiClient {
           'error',
         );
         return {
-          success: false,
           error:
             error instanceof Error
               ? error.message || `Onbekende fout bij uitvoeren van ${toolCall.name}`
@@ -1746,7 +1737,6 @@ export class VapiClient {
         callSid: sessionContext?.callSid ?? null,
       }, 'error');
       const payload = {
-        success: false,
         error: 'Session not configured',
       };
       return commitPayload(payload);
@@ -1766,24 +1756,22 @@ export class VapiClient {
         'warn',
       );
       const payload = {
-        success: false,
         error: 'Google integration not available',
       };
       return commitPayload(payload);
     }
 
     const sendSuccess = (data: unknown) => {
-      const payload = { success: true, data };
-      this.logToolFlow('Execution success payload prepared', toolFlowContext, payload);
-      return payload;
+      const resolved = data ?? null;
+      this.logToolFlow('Execution success payload prepared', toolFlowContext, resolved);
+      return resolved;
     };
 
     const sendError = (message: string, details?: unknown) => {
-      const payload = {
-        success: false,
-        error: message,
-        details,
-      };
+      const payload: Record<string, unknown> = { error: message };
+      if (details !== undefined) {
+        payload.details = details;
+      }
       this.logToolFlow('Execution error payload prepared', toolFlowContext, payload, 'warn');
       return payload;
     };
@@ -2012,7 +2000,6 @@ export class VapiClient {
     if (!finalPayload) {
       this.logToolFlow('Execution completed without payload', toolFlowContext, undefined, 'error');
       const payload = {
-        success: false,
         error: `Tool ${call.name} executed without response`,
       };
       commitPayload(payload);
@@ -2190,14 +2177,13 @@ export class VapiClient {
           'error',
         );
         const payload = {
-          success: false,
           error:
             error instanceof Error
               ? error.message || 'Tool uitvoering mislukt tijdens lopende sessie.'
               : 'Tool uitvoering mislukt tijdens lopende sessie.',
         };
         this.recordToolResponse(toolCallId, payload, recorded?.normalizedName ?? null, toolFlowContext);
-        const response = { results: [{ toolCallId, result: payload, error: payload }] };
+        const response = { results: [{ toolCallId, result: payload }] };
         logPayload('[VapiClient] ⇨ Tool webhook response (pending rejected)', response);
         return response;
       }
@@ -2210,9 +2196,9 @@ export class VapiClient {
         rawToolCall,
         'warn',
       );
-      const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
+      const payload = { error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
       this.recordToolResponse(toolCallId, payload, null, toolFlowContext);
-      const response = { results: [{ toolCallId, result: payload, error: payload }] };
+      const response = { results: [{ toolCallId, result: payload }] };
       logPayload('[VapiClient] ⇨ Tool webhook response (normalization error)', response);
       return response;
     }
@@ -2234,10 +2220,7 @@ export class VapiClient {
         return response;
       }
       const payload = {
-        success: false,
-        error: callId
-          ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
-          : 'callId ontbreekt in tool webhook payload.',
+        error: 'Geen actieve Vapi-sessie beschikbaar voor deze tool-aanroep.',
       };
       this.logToolFlow('Webhook no session available', toolFlowContext, payload, 'warn');
       this.recordToolResponse(
@@ -2246,7 +2229,7 @@ export class VapiClient {
         this.normalizeToolName(normalized.name),
         toolFlowContext,
       );
-      const response = { results: [{ toolCallId, result: payload, error: payload }] };
+      const response = { results: [{ toolCallId, result: payload }] };
       logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
       return response;
     }
@@ -2259,7 +2242,7 @@ export class VapiClient {
     const executionPromise = (async () => {
       const result =
         (await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks))
-        ?? { success: false, error: 'Tool execution returned empty result.' };
+        ?? { error: 'Tool execution returned empty result.' };
       return result;
     })();
 
@@ -2627,7 +2610,6 @@ export class VapiClient {
       firstMessageMode: 'assistant-speaks-first',
       voicemailMessage: 'sorry er is helaas niemand anders beschikbaar op het moment',
       endCallMessage: 'Fijne dag!',
-      toolServerUrl: this.getToolServerUrl(),
     };
 
     const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
@@ -2661,7 +2643,6 @@ export class VapiClient {
         name: config.replyStyle.name,
         description: config.replyStyle.description,
       },
-      toolServerUrl: this.getToolServerUrl(),
     };
 
     if (tools && tools.length > 0) {
