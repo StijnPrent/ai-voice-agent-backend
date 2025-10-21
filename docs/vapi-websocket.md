@@ -7,6 +7,7 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 2. From your backend, create a call in Vapi:
    - Send `POST /call` with the assistant identifier.
    - Provide a `transport.websocket` configuration (include audio settings or metadata as needed).
+   - Include `toolServerUrl` so Vapi knows where to deliver HTTP tool webhooks during the call (for example, `https://api.voiceagent.stite.nl/vapi/tools`).
 3. Vapi responds with a `websocketCallUrl`. This URL is the entry point for the bi-directional audio and event stream.
 
 ## 2. Connect to the WebSocket
@@ -23,14 +24,14 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 1. Listen for JSON events from Vapi alongside the audio, such as partial transcripts, final messages, or tool calls.
 2. When Vapi issues a tool call (e.g., `schedule_google_calendar_event`), invoke the appropriate downstream service or internal API from your backend.
 3. Note the `toolCallId` from the event but do **not** send the result back over the WebSocket. Vapi expects tool executions to be resolved via the HTTP webhook.
-4. Vapi will POST the tool payload to your configured webhook (`POST /voice/vapi/tool`). Reply with HTTP 200 and the following shape so the assistant can continue the conversation:
+4. Vapi will POST the tool payload to your configured webhook (`POST /vapi/tools`). Reply with HTTP 200 and the following shape so the assistant can continue the conversation:
 
    ```json
    {
      "results": [
        {
          "toolCallId": "call_123",
-         "result": "Single-line string result"
+        "result": { "any": "JSON payload returned by your tool" }
        }
      ]
    }
@@ -38,7 +39,7 @@ This guide explains how to bridge a live phone call with Vapi's AI assistant usi
 
    - The array is mandatory, even when returning a single result.
    - `toolCallId` must match the ID Vapi sent in the webhook.
-   - `result` should be a single-line string; stringify objects yourself and strip newline characters.
+   - `result` should contain the raw JSON payload returned by your tool handler (objects are supported).
 
 ## 5. Manage Call Lifecycle
 1. When the telephony provider signals that the call ended, close the Vapi WebSocket connection.
