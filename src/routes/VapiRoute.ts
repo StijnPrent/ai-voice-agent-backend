@@ -2,7 +2,7 @@ import { Router } from "express";
 import { container, injectable } from "tsyringe";
 import type { VoiceService } from "../business/services/VoiceService";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
-import { VapiClient } from "../clients/VapiClient";
+import { VapiClient, type VapiToolLogContext } from "../clients/VapiClient";
 
 @injectable()
 export class VapiRoute {
