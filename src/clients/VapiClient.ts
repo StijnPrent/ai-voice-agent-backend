@@ -13,6 +13,7 @@ import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
+import config from '../config/config';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -628,6 +629,9 @@ export class VapiClient {
             required: ['phoneNumber'],
           },
         },
+        server: {
+          url: `${config.serverUrl}/vapi/tools`
+        },
       },
     ];
 
@@ -678,6 +682,9 @@ export class VapiClient {
             'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
           parameters: createCalendarParameters,
         },
+        server: {
+          url: `${config.serverUrl}/vapi/tools`
+        },
       },
       {
         type: 'function',
@@ -687,6 +694,9 @@ export class VapiClient {
             'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
           parameters: checkAvailabilityParameters,
         },
+        server: {
+          url: `${config.serverUrl}/vapi/tools`
+        },
       },
       {
         type: 'function',
@@ -695,6 +705,9 @@ export class VapiClient {
           description:
             'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
           parameters: cancelCalendarParameters,
+        },
+        server: {
+          url: `${config.serverUrl}/vapi/tools`
         },
       },
     );
