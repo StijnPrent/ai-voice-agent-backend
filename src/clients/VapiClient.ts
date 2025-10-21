@@ -921,16 +921,8 @@ export class VapiClient {
       },
     };
 
-    // Ensure the realtime call also knows where to deliver tool webhooks.
-    const payload = {
-      assistantId,
-      transport,
-      toolServerUrl: this.getToolServerUrl(),
-    };
-
-    console.log(
-      `[VapiClient] ☎️ Creating websocket call for assistant ${assistantId} with toolServerUrl ${payload.toolServerUrl}`,
-    );
+    // ⬇️ Minimal payload, nothing else
+    const payload = { assistantId, transport };
 
     const response = await this.http.post(this.buildApiPath('/call'), payload);
     const info = this.extractWebsocketCallInfo(response.data);
@@ -2319,9 +2311,14 @@ export class VapiClient {
 
     this.logToolFlow('Cache update (record tool response)', toolContext, payload);
     logPayload('[VapiClient] 🗂️ Tool response payload (cached)', payload);
+    const finalPayload =
+      typeof payload === 'object' && payload !== null && (payload as any).success === true && (payload as any).data !== undefined
+        ? (payload as any).data
+        : payload;
+
     this.toolResponseLog.set(toolCallId, {
       timestamp: Date.now(),
-      payload,
+      payload: finalPayload,
       normalizedName: resolvedName,
     });
   }
