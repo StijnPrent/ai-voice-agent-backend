@@ -922,20 +922,56 @@ export class VapiClient {
     };
 
     // Ensure the realtime call also knows where to deliver tool webhooks.
-    const payload = {
-      assistantId,
-      transport,
-      toolServerUrl: this.getToolServerUrl(),
+    const basePayload = { assistantId, transport };
+    const toolServerUrl = this.getToolServerUrl();
+    const payload = toolServerUrl
+      ? { ...basePayload, toolServerUrl }
+      : basePayload;
+
+    const logContext = () =>
+      `[VapiClient] ☎️ Creating websocket call for assistant ${assistantId}` +
+      (toolServerUrl ? ` (toolServerUrl=${toolServerUrl})` : '');
+
+    console.log(logContext());
+
+    const sendAndParse = async (body: Record<string, unknown>) => {
+      const response = await this.http.post(this.buildApiPath('/call'), body);
+      const info = this.extractWebsocketCallInfo(response.data);
+      if (!info) {
+        throw new Error('Vapi create call response did not include a websocket URL');
+      }
+      return info;
     };
 
-    console.log(
-      `[VapiClient] ☎️ Creating websocket call for assistant ${assistantId} with toolServerUrl ${payload.toolServerUrl}`,
-    );
+    try {
+      return await sendAndParse(payload);
+    } catch (error) {
+      const isAxios400 =
+        toolServerUrl &&
+        axios.isAxiosError(error) &&
+        (error.response?.status === 400 || error.response?.status === 422);
 
-    const response = await this.http.post(this.buildApiPath('/call'), payload);
-    const info = this.extractWebsocketCallInfo(response.data);
-    if (!info) throw new Error('Vapi create call response did not include a websocket URL');
-    return info;
+      if (isAxios400) {
+        console.warn(
+          `${logContext()} was rejected (status=${error.response?.status}). Retrying without toolServerUrl.`,
+        );
+        try {
+          return await sendAndParse(basePayload);
+        } catch (fallbackError) {
+          this.logAxiosError(
+            '[VapiClient] Fallback websocket call creation without toolServerUrl failed',
+            fallbackError,
+            basePayload,
+          );
+          throw fallbackError;
+        }
+      }
+
+      this.logAxiosError('[VapiClient] Failed to create websocket call', error, payload);
+      throw error instanceof Error
+        ? error
+        : new Error(`Unknown error while creating websocket call: ${String(error)}`);
+    }
   }
 
 
