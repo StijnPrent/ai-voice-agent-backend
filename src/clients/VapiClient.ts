@@ -425,9 +425,7 @@ export class VapiClient {
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
     const effectiveConfig = config ?? this.currentConfig;
     if (!effectiveConfig) {
-      throw new Error(
-        'Company info, reply style, context, and scheduling context must be set before generating a system prompt.',
-      );
+      throw new Error('Company info must be set before generating a system prompt.');
     }
 
     const todayText = formatDutchDate(new Date());
@@ -438,12 +436,18 @@ export class VapiClient {
       `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
-      'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie`,
+        `Je hebt toegang tot de Google Agenda van het bedrijf.`,
+        `BELANGRIJK: Wanneer een beller vraagt naar beschikbare tijden of afspraken wil plannen:`,
+        `1. Gebruik ALTIJD EERST de tool 'check_google_calendar_availability' om beschikbare tijdslots op te halen`,
+        `2. Presenteer de beschikbare tijden aan de beller`,
+        `3. Vraag om naam, email en geboortedatum voordat je 'schedule_google_calendar_event' gebruikt`,
+        `4. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email ter bevestiging`,
+        ``,
+        `Gebruik NOOIT 'transfer_call' als de beller om beschikbare tijden vraagt - gebruik altijd eerst de agenda tool.`
       );
     } else {
       instructions.push(
@@ -452,7 +456,11 @@ export class VapiClient {
     }
 
     instructions.push(
-      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer',
+      `Gebruik de tool 'transfer_call' ALLEEN wanneer:`,
+      `- De beller expliciet vraagt om doorverbonden te worden`,
+      `- Je een vraag niet kunt beantwoorden en de beller wil spreken met een medewerker`,
+      `- Er een probleem is dat menselijke tussenkomst vereist`,
+      `Gebruik altijd het algemene bedrijfsnummer voor doorverbinden.`
     );
 
     return instructions.join('\n\n');
@@ -766,6 +774,13 @@ export class VapiClient {
     if (!config) {
       throw new Error('Company must be configured before opening a Vapi session');
     }
+
+    console.log(`[VapiClient] Opening session with config:`, {
+      companyId: config.company.id,
+      companyName: config.company.name,
+      hasGoogleIntegration: config.hasGoogleIntegration, // ⬅️ Check this!
+      availableTools: this.getTools(config.hasGoogleIntegration).map(t => t.function.name),
+    });
 
     const assistantId =
       config.company?.assistantId ??
