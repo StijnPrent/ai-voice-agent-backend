@@ -253,6 +253,10 @@ export class VapiClient {
     });
   }
 
+  private getToolServerUrl(): string {
+    return `${this.toolBaseUrl}/vapi/tools`;
+  }
+
   private hasRecordedPayload(entry?: ToolResponseEntry | null): entry is ToolResponseEntry & {
     payload: unknown;
   } {
@@ -2209,6 +2213,67 @@ export class VapiClient {
       }
     }
 
+    const toolFlowContext: VapiToolLogContext = {
+      callId: callId ?? null,
+      toolCallId,
+      toolName: normalized?.name ?? null,
+    };
+
+    this.logToolFlow('Webhook context extracted', toolFlowContext, {
+      normalizedId: normalized?.id ?? null,
+      fallbackToolCallId,
+    });
+
+    const recorded = toolCallId ? this.toolResponseLog.get(toolCallId) : undefined;
+    if (this.hasRecordedPayload(recorded)) {
+      if (!toolFlowContext.toolName && recorded.normalizedName) {
+        toolFlowContext.toolName = recorded.normalizedName;
+      }
+      this.logToolFlow('Webhook returning cached payload (pre-execution)', toolFlowContext, {
+        cachedAt: recorded.timestamp,
+        normalizedName: recorded.normalizedName ?? '<unknown>',
+      });
+      const response = { results: [{ toolCallId, result: recorded.payload }] };
+      logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+      return response;
+    }
+
+    if (recorded?.pending) {
+      const pendingForMs = Date.now() - recorded.pending.startedAt;
+      this.logToolFlow('Webhook awaiting pending realtime execution', toolFlowContext, {
+        startedAt: recorded.pending.startedAt,
+        pendingForMs,
+      });
+
+      try {
+        const pendingPayload = await recorded.pending.promise;
+        const resolved = this.toolResponseLog.get(toolCallId);
+        const payload = this.getRecordedPayload(resolved) ?? pendingPayload;
+        this.logToolFlow('Webhook pending execution resolved', toolFlowContext, payload);
+        const response = { results: [{ toolCallId, result: payload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (pending resolved)', response);
+        return response;
+      } catch (error) {
+        this.logToolFlow(
+          'Webhook pending execution rejected',
+          toolFlowContext,
+          error instanceof Error ? { message: error.message, stack: error.stack } : { error },
+          'error',
+        );
+        const payload = {
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message || 'Tool uitvoering mislukt tijdens lopende sessie.'
+              : 'Tool uitvoering mislukt tijdens lopende sessie.',
+        };
+        this.recordToolResponse(toolCallId, payload, recorded?.normalizedName ?? null, toolFlowContext);
+        const response = { results: [{ toolCallId, result: payload, error: payload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (pending rejected)', response);
+        return response;
+      }
+    }
+
     if (!normalized) {
       this.logToolFlow(
         'Webhook normalization failed',
@@ -2628,6 +2693,7 @@ export class VapiClient {
       firstMessageMode: 'assistant-speaks-first',
       voicemailMessage: 'sorry er is helaas niemand anders beschikbaar op het moment',
       endCallMessage: 'Fijne dag!',
+      toolServerUrl: this.getToolServerUrl(),
     };
 
     const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
@@ -2661,6 +2727,7 @@ export class VapiClient {
         name: config.replyStyle.name,
         description: config.replyStyle.description,
       },
+      toolServerUrl: this.getToolServerUrl(),
     };
 
     if (tools && tools.length > 0) {
