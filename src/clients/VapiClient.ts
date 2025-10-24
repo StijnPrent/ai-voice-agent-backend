@@ -14,6 +14,8 @@ import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
 import config from '../config/config';
+import { VoiceSessionManager } from '../business/services/VoiceSessionManager';
+import type { VoiceService } from '../business/services/VoiceService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -229,7 +231,10 @@ export class VapiClient {
   private readonly maxToolResponseLogSize = 100;
   private currentConfig: VapiAssistantConfig | null = null;
 
-  constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
+  constructor(
+    @inject(GoogleService) private readonly googleService: GoogleService,
+    @inject(VoiceSessionManager) private readonly sessionManager: VoiceSessionManager,
+  ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
       console.warn('[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.');
@@ -2232,11 +2237,24 @@ export class VapiClient {
     }
 
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
+    const normalizedName = this.normalizeToolName(normalized.name);
     this.logToolFlow('Webhook session lookup', toolFlowContext, {
       sessionFound: Boolean(sessionInfo),
       activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
     });
     if (!sessionInfo) {
+      if (normalizedName === TOOL_NAMES.transferCall) {
+        const fallbackPayload = await this.executeTransferCallWithoutActiveSession(
+          normalized.args ?? {},
+          toolFlowContext,
+          callId,
+        );
+        this.recordToolResponse(toolCallId, fallbackPayload, normalizedName, toolFlowContext);
+        const response = { results: [{ toolCallId, result: fallbackPayload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (transfer fallback)', response);
+        return response;
+      }
+
       const recorded = this.toolResponseLog.get(toolCallId);
       if (this.hasRecordedPayload(recorded)) {
         this.logToolFlow('Webhook returning cached payload (no active session)', toolFlowContext, {
@@ -2264,7 +2282,7 @@ export class VapiClient {
 
     toolFlowContext.callSid = sessionInfo.callSid;
     toolFlowContext.toolName =
-      this.normalizeToolName(normalized.name) ?? toolFlowContext.toolName ?? normalized.name;
+      normalizedName ?? toolFlowContext.toolName ?? normalized.name;
     this.logToolFlow('Webhook executing tool via active session', toolFlowContext);
 
     const executionPromise = (async () => {
@@ -2458,6 +2476,138 @@ export class VapiClient {
       }
     }
 
+    return null;
+  }
+
+  private async executeTransferCallWithoutActiveSession(
+    args: Record<string, unknown>,
+    toolFlowContext: VapiToolLogContext,
+    providedCallId?: string | null,
+  ): Promise<Record<string, unknown>> {
+    this.logToolFlow('Transfer fallback (no active session)', toolFlowContext, {
+      providedCallId: providedCallId ?? null,
+      args,
+    });
+
+    const phoneNumber =
+      this.normalizeStringArg(args['phoneNumber']) ?? this.normalizeStringArg(args['phone_number']);
+    const callSidFromArgs = this.extractFirstStringArg(args, [
+      'callSid',
+      'call_sid',
+      'twilioCallSid',
+      'twilio_call_sid',
+    ]);
+    const callerId =
+      this.normalizeStringArg(args['callerId']) ?? this.normalizeStringArg(args['caller_id']);
+    const reason = this.normalizeStringArg(args['reason']);
+
+    const { voiceService, resolvedCallSid, resolutionPath } =
+      this.resolveVoiceServiceForTransferFallback(providedCallId ?? null, callSidFromArgs);
+
+    this.logToolFlow('Transfer fallback resolution result', toolFlowContext, {
+      resolvedCallSid: resolvedCallSid ?? null,
+      resolutionPath,
+      voiceServiceFound: Boolean(voiceService),
+    });
+
+    if (!voiceService) {
+      return {
+        error: 'Doorverbinden is niet beschikbaar in deze sessie.',
+      };
+    }
+
+    try {
+      await voiceService.transferCall(phoneNumber ?? '', {
+        callSid: resolvedCallSid ?? undefined,
+        callerId: callerId ?? undefined,
+        reason: reason ?? undefined,
+      });
+
+      const payload = {
+        message: 'Doorverbinden gestart',
+        transferredTo: phoneNumber ?? null,
+        callSid: resolvedCallSid ?? null,
+        reason: reason ?? null,
+        fallback: true,
+      };
+
+      this.logToolFlow('Transfer fallback succeeded', toolFlowContext, payload);
+      return payload;
+    } catch (error) {
+      const payload = {
+        error:
+          error instanceof Error
+            ? error.message || 'Doorverbinden mislukt.'
+            : 'Doorverbinden mislukt.',
+      };
+      this.logToolFlow(
+        'Transfer fallback failed',
+        toolFlowContext,
+        error instanceof Error ? { message: error.message, stack: error.stack } : { error },
+        'error',
+      );
+      return payload;
+    }
+  }
+
+  private resolveVoiceServiceForTransferFallback(
+    callId: string | null,
+    callSidFromArgs: string | null,
+  ): {
+    voiceService?: VoiceService;
+    resolvedCallSid: string | null;
+    resolutionPath: string[];
+  } {
+    const path: string[] = [];
+    let voiceService: VoiceService | undefined;
+
+    if (callId) {
+      const byCallId = this.sessionManager.findSessionByVapiCallId(callId);
+      if (byCallId) {
+        path.push('vapiCallId');
+        voiceService = byCallId;
+      }
+
+      if (!voiceService) {
+        const byCallSid = this.sessionManager.getSession(callId);
+        if (byCallSid) {
+          path.push('callSidFromCallId');
+          voiceService = byCallSid;
+        }
+      }
+    }
+
+    if (!voiceService && callSidFromArgs) {
+      const byExplicitCallSid = this.sessionManager.getSession(callSidFromArgs);
+      if (byExplicitCallSid) {
+        path.push('callSidFromArgs');
+        voiceService = byExplicitCallSid;
+      }
+    }
+
+    if (!voiceService) {
+      const fallback = this.sessionManager.resolveActiveSession();
+      if (fallback) {
+        path.push('activeSessionFallback');
+        voiceService = fallback;
+      }
+    }
+
+    const resolvedCallSid = voiceService?.getCallSid?.() ?? callSidFromArgs ?? callId ?? null;
+
+    return { voiceService, resolvedCallSid, resolutionPath: path };
+  }
+
+  private extractFirstStringArg(
+    args: Record<string, unknown>,
+    keys: string[],
+  ): string | null {
+    for (const key of keys) {
+      const value = this.normalizeStringArg(args[key]);
+      if (value) {
+        return value;
+      }
+    }
     return null;
   }
 
