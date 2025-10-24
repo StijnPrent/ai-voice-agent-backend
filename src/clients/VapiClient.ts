@@ -281,7 +281,7 @@ export class VapiClient {
   ) {
     const config: VapiAssistantConfig = {
       company,
-      hasGoogleIntegration: true,
+      hasGoogleIntegration,
       replyStyle,
       companyContext: context,
       schedulingContext,
