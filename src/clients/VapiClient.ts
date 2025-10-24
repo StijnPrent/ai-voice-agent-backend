@@ -13,7 +13,6 @@ import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
-import config from '../config/config';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -80,20 +79,6 @@ export type NormalizedToolCall = {
   args: Record<string, unknown>;
 };
 
-export type VapiToolLogContext = {
-  callSid?: string | null;
-  callId?: string | null;
-  toolCallId?: string | null;
-  toolName?: string | null;
-};
-
-type ToolResponseEntry = {
-  timestamp: number;
-  normalizedName?: string | null;
-  payload?: unknown;
-  pending?: { promise: Promise<unknown>; startedAt: number };
-};
-
 const PAYLOAD_LOG_LIMIT = 8000;
 
 const formatDutchDate = (date: Date): string => {
@@ -107,6 +92,7 @@ const formatDutchDate = (date: Date): string => {
   const formatted = formatter.format(date);
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 };
+
 
 const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) => {
   try {
@@ -215,6 +201,7 @@ export class VapiClient {
   >();
   private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
   private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
+  private readonly toolBaseUrl: string;
   private readonly transportProvider: string;
   private readonly sessionContexts = new WeakMap<
     VapiRealtimeSession,
@@ -225,9 +212,12 @@ export class VapiClient {
     { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string }
   >();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
-  private readonly toolResponseLog = new Map<string, ToolResponseEntry>();
-  private readonly maxToolResponseLogSize = 100;
+  private readonly toolResponseLog = new Map<
+    string,
+    { timestamp: number; payload: unknown; normalizedName?: string | null }
+  >();
   private currentConfig: VapiAssistantConfig | null = null;
+  private toolResults = new Map<string, unknown>();
 
   constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
     this.apiKey = process.env.VAPI_API_KEY || '';
@@ -241,6 +231,8 @@ export class VapiClient {
     this.modelName = process.env.VAPI_MODEL_NAME || 'gpt-4o-mini';
     this.transportProvider = 'vapi.websocket';
 
+    this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
+
     this.http = axios.create({
       baseURL: apiBaseUrl,
       headers: {
@@ -251,89 +243,16 @@ export class VapiClient {
     });
   }
 
-  private hasRecordedPayload(entry?: ToolResponseEntry | null): entry is ToolResponseEntry & {
-    payload: unknown;
-  } {
-    return Boolean(entry && Object.prototype.hasOwnProperty.call(entry, 'payload'));
+  // In VapiClient.ts
+  public static formatToolLogContext(args: { callSid?: string | null; callId?: string | null }) {
+    const parts: string[] = [];
+    const sid = (args.callSid ?? '').trim();
+    const cid = (args.callId ?? '').trim();
+    if (sid) parts.push(`callSid=${sid}`);
+    if (cid) parts.push(`callId=${cid}`);
+    return parts.length ? `(${parts.join(', ')})` : '';
   }
 
-  private getRecordedPayload(entry?: ToolResponseEntry | null): unknown | undefined {
-    return this.hasRecordedPayload(entry) ? entry.payload : undefined;
-  }
-
-  private ensureToolResponseCapacity(context?: VapiToolLogContext) {
-    if (this.toolResponseLog.size < this.maxToolResponseLogSize) {
-      return;
-    }
-
-    const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
-    if (!oldestKey) return;
-
-    const evictionContext: VapiToolLogContext = {
-      ...(context ?? {}),
-      toolCallId: oldestKey,
-    };
-    this.logToolFlow('Cache eviction (max size reached)', evictionContext);
-    this.toolResponseLog.delete(oldestKey);
-  }
-
-  private markToolResponsePending(
-    toolCallId: string,
-    promise: Promise<unknown>,
-    normalizedName?: string | null,
-    context?: VapiToolLogContext,
-  ) {
-    this.ensureToolResponseCapacity(context);
-
-    const existing = this.toolResponseLog.get(toolCallId);
-    const resolvedName =
-      normalizedName ?? existing?.normalizedName ?? context?.toolName ?? null;
-    const startedAt = Date.now();
-
-    const entry: ToolResponseEntry = {
-      timestamp: startedAt,
-      normalizedName: resolvedName,
-      pending: { promise, startedAt },
-    };
-
-    if (this.hasRecordedPayload(existing)) {
-      entry.payload = existing.payload;
-    }
-
-    this.toolResponseLog.set(toolCallId, entry);
-
-    const toolContext: VapiToolLogContext = {
-      ...(context ?? {}),
-      toolCallId,
-      toolName: resolvedName ?? context?.toolName ?? null,
-    };
-
-    this.logToolFlow('Cache update (pending tool response)', toolContext, {
-      startedAt,
-    });
-
-    promise
-      .catch(() => {
-        // Errors are logged by the awaiting caller; we only track lifecycle state here.
-      })
-      .finally(() => {
-        const current = this.toolResponseLog.get(toolCallId);
-        if (!current) return;
-        const pendingInfo = current.pending;
-        if (!pendingInfo || pendingInfo.promise !== promise) return;
-
-        const next: ToolResponseEntry = {
-          timestamp: Date.now(),
-          normalizedName: current.normalizedName ?? null,
-        };
-
-        if (this.hasRecordedPayload(current)) {
-          next.payload = current.payload;
-        }
-
-        this.toolResponseLog.set(toolCallId, next);
-      });
-  }
 
   private normalizePathPrefix(prefix: string): string {
     if (!prefix) return '';
@@ -351,41 +270,6 @@ export class VapiClient {
     return `/${segments.join('/')}`;
   }
 
-  public static formatToolLogContext(context: VapiToolLogContext): string {
-    const sanitize = (value: string | number | null | undefined) => {
-      if (value === null || value === undefined) {
-        return '<unknown>';
-      }
-
-      const text = typeof value === 'string' ? value : String(value);
-      const trimmed = text.trim();
-      return trimmed.length > 0 ? trimmed : '<unknown>';
-    };
-
-    return `(${[
-      `callSid=${sanitize(context.callSid ?? null)}`,
-      `callId=${sanitize(context.callId ?? null)}`,
-      `toolCallId=${sanitize(context.toolCallId ?? null)}`,
-      `toolName=${sanitize(context.toolName ?? null)}`,
-    ].join(', ')})`;
-  }
-
-  private logToolFlow(
-    stage: string,
-    context: VapiToolLogContext,
-    details?: unknown,
-    level: 'log' | 'warn' | 'error' = 'log',
-  ) {
-    const prefix = `[VapiToolFlow] ${stage} ${VapiClient.formatToolLogContext(context)}`;
-    const logger = (console[level] ?? console.log) as typeof console.log;
-
-    if (details !== undefined) {
-      logger.call(console, prefix, details);
-    } else {
-      logger.call(console, prefix);
-    }
-  }
-
   public setCompanyInfo(
     callSid: string,
     company: CompanyModel,
@@ -397,7 +281,7 @@ export class VapiClient {
   ) {
     const config: VapiAssistantConfig = {
       company,
-      hasGoogleIntegration,
+      hasGoogleIntegration: true,
       replyStyle,
       companyContext: context,
       schedulingContext,
@@ -426,7 +310,9 @@ export class VapiClient {
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
     const effectiveConfig = config ?? this.currentConfig;
     if (!effectiveConfig) {
-      throw new Error('Company info must be set before generating a system prompt.');
+      throw new Error(
+        'Company info, reply style, context, and scheduling context must be set before generating a system prompt.',
+      );
     }
 
     const todayText = formatDutchDate(new Date());
@@ -437,18 +323,13 @@ export class VapiClient {
       `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
+      'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf.`,
-        `BELANGRIJK: Wanneer een beller vraagt naar beschikbare tijden of afspraken wil plannen:`,
-        `1. Gebruik ALTIJD EERST de tool 'check_google_calendar_availability' om beschikbare tijdslots op te halen`,
-        `2. Presenteer de beschikbare tijden aan de beller`,
-        `3. Vraag om naam, email en geboortedatum voordat je 'schedule_google_calendar_event' gebruikt`,
-        `4. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email ter bevestiging`,
-        ``,
-        `Gebruik NOOIT 'transfer_call' als de beller om beschikbare tijden vraagt - gebruik altijd eerst de agenda tool.`
+        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie.`,
+        `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
       );
     } else {
       instructions.push(
@@ -457,11 +338,7 @@ export class VapiClient {
     }
 
     instructions.push(
-      `Gebruik de tool 'transfer_call' ALLEEN wanneer:`,
-      `- De beller expliciet vraagt om doorverbonden te worden`,
-      `- Je een vraag niet kunt beantwoorden en de beller wil spreken met een medewerker`,
-      `- Er een probleem is dat menselijke tussenkomst vereist`,
-      `Gebruik altijd het algemene bedrijfsnummer voor doorverbinden.`
+      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer',
     );
 
     return instructions.join('\n\n');
@@ -606,6 +483,7 @@ export class VapiClient {
   /** ===== Tools (clean JSON Schema via `parameters`) ===== */
   public getTools(hasGoogleIntegration?: boolean) {
     const enabled = Boolean(hasGoogleIntegration);
+    console.log(`[VapiClient] 🔧 Building tools - Google integration enabled: ${enabled}`);
 
     const tools: any[] = [
       {
@@ -630,7 +508,7 @@ export class VapiClient {
           },
         },
         server: {
-          url: `${config.serverUrl}/vapi/tools`
+          url: `${this.toolBaseUrl}/vapi/tools`,
         },
       },
     ];
@@ -683,7 +561,7 @@ export class VapiClient {
           parameters: createCalendarParameters,
         },
         server: {
-          url: `${config.serverUrl}/vapi/tools`
+          url: `${this.toolBaseUrl}/vapi/tools`,
         },
       },
       {
@@ -695,7 +573,7 @@ export class VapiClient {
           parameters: checkAvailabilityParameters,
         },
         server: {
-          url: `${config.serverUrl}/vapi/tools`
+          url: `${this.toolBaseUrl}/vapi/tools`,
         },
       },
       {
@@ -707,7 +585,7 @@ export class VapiClient {
           parameters: cancelCalendarParameters,
         },
         server: {
-          url: `${config.serverUrl}/vapi/tools`
+          url: `${this.toolBaseUrl}/vapi/tools`,
         },
       },
     );
@@ -787,13 +665,6 @@ export class VapiClient {
     if (!config) {
       throw new Error('Company must be configured before opening a Vapi session');
     }
-
-    console.log(`[VapiClient] Opening session with config:`, {
-      companyId: config.company.id,
-      companyName: config.company.name,
-      hasGoogleIntegration: config.hasGoogleIntegration, // ⬅️ Check this!
-      availableTools: this.getTools(config.hasGoogleIntegration).map(t => t.function.name),
-    });
 
     const assistantId =
       config.company?.assistantId ??
@@ -1292,8 +1163,7 @@ export class VapiClient {
             console.warn(`[VapiClient] ⚠️ Tool call returned no result`, {
               toolCallId,
               entry,
-              recordedResponse: this.getRecordedPayload(recorded) ?? null,
-              hasPending: Boolean(recorded?.pending),
+              recordedResponse: recorded ?? null,
             });
           }
         }
@@ -1618,111 +1488,50 @@ export class VapiClient {
     callbacks: VapiRealtimeCallbacks,
     source: string,
   ) {
-    const sessionContext = this.sessionContexts.get(session);
-    const canonicalToolName = this.normalizeToolName(toolCall.name);
-    const toolFlowContext: VapiToolLogContext = {
-      callSid: sessionContext?.callSid ?? null,
-      callId: sessionContext?.callId ?? null,
-      toolCallId: toolCall.id,
-      toolName: canonicalToolName ?? toolCall.name,
-    };
-
-    this.logToolFlow(
-      `Realtime tool call detected from ${source}`,
-      toolFlowContext,
-      { args: toolCall.args },
-    );
-
-    const recorded = this.toolResponseLog.get(toolCall.id);
+    console.log(`[VapiClient] 🔧 Handling normalized tool call from ${source}`);
+    console.log(`[VapiClient] ✅ Normalized tool call:`, toolCall);
 
     callbacks.onToolStatus?.(`tool-call:${toolCall.name}`);
-    this.logToolFlow('Realtime status update (tool-call)', toolFlowContext, {
-      status: `tool-call:${toolCall.name}`,
-    });
 
-    if (this.hasRecordedPayload(recorded)) {
-      this.logToolFlow('Realtime cache hit', toolFlowContext, {
-        cachedAt: recorded.timestamp,
-        normalizedName: recorded.normalizedName ?? '<unknown>',
-      });
+    const recorded = this.toolResponseLog.get(toolCall.id);
+    if (recorded) {
+      console.log(
+        `[VapiClient] ♻️ Returning cached tool response for ${toolCall.id}`,
+      );
       callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
-      this.logToolFlow('Realtime status update (tool-call-result)', toolFlowContext, {
-        status: `tool-call-result:${toolCall.name}`,
-      });
       return;
     }
 
-    if (recorded?.pending) {
-      const pendingForMs = Date.now() - recorded.pending.startedAt;
-      this.logToolFlow('Realtime awaiting pending execution', toolFlowContext, {
-        startedAt: recorded.pending.startedAt,
-        pendingForMs,
-      });
+    let payload: unknown;
 
-      try {
-        await recorded.pending.promise;
-        const resolved = this.toolResponseLog.get(toolCall.id);
-        const payload = this.getRecordedPayload(resolved);
-        this.logToolFlow('Realtime pending execution resolved', toolFlowContext, payload);
-      } catch (error) {
-        this.logToolFlow(
-          'Realtime pending execution rejected',
-          toolFlowContext,
-          error instanceof Error ? { message: error.message, stack: error.stack } : { error },
-          'error',
-        );
-      }
-
-      return;
-    }
-
-    const executionPromise = (async () => {
-      try {
-        this.logToolFlow('Realtime execution (cache miss) starting', toolFlowContext);
-        let result = await this.executeToolCall(toolCall, session, callbacks);
-        if (!result) {
-          this.logToolFlow('Realtime execution returned empty payload', toolFlowContext, undefined, 'warn');
-          result = {
-            error: `Tool ${toolCall.name} returned no result`,
-          };
-        }
-        this.logToolFlow('Realtime execution completed', toolFlowContext, result);
-        return result;
-      } catch (error) {
-        this.logToolFlow(
-          'Realtime execution failed',
-          toolFlowContext,
-          error instanceof Error ? { message: error.message, stack: error.stack } : { error },
-          'error',
-        );
-        return {
-          error:
-            error instanceof Error
-              ? error.message || `Onbekende fout bij uitvoeren van ${toolCall.name}`
-              : `Onbekende fout bij uitvoeren van ${toolCall.name}`,
+    try {
+      payload = await this.executeToolCall(toolCall, session, callbacks);
+      if (!payload) {
+        console.error(`[VapiClient] ❌ executeToolCall returned null/undefined`);
+        payload = {
+          success: false,
+          error: `Tool ${toolCall.name} returned no result`,
         };
       }
-    })();
-
-    this.markToolResponsePending(toolCall.id, executionPromise, canonicalToolName, toolFlowContext);
-
-    const payload = await executionPromise;
+      console.log(`[VapiClient] 📦 Got payload from executeToolCall:`, payload);
+    } catch (error) {
+      console.error(`[VapiClient] ❌ Failed to execute tool call ${toolCall.name}`, error);
+      payload = {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message || `Onbekende fout bij uitvoeren van ${toolCall.name}`
+            : `Onbekende fout bij uitvoeren van ${toolCall.name}`,
+      };
+    }
 
     const alreadyRecorded = this.toolResponseLog.get(toolCall.id);
-    if (!this.hasRecordedPayload(alreadyRecorded)) {
-      this.recordToolResponse(toolCall.id, payload, canonicalToolName, toolFlowContext);
-    } else {
-      this.logToolFlow('Realtime payload already cached', toolFlowContext, {
-        cachedAt: alreadyRecorded.timestamp,
-        normalizedName: alreadyRecorded.normalizedName ?? '<unknown>',
-      });
+    if (!alreadyRecorded) {
+      this.recordToolResponse(toolCall.id, payload, this.normalizeToolName(toolCall.name));
     }
 
     // Vapi tools return via HTTP webhook; websocket does not carry tool results.
     callbacks.onToolStatus?.(`tool-call-result:${toolCall.name}`);
-    this.logToolFlow('Realtime status update (tool-call-result)', toolFlowContext, {
-      status: `tool-call-result:${toolCall.name}`,
-    });
   }
 
   private async executeToolCall(
@@ -1730,16 +1539,19 @@ export class VapiClient {
     session: VapiRealtimeSession,
     callbacks: VapiRealtimeCallbacks,
   ): Promise<unknown> {
-    const sessionContext = this.sessionContexts.get(session);
-    const normalizedToolName = this.normalizeToolName(call.name);
-    const toolFlowContext: VapiToolLogContext = {
-      callSid: sessionContext?.callSid ?? null,
-      callId: sessionContext?.callId ?? null,
-      toolCallId: call.id,
-      toolName: normalizedToolName ?? call.name,
-    };
+    console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
+    console.log(`[VapiClient] Tool ID: ${call.id}`);
+    console.log(`[VapiClient] Tool Name: ${call.name}`);
+    console.log(`[VapiClient] Tool Args:`, JSON.stringify(call.args, null, 2));
 
-    this.logToolFlow('Execution started', toolFlowContext, { args: call.args });
+    const cachedEntry = this.toolResponseLog.get(call.id);
+    if (cachedEntry) {
+      console.log(`[VapiClient] ♻️ Returning cached tool response for ${call.id}`);
+      return cachedEntry.payload;
+    }
+
+    const normalizedToolName = this.normalizeToolName(call.name);
+    console.log(`[VapiClient] Normalized name: ${normalizedToolName}`);
 
     const googleTools = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
       TOOL_NAMES.scheduleGoogleCalendarEvent,
@@ -1747,60 +1559,72 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
+    const sessionContext = this.sessionContexts.get(session);
     const config = this.getConfigForCall(sessionContext?.callSid);
 
     let finalPayload: unknown = null;
     let payloadWasSet = false;
 
     const commitPayload = (payload: unknown) => {
-      this.logToolFlow('Execution committing payload', toolFlowContext, payload);
-      this.recordToolResponse(call.id, payload, normalizedToolName, toolFlowContext);
+      let payloadPreview: string | undefined;
+      try {
+        payloadPreview = JSON.stringify(payload).slice(0, 200);
+      } catch (error) {
+        console.warn('[VapiClient] ⚠️ Failed to stringify payload for preview', error);
+      }
+
+      console.log(`[VapiClient] 💾 Recording tool response`, {
+        toolCallId: call.id,
+        payloadType: typeof payload,
+        payloadPreview,
+      });
+      this.recordToolResponse(call.id, payload, normalizedToolName);
       finalPayload = payload;
       payloadWasSet = true;
       return payload;
     };
 
     if (!config) {
-      this.logToolFlow('Execution failed (missing session config)', toolFlowContext, {
-        callSid: sessionContext?.callSid ?? null,
-      }, 'error');
+      console.error('[VapiClient] ❌ No config found for session');
       const payload = {
+        success: false,
         error: 'Session not configured',
       };
       return commitPayload(payload);
     }
 
-    this.logToolFlow('Execution using session config', toolFlowContext, {
-      companyId: config.company.id?.toString() ?? '<unknown>',
-      companyName: config.company.name,
-      hasGoogleIntegration: config.hasGoogleIntegration,
-    });
+    console.log(
+      `[VapiClient] Config found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
+    );
 
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
-      this.logToolFlow(
-        'Execution blocked (google integration disabled)',
-        toolFlowContext,
-        { normalizedToolName },
-        'warn',
-      );
+      console.warn(`[VapiClient] ⚠️ Google tool called but integration disabled`);
       const payload = {
+        success: false,
         error: 'Google integration not available',
       };
       return commitPayload(payload);
     }
 
     const sendSuccess = (data: unknown) => {
-      const resolved = data ?? null;
-      this.logToolFlow('Execution success payload prepared', toolFlowContext, resolved);
-      return resolved;
+      const payload = { success: true, data };
+      console.log(`[VapiClient] ✅ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
+      });
+      return payload;
     };
 
     const sendError = (message: string, details?: unknown) => {
-      const payload: Record<string, unknown> = { error: message };
-      if (details !== undefined) {
-        payload.details = details;
-      }
-      this.logToolFlow('Execution error payload prepared', toolFlowContext, payload, 'warn');
+      const payload = {
+        success: false,
+        error: message,
+        details,
+      };
+      console.error(`[VapiClient] ❌ Tool response payload`, {
+        toolCallId: call.id,
+        payload,
+      });
       return payload;
     };
 
@@ -1997,18 +1821,18 @@ export class VapiClient {
       return sendError(`Onbekende tool: ${call.name}`);
     }
 
-    this.logToolFlow('Handler dispatch', toolFlowContext);
+    console.log(`[VapiClient] 🎯 Handler found, executing...`);
 
     try {
       const handlerResult = await handler();
-      this.logToolFlow('Handler completed', toolFlowContext, handlerResult);
+      console.log(`[VapiClient] ✅ Handler completed with result:`, handlerResult);
 
       if (!payloadWasSet && handlerResult) {
-        this.logToolFlow('Handler returned payload', toolFlowContext, handlerResult);
+        console.log(`[VapiClient] Using handler return value as payload`);
         finalPayload = handlerResult;
-        this.recordToolResponse(call.id, handlerResult, normalizedToolName, toolFlowContext);
+        this.recordToolResponse(call.id, handlerResult, normalizedToolName);
       } else if (!payloadWasSet) {
-        this.logToolFlow('Handler returned no result', toolFlowContext);
+        console.log(`[VapiClient] Handler returned no result, setting finalPayload to null`);
         finalPayload = null;
       }
     } catch (error) {
@@ -2016,24 +1840,19 @@ export class VapiClient {
         error instanceof Error
           ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
           : `Onbekende fout bij uitvoeren van ${call.name}`;
-      this.logToolFlow(
-        'Handler threw error',
-        toolFlowContext,
-        error instanceof Error ? { message: error.message, stack: error.stack } : { error },
-        'error',
-      );
+      console.error(`[VapiClient] ❌ Handler threw error:`, error);
       return sendError(message, error);
     }
 
     if (!finalPayload) {
-      this.logToolFlow('Execution completed without payload', toolFlowContext, undefined, 'error');
+      console.error(`[VapiClient] ❌ CRITICAL: No payload was set after execution!`);
       const payload = {
+        success: false,
         error: `Tool ${call.name} executed without response`,
       };
       commitPayload(payload);
     }
 
-    this.logToolFlow('Execution finished', toolFlowContext, finalPayload);
     return finalPayload;
   }
 
@@ -2137,6 +1956,7 @@ export class VapiClient {
   public async handleToolWebhookRequest(
     body: unknown,
   ): Promise<{ results: Array<{ toolCallId: string; result?: any; error?: any }> }> {
+    console.log('[VapiClient] 🌐 Received tool webhook payload');
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
@@ -2156,149 +1976,85 @@ export class VapiClient {
       },
     );
 
-    const toolFlowContext: VapiToolLogContext = {
-      callId: callId ?? null,
-      toolCallId,
-      toolName: normalized?.name ?? null,
-    };
-
-    this.logToolFlow('Webhook context extracted', toolFlowContext, {
-      normalizedId: normalized?.id ?? null,
-      fallbackToolCallId,
-    });
-
-    const recorded = toolCallId ? this.toolResponseLog.get(toolCallId) : undefined;
-
-    if (this.hasRecordedPayload(recorded)) {
-      if (!toolFlowContext.toolName && recorded.normalizedName) {
-        toolFlowContext.toolName = recorded.normalizedName;
-      }
-      this.logToolFlow('Webhook returning cached payload (pre-execution)', toolFlowContext, {
-        cachedAt: recorded.timestamp,
-        normalizedName: recorded.normalizedName ?? '<unknown>',
-      });
-      const response = { results: [{ toolCallId, result: recorded.payload }] };
-      logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
-      return response;
-    }
-
-    if (recorded?.pending) {
-      const pendingForMs = Date.now() - recorded.pending.startedAt;
-      this.logToolFlow('Webhook awaiting pending realtime execution', toolFlowContext, {
-        startedAt: recorded.pending.startedAt,
-        pendingForMs,
-      });
-
-      try {
-        const pendingPayload = await recorded.pending.promise;
-        const resolved = this.toolResponseLog.get(toolCallId);
-        const payload = this.getRecordedPayload(resolved) ?? pendingPayload;
-        this.logToolFlow('Webhook pending execution resolved', toolFlowContext, payload);
-        const response = { results: [{ toolCallId, result: payload }] };
-        logPayload('[VapiClient] ⇨ Tool webhook response (pending resolved)', response);
-        return response;
-      } catch (error) {
-        this.logToolFlow(
-          'Webhook pending execution rejected',
-          toolFlowContext,
-          error instanceof Error ? { message: error.message, stack: error.stack } : { error },
-          'error',
-        );
-        const payload = {
-          error:
-            error instanceof Error
-              ? error.message || 'Tool uitvoering mislukt tijdens lopende sessie.'
-              : 'Tool uitvoering mislukt tijdens lopende sessie.',
-        };
-        this.recordToolResponse(toolCallId, payload, recorded?.normalizedName ?? null, toolFlowContext);
-        const response = { results: [{ toolCallId, result: payload }] };
-        logPayload('[VapiClient] ⇨ Tool webhook response (pending rejected)', response);
-        return response;
-      }
-    }
-
     if (!normalized) {
-      this.logToolFlow(
-        'Webhook normalization failed',
-        toolFlowContext,
-        rawToolCall,
-        'warn',
-      );
-      const payload = { error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
-      this.recordToolResponse(toolCallId, payload, null, toolFlowContext);
-      const response = { results: [{ toolCallId, result: payload }] };
-      logPayload('[VapiClient] ⇨ Tool webhook response (normalization error)', response);
-      return response;
+      console.warn('[VapiClient] ⚠️ Unable to normalize tool call payload');
+
+      // ⬇️ IMPORTANT: pull the real id from message.* and echo it back
+      const realId =
+        this.extractToolCallId(raw)  // now checks message.toolCalls / toolCallList / toolWithToolCallList
+        ?? toolCallId                // keep your earlier computed value as fallback
+        ?? `tool_${Date.now()}`;
+
+      const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
+
+      this.recordToolResponse(realId, payload, null);
+
+      return { results: [{ toolCallId: realId, result: payload }] };
     }
 
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
-    this.logToolFlow('Webhook session lookup', toolFlowContext, {
-      sessionFound: Boolean(sessionInfo),
-      activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
-    });
+    console.log(
+      '[VapiClient] 🔍 Session lookup result',
+      {
+        callId: callId ?? '<none>',
+        sessionFound: Boolean(sessionInfo),
+        activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
+        totalActiveSessions: this.activeSessionsByCallId.size,
+      },
+    );
     if (!sessionInfo) {
-      const recorded = this.toolResponseLog.get(toolCallId);
-      if (this.hasRecordedPayload(recorded)) {
-        this.logToolFlow('Webhook returning cached payload (no active session)', toolFlowContext, {
-          cachedAt: recorded.timestamp,
-          normalizedName: recorded.normalizedName ?? '<unknown>',
-        });
-        const response = { results: [{ toolCallId, result: recorded.payload }] };
-        logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+      // Try to find session by any available callId in the active sessions
+      let fallbackSessionInfo: { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string } | undefined;
+      
+      if (this.activeSessionsByCallId.size > 0) {
+        // If we have active sessions but no matching callId, use the first available session
+        const firstCallId = Array.from(this.activeSessionsByCallId.keys())[0];
+        fallbackSessionInfo = this.activeSessionsByCallId.get(firstCallId);
+        console.log(`[VapiClient] 🔄 Using fallback session for callId: ${firstCallId}`);
+      }
+      
+      const sessionToUse = sessionInfo || fallbackSessionInfo;
+      
+      if (!sessionToUse) {
+        const recorded = this.toolResponseLog.get(toolCallId);
+        if (recorded?.payload) {
+          console.log(
+            `[VapiClient] ♻️ Returning cached tool response for ${toolCallId} (no active session)`,
+          );
+          const response = { results: [{ toolCallId, result: recorded.payload }] };
+          logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+          return response;
+        }
+        const payload = {
+          success: false,
+          error: callId
+            ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
+            : 'callId ontbreekt in tool webhook payload.',
+        };
+        this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
+        const response = { results: [{ toolCallId, result: payload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
         return response;
       }
-      const payload = {
-        error: 'Geen actieve Vapi-sessie beschikbaar voor deze tool-aanroep.',
-      };
-      this.logToolFlow('Webhook no session available', toolFlowContext, payload, 'warn');
-      this.recordToolResponse(
-        toolCallId,
-        payload,
-        this.normalizeToolName(normalized.name),
-        toolFlowContext,
-      );
-      const response = { results: [{ toolCallId, result: payload }] };
-      logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
+      
+      // Use the fallback session
+      const payload =
+        await this.executeToolCall(normalized, sessionToUse.session, sessionToUse.callbacks)
+        ?? { success: false, error: 'Tool execution returned empty result.' };
+
+      logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
+      const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+      logPayload('[VapiClient] ⇨ Tool webhook response (fallback session)', response);
       return response;
     }
 
-    toolFlowContext.callSid = sessionInfo.callSid;
-    toolFlowContext.toolName =
-      this.normalizeToolName(normalized.name) ?? toolFlowContext.toolName ?? normalized.name;
-    this.logToolFlow('Webhook executing tool via active session', toolFlowContext);
-
-    const executionPromise = (async () => {
-      const result =
-        (await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks))
-        ?? { error: 'Tool execution returned empty result.' };
-      return result;
-    })();
-
-    const normalizedName = this.normalizeToolName(normalized.name);
-    this.markToolResponsePending(normalized.id, executionPromise, normalizedName, toolFlowContext);
-
-    const payload = await executionPromise;
-
-    const existing = this.toolResponseLog.get(normalized.id);
-    if (!this.hasRecordedPayload(existing)) {
-      this.recordToolResponse(
-        normalized.id,
-        payload,
-        normalizedName,
-        toolFlowContext,
-      );
-    } else {
-      this.logToolFlow('Webhook payload already cached', toolFlowContext, {
-        cachedAt: existing.timestamp,
-        normalizedName: existing.normalizedName ?? '<unknown>',
-      });
-    }
+    const payload =
+      await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks)
+      ?? { success: false, error: 'Tool execution returned empty result.' };
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
-    this.logToolFlow('Webhook execution completed', toolFlowContext, payload);
     logPayload('[VapiClient] 📦 Tool execution payload', payload);
     const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-    this.logToolFlow('Webhook returning response', toolFlowContext, response);
     logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
     return response;
   }
@@ -2307,30 +2063,24 @@ export class VapiClient {
     toolCallId: string,
     payload: unknown,
     normalizedName?: string | null,
-    context?: VapiToolLogContext,
   ) {
-    this.ensureToolResponseCapacity(context);
+    if (this.toolResponseLog.size > 100) {
+      const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
+      if (oldestKey) {
+        console.log(`[VapiClient] 🧹 Evicting cached tool response ${oldestKey}`);
+        this.toolResponseLog.delete(oldestKey);
+      }
+    }
 
-    const existing = this.toolResponseLog.get(toolCallId);
-    const resolvedName =
-      normalizedName ?? existing?.normalizedName ?? context?.toolName ?? null;
-    const toolContext: VapiToolLogContext = {
-      ...(context ?? {}),
+    console.log('[VapiClient] 🗂️ Recording tool response', {
       toolCallId,
-      toolName: resolvedName ?? context?.toolName ?? null,
-    };
-
-    this.logToolFlow('Cache update (record tool response)', toolContext, payload);
+      normalizedName: normalizedName ?? '<unknown>',
+    });
     logPayload('[VapiClient] 🗂️ Tool response payload (cached)', payload);
-    const finalPayload =
-      typeof payload === 'object' && payload !== null && (payload as any).success === true && (payload as any).data !== undefined
-        ? (payload as any).data
-        : payload;
-
     this.toolResponseLog.set(toolCallId, {
       timestamp: Date.now(),
-      payload: finalPayload,
-      normalizedName: resolvedName,
+      payload,
+      normalizedName,
     });
   }
 
@@ -2347,8 +2097,21 @@ export class VapiClient {
   }
 
   private extractToolCallPayload(body: any): any {
-    if (!body || typeof body !== 'object') {
-      return body;
+    if (body?.message) {
+      const m = body.message;
+
+      if (Array.isArray(m.toolCalls) && m.toolCalls.length > 0) {
+        return m.toolCalls[0]; // { id, type, function: { name, arguments } }
+      }
+
+      if (Array.isArray(m.toolCallList) && m.toolCallList.length > 0) {
+        return m.toolCallList[0]; // same shape
+      }
+
+      if (Array.isArray(m.toolWithToolCallList) && m.toolWithToolCallList.length > 0) {
+        const twtcl = m.toolWithToolCallList[0];
+        if (twtcl?.toolCall) return twtcl.toolCall; // { id, type, function: {...} }
+      }
     }
 
     const arrayCandidates = [
@@ -2393,9 +2156,22 @@ export class VapiClient {
   }
 
   private extractToolCallId(body: any): string | null {
-    if (!body || typeof body !== 'object') {
-      return null;
+    // in VapiClient.extractToolCallId(body: any)
+    if (body?.message) {
+      const m = body.message;
+
+      if (Array.isArray(m.toolCalls) && m.toolCalls[0]?.id) {
+        return String(m.toolCalls[0].id).trim();
+      }
+      if (Array.isArray(m.toolCallList) && m.toolCallList[0]?.id) {
+        return String(m.toolCallList[0].id).trim();
+      }
+      if (Array.isArray(m.toolWithToolCallList) &&
+        m.toolWithToolCallList[0]?.toolCall?.id) {
+        return String(m.toolWithToolCallList[0].toolCall.id).trim();
+      }
     }
+
 
     const candidates: unknown[] = [
       body.toolCallId,
@@ -2620,7 +2396,9 @@ export class VapiClient {
     const instructions = this.buildSystemPrompt(config);
     const companyContext = this.buildCompanySnapshot(config);
 
+    console.log(`[VapiClient] 🏗️ Building assistant payload for company: ${config.company.name}, Google integration: ${config.hasGoogleIntegration}`);
     const tools = this.getTools(config.hasGoogleIntegration);
+    console.log(`[VapiClient] 🛠️ Generated ${tools.length} tools:`, tools.map(t => t.function?.name || 'unknown'));
 
     const modelMessages = this.buildModelMessages(instructions, companyContext, config);
 

@@ -233,17 +233,7 @@ export class VoiceService {
                         console.log(`[${callSid}] [Vapi] session closed`);
                         this.logSessionSnapshot("vapi session closed");
                     },
-                    onTransferCall: async ({ phoneNumber, callSid: requestedCallSid, callerId, reason }) => {
-                        await this.transferCall(phoneNumber ?? "", {
-                            callSid: requestedCallSid ?? undefined,
-                            callerId: callerId ?? undefined,
-                            reason: reason ?? undefined,
-                        });
-                        return {
-                            transferredTo: phoneNumber ?? this.companyTransferNumber ?? null,
-                            callSid: this.callSid,
-                        };
-                    },
+
                 },
                 { callerNumber: this.callerNumber }
             );
@@ -460,61 +450,6 @@ export class VoiceService {
         }
 
         return result;
-    }
-
-    public async transferCall(
-        target: string,
-        options?: { callSid?: string; callerId?: string; reason?: string }
-    ): Promise<void> {
-        const activeCallSid = this.callSid;
-        if (!activeCallSid) {
-            throw new Error("Er is geen actief telefoongesprek om door te verbinden.");
-        }
-
-        if (options?.callSid && options.callSid !== activeCallSid) {
-            throw new Error("Het opgegeven callSid komt niet overeen met de actieve oproep.");
-        }
-
-        let sanitizedTarget = this.sanitizeTransferTarget(target);
-        if (!sanitizedTarget) {
-            if (this.companyTransferNumber) {
-                console.log(
-                    `[${activeCallSid}] No valid transfer target supplied; defaulting to company contact number ${this.companyTransferNumber}.`
-                );
-            }
-            sanitizedTarget = this.companyTransferNumber ?? "";
-        }
-        if (!sanitizedTarget) {
-            throw new Error("Het opgegeven telefoonnummer voor doorverbinden is ongeldig.");
-        }
-
-        const sanitizedTwilioNumber = this.companyTwilioNumber
-            ? this.sanitizeTransferTarget(this.companyTwilioNumber)
-            : null;
-
-        if (
-            sanitizedTwilioNumber &&
-            sanitizedTarget === sanitizedTwilioNumber &&
-            this.companyTransferNumber
-        ) {
-            console.log(
-                `[${activeCallSid}] Transfer target matched company Twilio number; using company contact number instead.`
-            );
-            sanitizedTarget = this.companyTransferNumber;
-        }
-
-        const callerId = options?.callerId?.trim() || this.companyTwilioNumber || undefined;
-
-        console.log(
-            `[${activeCallSid}] Initiating transfer to ${sanitizedTarget}${
-                options?.reason ? ` (reason: ${options.reason})` : ""
-            }`
-        );
-
-        await this.twilioClient.transferCall(activeCallSid, sanitizedTarget, callerId);
-
-        // Clean up local session state; Twilio will end the media stream after the transfer.
-        this.stopStreaming();
     }
 
     private sanitizeTransferTarget(target: string): string {
