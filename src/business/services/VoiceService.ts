@@ -228,6 +228,25 @@ export class VoiceService {
                             this.assistantSpeaking = false;
                         }
                     },
+                    onTransferCall: async ({ phoneNumber, callSid: requestedCallSid, callerId, reason }) => {
+                        const effectiveCallSid = requestedCallSid ?? this.callSid;
+                        console.log(
+                            `[${callSid}] [VoiceService] transfer_call tool triggered`,
+                            {
+                                phoneNumber,
+                                requestedCallSid,
+                                callerId,
+                                reason,
+                                effectiveCallSid,
+                            }
+                        );
+
+                        return this.transferCall(phoneNumber ?? undefined, {
+                            callSid: effectiveCallSid,
+                            callerId,
+                            reason,
+                        });
+                    },
                     onSessionError: (err) => console.error(`[${callSid}] [Vapi] session error`, err),
                     onSessionClosed: () => {
                         console.log(`[${callSid}] [Vapi] session closed`);
@@ -415,6 +434,50 @@ export class VoiceService {
         this.companyTwilioNumber = null;
         this.companyTransferNumber = null;
         this.resetSpeechTracking();
+    }
+
+    public async transferCall(
+        phoneNumber?: string | null,
+        options?: { callSid?: string | null; callerId?: string | null; reason?: string | null }
+    ): Promise<{ transferredTo: string; callSid: string }> {
+        const activeCallSid = options?.callSid ?? this.callSid;
+        if (!activeCallSid) {
+            throw new Error("Er is geen actieve callSid beschikbaar om door te verbinden.");
+        }
+
+        const candidateTarget = phoneNumber ?? this.companyTransferNumber;
+        const sanitizedTarget = this.sanitizeTransferTarget(candidateTarget ?? "");
+        if (!sanitizedTarget) {
+            throw new Error("Er is geen geldig doelnummer voor doorverbinden beschikbaar.");
+        }
+
+        const callerIdCandidate = options?.callerId ?? this.companyTwilioNumber ?? null;
+        const sanitizedCallerId = callerIdCandidate
+            ? this.sanitizeTransferTarget(callerIdCandidate)
+            : null;
+
+        const reasonLog = options?.reason ? ` (reden: ${options.reason})` : "";
+        console.log(
+            `[${activeCallSid}] Doorverbinden naar ${sanitizedTarget}${
+                sanitizedCallerId ? ` met callerId ${sanitizedCallerId}` : ""
+            }${reasonLog}`
+        );
+
+        try {
+            await this.twilioClient.transferCall(activeCallSid, sanitizedTarget, {
+                callerId: sanitizedCallerId,
+                reason: options?.reason ?? null,
+            });
+        } catch (error) {
+            console.error(`[${activeCallSid}] ❌ Doorverbinden mislukt`, error);
+            throw (
+                error instanceof Error
+                    ? error
+                    : new Error("Doorverbinden mislukt door een onbekende fout.")
+            );
+        }
+
+        return { transferredTo: sanitizedTarget, callSid: activeCallSid };
     }
 
     public getVapiCallId(): string | null {

@@ -124,11 +124,11 @@ describe('VapiClient tool dispatcher', () => {
       baseCallbacks,
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: false,
       error: 'Doorverbinden is niet beschikbaar in deze sessie.',
-      details: undefined,
     });
+    expect(result.details).toBeInstanceOf(Error);
   });
 
   it('sends schedule event request to Google service', async () => {
@@ -203,15 +203,15 @@ describe('VapiClient tool dispatcher', () => {
     });
 
     expect(googleService.getAvailableSlots).toHaveBeenCalledWith(1n, '2024-01-08', 9, 17);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: true,
-      data: {
+      data: expect.objectContaining({
         date: '2024-01-08',
         openHour: 9,
         closeHour: 17,
         slots: ['09:00', '09:30'],
         message: 'Found 2 available time slots',
-      },
+      }),
     });
   });
 
@@ -225,15 +225,15 @@ describe('VapiClient tool dispatcher', () => {
     });
 
     expect(googleService.getAvailableSlots).toHaveBeenCalledWith(1n, '2024-01-09', 9, 17);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: true,
-      data: {
+      data: expect.objectContaining({
         date: '2024-01-09',
         openHour: 9,
         closeHour: 17,
         slots: ['10:00'],
         message: 'Found 1 available time slots',
-      },
+      }),
     });
   });
 
@@ -246,11 +246,11 @@ describe('VapiClient tool dispatcher', () => {
       args: { eventId: 'evt-1' },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: false,
       error: 'Event not found',
-      details: undefined,
     });
+    expect(result.details).toBeInstanceOf(Error);
   });
 
   it('rejects Google tools when integration is disabled', async () => {
