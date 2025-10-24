@@ -51,6 +51,20 @@ describe("VoiceService.transferCall", () => {
         expect(result).toEqual({ transferredTo: "+31123456789", callSid: "CA123" });
     });
 
+    it("prefers the parent call SID when available", async () => {
+        (service as any).callSid = "CA_STREAM_CHILD";
+        (service as any).parentCallSid = "CA_PARENT";
+
+        const result = await service.transferCall(undefined, {});
+
+        expect(twilioClient.transferCall).toHaveBeenCalledWith("CA_PARENT", "+31123456789", {
+            callerId: "+31098765432",
+            reason: null,
+        });
+        expect(twilioClient.transferCall).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ transferredTo: "+31123456789", callSid: "CA_PARENT" });
+    });
+
     it("throws when no valid target number is available", async () => {
         (service as any).companyTransferNumber = null;
 
