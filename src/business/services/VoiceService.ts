@@ -24,6 +24,7 @@ export class VoiceService {
     private ws: WebSocket | null = null;
     private callSid: string | null = null;
     private streamSid: string | null = null;
+    private parentCallSid: string | null = null;
     private voiceSettings: VoiceSettingModel | null = null;
     private vapiSession: VapiRealtimeSession | null = null;
     private vapiCallId: string | null = null;
@@ -165,6 +166,7 @@ export class VoiceService {
         this.callerNumber = this.extractSanitizedPhoneNumber(from) ?? this.extractFromNumber(initialEvent);
         this.usageRecorded = false;
         this.vapiCallId = null;
+        this.parentCallSid = this.extractParentCallSid(initialEvent);
 
         console.log(`[${callSid}] Starting Vapi-powered voice session for ${to}`);
 
@@ -425,6 +427,7 @@ export class VoiceService {
         this.ws = null;
         this.callSid = null;
         this.streamSid = null;
+        this.parentCallSid = null;
         this.voiceSettings = null;
         this.callStartedAt = null;
         this.activeCompanyId = null;
@@ -440,8 +443,10 @@ export class VoiceService {
         phoneNumber?: string | null,
         options?: { callSid?: string | null; callerId?: string | null; reason?: string | null }
     ): Promise<{ transferredTo: string; callSid: string }> {
-        const activeCallSid = options?.callSid ?? this.callSid;
-        if (!activeCallSid) {
+        const candidateStreamCallSid = options?.callSid ?? this.callSid;
+        const selectedCallSid = this.parentCallSid ?? candidateStreamCallSid;
+
+        if (!selectedCallSid) {
             throw new Error("Er is geen actieve callSid beschikbaar om door te verbinden.");
         }
 
@@ -458,18 +463,18 @@ export class VoiceService {
 
         const reasonLog = options?.reason ? ` (reden: ${options.reason})` : "";
         console.log(
-            `[${activeCallSid}] Doorverbinden naar ${sanitizedTarget}${
+            `[${selectedCallSid}] Doorverbinden naar ${sanitizedTarget}${
                 sanitizedCallerId ? ` met callerId ${sanitizedCallerId}` : ""
             }${reasonLog}`
         );
 
         try {
-            await this.twilioClient.transferCall(activeCallSid, sanitizedTarget, {
+            await this.twilioClient.transferCall(selectedCallSid, sanitizedTarget, {
                 callerId: sanitizedCallerId,
                 reason: options?.reason ?? null,
             });
         } catch (error) {
-            console.error(`[${activeCallSid}] ❌ Doorverbinden mislukt`, error);
+            console.error(`[${selectedCallSid}] ❌ Doorverbinden mislukt`, error);
             throw (
                 error instanceof Error
                     ? error
@@ -477,7 +482,7 @@ export class VoiceService {
             );
         }
 
-        return { transferredTo: sanitizedTarget, callSid: activeCallSid };
+        return { transferredTo: sanitizedTarget, callSid: selectedCallSid };
     }
 
     public getVapiCallId(): string | null {
@@ -653,6 +658,35 @@ export class VoiceService {
         );
     }
 
+    private extractParentCallSid(event?: TwilioMediaStreamEvent): string | null {
+        if (!event?.start) {
+            return null;
+        }
+
+        const start = event.start as Record<string, unknown> & {
+            customParameters?: Record<string, unknown>;
+        };
+
+        const candidates: Array<unknown> = [
+            start["parentCallSid"],
+            start["parent_call_sid"],
+            start.customParameters?.["parentCallSid"],
+            start.customParameters?.["parent_call_sid"],
+            start.customParameters?.["ParentCallSid"],
+        ];
+
+        for (const candidate of candidates) {
+            if (typeof candidate === "string") {
+                const trimmed = candidate.trim();
+                if (trimmed) {
+                    return trimmed;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private extractFromNumber(event?: TwilioMediaStreamEvent): string | null {
         if (!event?.start) {
             return null;
@@ -761,6 +795,10 @@ export class VoiceService {
                 }
                 if (event.start?.streamSid) {
                     this.streamSid = event.start.streamSid;
+                }
+                const parentCallSid = this.extractParentCallSid(event);
+                if (parentCallSid) {
+                    this.parentCallSid = parentCallSid;
                 }
                 if (!this.callerNumber) {
                     this.callerNumber = this.extractFromNumber(event);
@@ -872,6 +910,8 @@ type TwilioMediaStreamEvent = {
         streamSid?: string;
         from?: string;
         to?: string;
+        parentCallSid?: string;
+        parent_call_sid?: string;
         customParameters?: Record<string, unknown>;
     };
     media?: {
