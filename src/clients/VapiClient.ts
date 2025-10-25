@@ -322,23 +322,25 @@ export class VapiClient {
       'Praat natuurlijk en menselijk en help de beller snel verder.',
       `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
+      'Vraag wanneer mensen naar beschikbaarheid vragen altijd eerst naar hun voorkeur voor een dag.',
+      'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om naam en email voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en herhaal de email voor confirmatie.`,
+        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en bevestig de naam.`,
         `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
       );
     } else {
       instructions.push(
-        'Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden.',
+        'Je hebt geen toegang tot een agenda. Wanneer iemand een afspraak wil plannen, bied dan aan om een bericht door te geven of om de beller met een medewerker te verbinden. Vraag in dat geval alleen naar de naam van de beller.',
       );
     }
 
     instructions.push(
-      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het algemene bedrijfsnummer',
+      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer.',
     );
 
     return instructions.join('\n\n');
