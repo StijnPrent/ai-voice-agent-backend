@@ -2330,6 +2330,7 @@ export class VapiClient {
     }
 
     const payload = this.buildAssistantPayload(effectiveConfig);
+    console.log(payload)
     this.assistantCache.delete(effectiveConfig.company.id.toString());
     await this.updateAssistant(assistantId, payload);
   }
@@ -2416,7 +2417,16 @@ export class VapiClient {
     if (firstMessage) payload.firstMessage = firstMessage;
 
     const voiceId = config.voiceSettings?.voiceId?.trim();
-    if (voiceId) payload.voice = { provider: '11labs', voiceId };
+    if (voiceId) payload.voice = {
+      provider: '11labs',
+      model: 'eleven_turbo_v2_5',
+      voiceId,
+      stability: 0.4,
+      similarityBoost: 0.75,
+      style: 0,
+      useSpeakerBoost: false,
+      language: 'nl',
+    };
 
     return payload;
   }
