@@ -28,13 +28,13 @@ export class TwilioClient {
             dialOptions.callerId = options.callerId;
         }
 
-        dialOptions.answerOnBridge = "true";
+        dialOptions.answerOnBridge = true;
 
         const serverUrl = process.env.SERVER_URL;
         if (serverUrl) {
             const actionUrl = `${serverUrl}/voice/twilio/dial-action`;
             const statusUrl = `${serverUrl}/voice/twilio/dial-status`;
-            const statusEvents = "initiated ringing answered completed";
+            const statusEvents = ["initiated", "ringing", "answered", "completed"];
 
             dialOptions.action = actionUrl;
             dialOptions.method = "POST";
@@ -52,7 +52,7 @@ export class TwilioClient {
         }
 
         const dial = response.dial(dialOptions);
-        dial.number(target, numberOptions);
+        dial.number(numberOptions, target);
 
         return this.client.calls(callSid).update({
             twiml: response.toString(),
