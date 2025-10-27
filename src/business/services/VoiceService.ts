@@ -457,9 +457,27 @@ export class VoiceService {
         }
 
         const callerIdCandidate = options?.callerId ?? this.companyTwilioNumber ?? null;
-        const sanitizedCallerId = callerIdCandidate
+        let sanitizedCallerId = callerIdCandidate
             ? this.sanitizeTransferTarget(callerIdCandidate)
             : null;
+
+        if (!sanitizedCallerId) {
+            const fallbackCallerId = process.env.TWILIO_FROM?.trim();
+            if (fallbackCallerId) {
+                sanitizedCallerId = this.sanitizeTransferTarget(fallbackCallerId);
+                if (sanitizedCallerId) {
+                    console.log(
+                        `[${selectedCallSid}] Using fallback callerId from TWILIO_FROM environment variable (${sanitizedCallerId})`
+                    );
+                }
+            }
+        }
+
+        if (!sanitizedCallerId) {
+            console.warn(
+                `[${selectedCallSid}] ⚠️ No callerId configured for transfer; Twilio may reject the dial. Configure a valid Twilio number.`
+            );
+        }
 
         const reasonLog = options?.reason ? ` (reden: ${options.reason})` : "";
         console.log(
@@ -877,6 +895,34 @@ export class VoiceService {
         }
 
         this.stopStreaming(`twilio status callback (${normalizedStatus || "unknown"})`);
+    }
+
+    public handleDialCallback(kind: "action" | "status", payload: Record<string, unknown>) {
+        const callSid = typeof payload?.["CallSid"] === "string" ? payload["CallSid"] : this.callSid;
+        const dialCallSid = typeof payload?.["DialCallSid"] === "string" ? payload["DialCallSid"] : null;
+        const dialCallStatus =
+            typeof payload?.["DialCallStatus"] === "string" ? payload["DialCallStatus"] : null;
+        const callStatus = typeof payload?.["CallStatus"] === "string" ? payload["CallStatus"] : null;
+
+        const contextParts = [
+            `[${callSid ?? "unknown"}]`,
+            `[Dial ${kind}]`,
+            dialCallSid ? `DialCallSid=${dialCallSid}` : "DialCallSid=<missing>",
+            dialCallStatus ? `DialCallStatus=${dialCallStatus}` : "DialCallStatus=<missing>",
+            callStatus ? `CallStatus=${callStatus}` : "CallStatus=<missing>",
+        ];
+
+        console.log(contextParts.join(" "));
+
+        try {
+            const preview = this.safeSerialize(payload, 1500);
+            console.log(`${contextParts[0]} [Dial ${kind}] payload=${preview}`);
+        } catch (error) {
+            console.warn(
+                `${contextParts[0]} [Dial ${kind}] ⚠️ Failed to serialize payload`,
+                error instanceof Error ? error.message : error
+            );
+        }
     }
 
     private terminateTwilioSocket(reason: string) {

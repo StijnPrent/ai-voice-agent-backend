@@ -1,7 +1,21 @@
 // src/routes/VoiceRoute.ts
-import { Router } from "express";
+import { Router, Response } from "express";
 import { VoiceController } from "../controllers/VoiceController";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
+import twilio from "twilio";
+
+function respondWithTwiml(
+  res: Response,
+  configure?: (response: twilio.twiml.VoiceResponse) => void
+) {
+  const response = new twilio.twiml.VoiceResponse();
+  if (configure) {
+    configure(response);
+  }
+
+  res.type("text/xml");
+  res.send(response.toString());
+}
 
 export function voiceRoutes(sessionManager: VoiceSessionManager) {
   const router = Router();
@@ -31,6 +45,42 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
       }
     } catch (error) {
       console.error("[/voice/twilio/status] Failed to process status callback", error);
+    }
+
+    res.status(200).send("OK");
+  });
+
+  router.post("/twilio/dial-action", async (req, res) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
+    const voiceService = sessionManager.getSession(callSid ?? undefined);
+
+    if (!voiceService) {
+      console.warn(
+        `[/voice/twilio/dial-action] No active session for callSid=${callSid ?? "unknown"}; active callSids=${sessionManager
+          .listActiveCallSids()
+          .join(",")}`
+      );
+    } else {
+      voiceService.handleDialCallback("action", req.body ?? {});
+    }
+
+    respondWithTwiml(res, (response) => {
+      response.hangup();
+    });
+  });
+
+  router.post("/twilio/dial-status", async (req, res) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
+    const voiceService = sessionManager.getSession(callSid ?? undefined);
+
+    if (!voiceService) {
+      console.warn(
+        `[/voice/twilio/dial-status] No active session for callSid=${callSid ?? "unknown"}; active callSids=${sessionManager
+          .listActiveCallSids()
+          .join(",")}`
+      );
+    } else {
+      voiceService.handleDialCallback("status", req.body ?? {});
     }
 
     res.status(200).send("OK");
