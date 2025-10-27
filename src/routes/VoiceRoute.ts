@@ -36,6 +36,40 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
     res.status(200).send("OK");
   });
 
+  router.post("/twilio/dial-action", async (req, res) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
+    const voiceService = sessionManager.getSession(callSid ?? undefined);
+
+    if (!voiceService) {
+      console.warn(
+        `[/voice/twilio/dial-action] No active session for callSid=${callSid ?? "unknown"}; active callSids=${sessionManager
+          .listActiveCallSids()
+          .join(",")}`
+      );
+    } else {
+      voiceService.handleDialCallback("action", req.body ?? {});
+    }
+
+    res.status(200).send("OK");
+  });
+
+  router.post("/twilio/dial-status", async (req, res) => {
+    const callSid = typeof req.body?.CallSid === "string" ? req.body.CallSid : undefined;
+    const voiceService = sessionManager.getSession(callSid ?? undefined);
+
+    if (!voiceService) {
+      console.warn(
+        `[/voice/twilio/dial-status] No active session for callSid=${callSid ?? "unknown"}; active callSids=${sessionManager
+          .listActiveCallSids()
+          .join(",")}`
+      );
+    } else {
+      voiceService.handleDialCallback("status", req.body ?? {});
+    }
+
+    res.status(200).send("OK");
+  });
+
   router.post("/transfer", async (req, res) => {
     try {
       const { phoneNumber, callSid, callerId, reason } = req.body || {};
