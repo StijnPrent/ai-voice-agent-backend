@@ -253,7 +253,6 @@ export class VapiClient {
     return parts.length ? `(${parts.join(', ')})` : '';
   }
 
-
   private normalizePathPrefix(prefix: string): string {
     if (!prefix) return '';
     const trimmed = prefix.trim();
@@ -528,8 +527,6 @@ export class VapiClient {
         start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
         end: { type: 'string', description: 'Einde in ISO 8601' },
         name: { type: 'string', description: 'Volledige naam van de klant' },
-        attendeeEmail: { type: 'string', description: 'E-mailadres van de klant' },
-        dateOfBirth: { type: 'string', description: 'Geboortedatum DD-MM-YYYY' },
       },
       required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
     };
@@ -1730,7 +1727,6 @@ export class VapiClient {
         const name = this.normalizeStringArg(args['name']);
         const description = this.normalizeStringArg(args['description']);
         const location = this.normalizeStringArg(args['location']);
-        const attendeeEmail = this.normalizeStringArg(args['attendeeEmail']);
         const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
         const callerNumber = sessionContext?.callerNumber ?? null;
 
@@ -1761,10 +1757,6 @@ export class VapiClient {
           start: { dateTime: start },
           end: { dateTime: end },
         };
-
-        if (attendeeEmail) {
-          event.attendees = [{ email: attendeeEmail, displayName: name }];
-        }
 
         const privateProperties: Record<string, string> = {
           customerName: name,
