@@ -1,7 +1,21 @@
 // src/routes/VoiceRoute.ts
-import { Router } from "express";
+import { Router, Response } from "express";
 import { VoiceController } from "../controllers/VoiceController";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
+import twilio from "twilio";
+
+function respondWithTwiml(
+  res: Response,
+  configure?: (response: twilio.twiml.VoiceResponse) => void
+) {
+  const response = new twilio.twiml.VoiceResponse();
+  if (configure) {
+    configure(response);
+  }
+
+  res.type("text/xml");
+  res.send(response.toString());
+}
 
 export function voiceRoutes(sessionManager: VoiceSessionManager) {
   const router = Router();
@@ -50,7 +64,9 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
       voiceService.handleDialCallback("action", req.body ?? {});
     }
 
-    res.status(200).send("OK");
+    respondWithTwiml(res, (response) => {
+      response.hangup();
+    });
   });
 
   router.post("/twilio/dial-status", async (req, res) => {
