@@ -390,7 +390,7 @@ export class VapiClient {
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
-      `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
+      'Vandaag is {{ "now" | date: "%A %d %B %Y", "Europe/Amsterdam" }}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.',
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Vraag wanneer mensen naar beschikbaarheid vragen altijd eerst naar hun voorkeur voor een dag.',
       'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
