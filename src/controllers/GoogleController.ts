@@ -124,20 +124,20 @@ export class GoogleController {
 
     async cancelEvent(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const { companyId, eventId, name, dateOfBirth } = req.body as {
+        const { companyId, start, name, phoneNumber } = req.body as {
             companyId: string | number | bigint;
-            eventId: string;
+            start: string;
             name?: string;
-            dateOfBirth?: string;
+            phoneNumber?: string;
         };
 
-        if (!companyId || !eventId) {
-            res.status(400).json({ message: "Missing companyId or eventId" });
+        if (!companyId || !start || !phoneNumber) {
+            res.status(400).json({ message: "Missing companyId, start time, or phone number" });
             return;
         }
 
         try {
-            const success = await service.cancelEvent(BigInt(companyId), eventId, name, dateOfBirth);
+            const success = await service.cancelEvent(BigInt(companyId), start, phoneNumber, name);
             res.json({ success });
         } catch (err) {
             if (err instanceof GoogleReauthRequiredError) {

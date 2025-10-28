@@ -542,12 +542,18 @@ export class VapiClient {
     const cancelCalendarParameters = {
       type: 'object',
       properties: {
-        eventId: { type: 'string', description: 'ID van het te annuleren event' },
-        name: { type: 'string', description: 'Naam van de klant (verificatie)' },
-        dateOfBirth: { type: 'string', description: 'Geboortedatum DD-MM-YYYY (verificatie)' },
+        start: {
+          type: 'string',
+          description: 'Startdatum en -tijd (ISO 8601) van de afspraak die geannuleerd moet worden',
+        },
+        name: { type: 'string', description: 'Naam van de klant (optioneel ter verificatie)' },
+        phoneNumber: {
+          type: 'string',
+          description: 'Telefoonnummer van de klant (verplicht ter verificatie)',
+        },
         reason: { type: 'string', description: 'Reden van annulering' },
       },
-      required: ['eventId', 'name', 'dateOfBirth'],
+      required: ['start', 'phoneNumber'],
     };
 
     tools.push(
@@ -1778,28 +1784,28 @@ export class VapiClient {
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
         console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
 
-        const eventId = this.normalizeStringArg(args['eventId']);
+        const start = this.normalizeStringArg(args['start'] ?? args['startTime']);
         const name = this.normalizeStringArg(args['name']);
-        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
+        const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
         const reason = this.normalizeStringArg(args['reason']);
 
-        console.log(`[VapiClient] Cancel params:`, { eventId, name, dateOfBirth, reason });
+        console.log(`[VapiClient] Cancel params:`, { start, name, phoneNumber, reason });
 
-        if (!eventId) {
-          throw new Error('Ontbreekt eventId om te annuleren.');
+        if (!start || !phoneNumber) {
+          throw new Error('Ontbrekende starttijd of telefoonnummer om te annuleren.');
         }
 
         console.log(`[VapiClient] Calling GoogleService.cancelEvent...`);
         await this.googleService.cancelEvent(
           companyId,
-          eventId,
+          start,
+          phoneNumber,
           name ?? undefined,
-          dateOfBirth ?? undefined,
         );
         console.log(`[VapiClient] ✅ Event cancelled`);
 
         return sendSuccess({
-          eventId,
+          start,
           cancelled: true,
           reason: reason ?? null,
         });

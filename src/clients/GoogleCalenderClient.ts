@@ -85,13 +85,19 @@ export class GoogleCalendarClient {
         });
     }
 
-    async listEvents(model: GoogleIntegrationModel, redirectUri: string, timeMin: string, q: string) {
+    async listEvents(
+        model: GoogleIntegrationModel,
+        redirectUri: string,
+        options: { timeMin: string; timeMax?: string; q?: string; maxResults?: number }
+    ) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
         return calendar.events.list({
             calendarId: "primary",
-            timeMin,
-            q,
+            timeMin: options.timeMin,
+            timeMax: options.timeMax,
+            q: options.q,
+            maxResults: options.maxResults,
             singleEvents: true,
             orderBy: "startTime",
         });
