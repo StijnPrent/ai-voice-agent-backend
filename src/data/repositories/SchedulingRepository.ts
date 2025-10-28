@@ -112,10 +112,6 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         const sets: string[] = ["name = ?", "role_title = ?"];
         const params: any[] = [model.name, model.role];
 
-        if (Array.isArray(model.availability)) {
-            params.push(this.computeActiveFlag(model.availability)); // ⬅ afgeleid
-        }
-
         sets.push("updated_at = NOW()");
 
         const sql = `
