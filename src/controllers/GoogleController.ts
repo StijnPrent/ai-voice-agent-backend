@@ -3,6 +3,7 @@
 import { Request, Response } from "express";
 import {injectable, inject, container} from "tsyringe";
 import { GoogleService } from "../business/services/GoogleService";
+import type { CalendarAvailability } from "../business/services/GoogleService";
 import { GoogleReauthRequiredError } from "../business/errors/GoogleReauthRequiredError";
 import { calendar_v3 } from "googleapis";
 
@@ -84,6 +85,67 @@ export class GoogleController {
         }
     }
 
+    private deriveAvailableRanges(availability: CalendarAvailability) {
+        const { operatingWindow, busy } = availability;
+        const windowStart = new Date(operatingWindow.start);
+        const windowEnd = new Date(operatingWindow.end);
+
+        if (Number.isNaN(windowStart.getTime()) || Number.isNaN(windowEnd.getTime()) || windowEnd <= windowStart) {
+            return [];
+        }
+
+        const busyIntervals = busy
+            .map((interval) => {
+                const start = new Date(interval.start);
+                const end = new Date(interval.end);
+                if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+                    return null;
+                }
+                return { start, end };
+            })
+            .filter((interval): interval is { start: Date; end: Date } => interval !== null)
+            .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        const ranges: { start: string; end: string; durationMinutes: number }[] = [];
+        let cursor = windowStart;
+
+        for (const interval of busyIntervals) {
+            if (interval.start > cursor) {
+                const rangeStart = new Date(cursor.getTime());
+                const rangeEnd = new Date(Math.min(interval.start.getTime(), windowEnd.getTime()));
+                const duration = Math.max(0, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 60000));
+                if (duration > 0) {
+                    ranges.push({
+                        start: rangeStart.toISOString(),
+                        end: rangeEnd.toISOString(),
+                        durationMinutes: duration,
+                    });
+                }
+            }
+
+            if (interval.end > cursor) {
+                cursor = new Date(Math.min(interval.end.getTime(), windowEnd.getTime()));
+            }
+
+            if (cursor >= windowEnd) {
+                break;
+            }
+        }
+
+        if (cursor < windowEnd) {
+            const duration = Math.max(0, Math.round((windowEnd.getTime() - cursor.getTime()) / 60000));
+            if (duration > 0) {
+                ranges.push({
+                    start: cursor.toISOString(),
+                    end: windowEnd.toISOString(),
+                    durationMinutes: duration,
+                });
+            }
+        }
+
+        return ranges;
+    }
+
     async checkAvailability(req: Request, res: Response): Promise<void> {
         console.log(req.body)
         const service = container.resolve(GoogleService);
@@ -105,13 +167,14 @@ export class GoogleController {
         const safeClose = Number.isFinite(parsedClose) ? parsedClose : 17;
 
         try {
-            const availableSlots = await service.getAvailableSlots(
+            const availability = await service.getAvailableSlots(
                 BigInt(companyId),
                 date,
                 safeOpen,
                 safeClose
             );
-            res.json({ availableSlots });
+            const availableRanges = this.deriveAvailableRanges(availability);
+            res.json({ availability, availableRanges });
         } catch (err) {
             if (err instanceof GoogleReauthRequiredError) {
                 res.status(err.statusCode).json({ message: err.message, authUrl: err.authUrl });
@@ -124,20 +187,20 @@ export class GoogleController {
 
     async cancelEvent(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const { companyId, eventId, name, dateOfBirth } = req.body as {
+        const { companyId, start, name, phoneNumber } = req.body as {
             companyId: string | number | bigint;
-            eventId: string;
+            start: string;
             name?: string;
-            dateOfBirth?: string;
+            phoneNumber?: string;
         };
 
-        if (!companyId || !eventId) {
-            res.status(400).json({ message: "Missing companyId or eventId" });
+        if (!companyId || !start || !phoneNumber) {
+            res.status(400).json({ message: "Missing companyId, start time, or phone number" });
             return;
         }
 
         try {
-            const success = await service.cancelEvent(BigInt(companyId), eventId, name, dateOfBirth);
+            const success = await service.cancelEvent(BigInt(companyId), start, phoneNumber, name);
             res.json({ success });
         } catch (err) {
             if (err instanceof GoogleReauthRequiredError) {

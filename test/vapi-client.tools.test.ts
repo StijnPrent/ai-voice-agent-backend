@@ -143,7 +143,7 @@ describe('VapiClient tool dispatcher', () => {
         start: '2024-01-08T09:00:00+01:00',
         end: '2024-01-08T09:30:00+01:00',
         name: 'Jane Doe',
-        dateOfBirth: '01-01-1990',
+        phoneNumber: '+31612345678',
         attendeeEmail: 'jane@example.com',
         description: 'Controle afspraak',
         location: 'Praktijk 1',
@@ -154,15 +154,8 @@ describe('VapiClient tool dispatcher', () => {
     const [, event] = googleService.scheduleEvent.mock.calls[0];
     expect(event).toMatchObject({
       summary: 'Consult',
-      description: expect.stringContaining('Naam: Jane Doe'),
       start: { dateTime: '2024-01-08T09:00:00+01:00' },
       end: { dateTime: '2024-01-08T09:30:00+01:00' },
-      attendees: [
-        {
-          email: 'jane@example.com',
-          displayName: 'Jane Doe',
-        },
-      ],
     });
     expect(result).toEqual({
       success: true,
@@ -182,7 +175,6 @@ describe('VapiClient tool dispatcher', () => {
         start: '2024-02-01T10:00:00+01:00',
         end: '2024-02-01T10:30:00+01:00',
         name: 'Jan Jansen',
-        dateOfBirth: '02-02-1980',
       },
     });
 
@@ -193,8 +185,19 @@ describe('VapiClient tool dispatcher', () => {
     });
   });
 
-  it('requests availability slots with derived business hours', async () => {
-    googleService.getAvailableSlots.mockResolvedValue(['09:00', '09:30']);
+  it('requests calendar availability with derived business hours', async () => {
+    googleService.getAvailableSlots.mockResolvedValue({
+      operatingWindow: {
+        start: '2024-01-08T09:00:00.000Z',
+        end: '2024-01-08T17:00:00.000Z',
+      },
+      busy: [
+        {
+          start: '2024-01-08T10:00:00.000Z',
+          end: '2024-01-08T11:30:00.000Z',
+        },
+      ],
+    } as any);
 
     const result = await execute({
       id: 'tool-4',
@@ -209,14 +212,42 @@ describe('VapiClient tool dispatcher', () => {
         date: '2024-01-08',
         openHour: 9,
         closeHour: 17,
-        slots: ['09:00', '09:30'],
-        message: 'Found 2 available time slots',
+        busy: [
+          {
+            start: '2024-01-08T10:00:00.000Z',
+            end: '2024-01-08T11:30:00.000Z',
+          },
+        ],
+        availableRanges: [
+          {
+            start: '2024-01-08T09:00:00.000Z',
+            end: '2024-01-08T10:00:00.000Z',
+            durationMinutes: 60,
+          },
+          {
+            start: '2024-01-08T11:30:00.000Z',
+            end: '2024-01-08T17:00:00.000Z',
+            durationMinutes: 330,
+          },
+        ],
+        message: 'Beschikbaarheid gevonden in 2 vrije blokken.',
       }),
     });
   });
 
   it('normalizes camelCase tool names for calendar availability', async () => {
-    googleService.getAvailableSlots.mockResolvedValue(['10:00']);
+    googleService.getAvailableSlots.mockResolvedValue({
+      operatingWindow: {
+        start: '2024-01-09T09:00:00.000Z',
+        end: '2024-01-09T17:00:00.000Z',
+      },
+      busy: [
+        {
+          start: '2024-01-09T09:00:00.000Z',
+          end: '2024-01-09T17:00:00.000Z',
+        },
+      ],
+    } as any);
 
     const result = await execute({
       id: 'tool-4b',
@@ -231,8 +262,14 @@ describe('VapiClient tool dispatcher', () => {
         date: '2024-01-09',
         openHour: 9,
         closeHour: 17,
-        slots: ['10:00'],
-        message: 'Found 1 available time slots',
+        busy: [
+          {
+            start: '2024-01-09T09:00:00.000Z',
+            end: '2024-01-09T17:00:00.000Z',
+          },
+        ],
+        availableRanges: [],
+        message: 'Alle tijden binnen het venster zijn bezet.',
       }),
     });
   });
@@ -243,7 +280,11 @@ describe('VapiClient tool dispatcher', () => {
     const result = await execute({
       id: 'tool-5',
       name: 'cancel_google_calendar_event',
-      args: { eventId: 'evt-1' },
+      args: {
+        start: '2024-02-20T10:00:00+01:00',
+        name: 'Jane Doe',
+        phoneNumber: '+31612345678',
+      },
     });
 
     expect(result).toMatchObject({
@@ -251,6 +292,12 @@ describe('VapiClient tool dispatcher', () => {
       error: 'Event not found',
     });
     expect(result.details).toBeInstanceOf(Error);
+    expect(googleService.cancelEvent).toHaveBeenCalledWith(
+      1n,
+      '2024-02-20T10:00:00+01:00',
+      '+31612345678',
+      'Jane Doe',
+    );
   });
 
   it('rejects Google tools when integration is disabled', async () => {
@@ -263,7 +310,7 @@ describe('VapiClient tool dispatcher', () => {
       {
         id: 'tool-6',
         name: 'schedule_google_calendar_event',
-        args: { summary: 'A', start: 's', end: 'e', name: 'n', dateOfBirth: 'd' },
+        args: { summary: 'A', start: 's', end: 'e', name: 'n' },
       },
       session,
       baseCallbacks,

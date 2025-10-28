@@ -13,6 +13,7 @@ import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
+import type { CalendarAvailability } from '../business/services/GoogleService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -24,6 +25,12 @@ type CompanyContext = {
 type SchedulingContext = {
   appointmentTypes: AppointmentTypeModel[];
   staffMembers: StaffMemberModel[];
+};
+
+type AvailableRange = {
+  start: string;
+  end: string;
+  durationMinutes: number;
 };
 
 type CompanySnapshot = {
@@ -193,11 +200,11 @@ export class VapiClient {
   private readonly assistantCache = new Map<string, string>();
   private readonly availabilityCache = new Map<
     string,
-    { slots: string[]; expiresAt: number }
+    { availability: CalendarAvailability; availableRanges: AvailableRange[]; expiresAt: number }
   >();
   private readonly availabilityPending = new Map<
     string,
-    { promise: Promise<string[]>; startedAt: number }
+    { promise: Promise<{ availability: CalendarAvailability; availableRanges: AvailableRange[] }>; startedAt: number }
   >();
   private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
   private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
@@ -306,6 +313,70 @@ export class VapiClient {
     return this.sessionConfigs.get(callSid) ?? this.currentConfig;
   }
 
+  private deriveAvailableRanges(availability: CalendarAvailability): AvailableRange[] {
+    const { operatingWindow, busy } = availability;
+
+    const windowStart = new Date(operatingWindow.start);
+    const windowEnd = new Date(operatingWindow.end);
+
+    if (Number.isNaN(windowStart.getTime()) || Number.isNaN(windowEnd.getTime()) || windowEnd.getTime() <= windowStart.getTime()) {
+      return [];
+    }
+
+    const busyIntervals = busy
+      .map((interval) => {
+        const start = new Date(interval.start);
+        const end = new Date(interval.end);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+          return null;
+        }
+        return { start, end };
+      })
+      .filter((interval): interval is { start: Date; end: Date } => interval !== null)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const ranges: AvailableRange[] = [];
+    let cursor = windowStart;
+
+    for (const interval of busyIntervals) {
+      if (interval.start.getTime() > cursor.getTime()) {
+        const rangeStart = new Date(cursor.getTime());
+        const rangeEnd = new Date(Math.min(interval.start.getTime(), windowEnd.getTime()));
+        const durationMinutes = Math.max(0, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 60000));
+        if (durationMinutes > 0) {
+          ranges.push({
+            start: rangeStart.toISOString(),
+            end: rangeEnd.toISOString(),
+            durationMinutes,
+          });
+        }
+      }
+
+      if (interval.end.getTime() > cursor.getTime()) {
+        cursor = new Date(Math.min(interval.end.getTime(), windowEnd.getTime()));
+      }
+
+      if (cursor.getTime() >= windowEnd.getTime()) {
+        break;
+      }
+    }
+
+    if (cursor.getTime() < windowEnd.getTime()) {
+      const rangeStart = new Date(cursor.getTime());
+      const rangeEnd = windowEnd;
+      const durationMinutes = Math.max(0, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 60000));
+      if (durationMinutes > 0) {
+        ranges.push({
+          start: rangeStart.toISOString(),
+          end: rangeEnd.toISOString(),
+          durationMinutes,
+        });
+      }
+    }
+
+    return ranges;
+  }
+
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
     const effectiveConfig = config ?? this.currentConfig;
     if (!effectiveConfig) {
@@ -319,17 +390,22 @@ export class VapiClient {
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
-      `Vandaag is ${todayText}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.`,
+      'Vandaag is {{ "now" | date: "%A %d %B %Y", "Europe/Amsterdam" }}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.',
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Vraag wanneer mensen naar beschikbaarheid vragen altijd eerst naar hun voorkeur voor een dag.',
       'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
+      'Wanneer je agenda-informatie deelt, benoem expliciet welke tijden al bezet zijn en welke blokken nog vrij zijn.',
+      'Als een dag volledig vrij is, zeg duidelijk dat de hele dag beschikbaar is.',
+      'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
+      'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
+      'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en bevestig de naam.`,
+        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd.`,
         `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
       );
     } else {
@@ -522,13 +598,13 @@ export class VapiClient {
       type: 'object',
       properties: {
         summary: { type: 'string', description: 'Titel van de afspraak' },
-        location: { type: 'string', description: 'Locatie van de afspraak' },
-        description: { type: 'string', description: 'Aanvullende details' },
         start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
         end: { type: 'string', description: 'Einde in ISO 8601' },
         name: { type: 'string', description: 'Volledige naam van de klant' },
+        description: { type: 'string', description: 'Aanvullende details' },
+        location: { type: 'string', description: 'Locatie van de afspraak' },
       },
-      required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
+      required: ['summary', 'start', 'end', 'name'],
     };
 
     const checkAvailabilityParameters = {
@@ -542,12 +618,19 @@ export class VapiClient {
     const cancelCalendarParameters = {
       type: 'object',
       properties: {
-        eventId: { type: 'string', description: 'ID van het te annuleren event' },
-        name: { type: 'string', description: 'Naam van de klant (verificatie)' },
-        dateOfBirth: { type: 'string', description: 'Geboortedatum DD-MM-YYYY (verificatie)' },
+        start: {
+          type: 'string',
+          description: 'Startdatum en -tijd (ISO 8601) van de afspraak die geannuleerd moet worden',
+        },
+        name: { type: 'string', description: 'Naam van de klant (optioneel ter verificatie)' },
+        phoneNumber: {
+          type: 'string',
+          description:
+            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '06…' gelijk staat aan '+316…'.",
+        },
         reason: { type: 'string', description: 'Reden van annulering' },
       },
-      required: ['eventId', 'name', 'dateOfBirth'],
+      required: ['start', 'phoneNumber'],
     };
 
     tools.push(
@@ -556,7 +639,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.scheduleGoogleCalendarEvent,
           description:
-            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
+            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
           parameters: createCalendarParameters,
         },
         server: {
@@ -580,7 +663,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.cancelGoogleCalendarEvent,
           description:
-            'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
+            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06…' gelijk is aan '+316…').",
           parameters: cancelCalendarParameters,
         },
         server: {
@@ -1676,39 +1759,48 @@ export class VapiClient {
         );
 
         try {
-          const availability = await this.getAvailabilitySlotsWithCache(
+          const availabilityResult = await this.getAvailabilityWithCache(
             companyId,
             date,
             openHour,
             closeHour,
           );
 
-          if (availability.durationMs > 0) {
+          if (availabilityResult.durationMs > 0) {
             console.log(
-              `[VapiClient] ⏱️ Google availability resolved in ${availability.durationMs}ms (${availability.source})`,
+              `[VapiClient] ⏱️ Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
             );
           } else {
             console.log(`[VapiClient] ♻️ Using cached availability result`);
           }
 
-          const slots = availability.slots;
-          const isCacheHit = availability.source === 'cache';
-          console.log(`[VapiClient] ✅ Received ${slots?.length || 0} slots:`, slots);
+          const { availability, availableRanges } = availabilityResult;
+          const isCacheHit = availabilityResult.source === 'cache';
+          console.log(`[VapiClient] ✅ Busy intervals:`, availability.busy);
+          console.log(`[VapiClient] ✅ Derived available ranges:`, availableRanges);
+
+          const busyCount = availability.busy.length;
+          const availableCount = availableRanges.length;
+          const message = busyCount === 0
+            ? 'Geen afspraken gepland: de volledige dag is beschikbaar.'
+            : availableCount === 0
+              ? 'Alle tijden binnen het venster zijn bezet.'
+              : `Beschikbaarheid gevonden in ${availableCount} vrije blok${availableCount === 1 ? '' : 'ken'}.`;
 
           return sendSuccess({
             date,
             openHour,
             closeHour,
-            slots,
+            operatingWindow: availability.operatingWindow,
+            busy: availability.busy,
+            availableRanges,
             cached: isCacheHit,
-            sharedRequest: availability.source === 'pending' ? true : undefined,
-            retrievalDurationMs: availability.durationMs,
-            message: `Found ${slots?.length || 0} available time slots${
-              isCacheHit ? ' (cached)' : ''
-            }`,
+            sharedRequest: availabilityResult.source === 'pending' ? true : undefined,
+            retrievalDurationMs: availabilityResult.durationMs,
+            message,
           });
         } catch (error) {
-          console.error(`[VapiClient] ❌ Error getting slots:`, error);
+          console.error(`[VapiClient] ❌ Error getting beschikbaarheid:`, error);
           const fallbackMessage =
             error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
               ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
@@ -1727,27 +1819,28 @@ export class VapiClient {
         const name = this.normalizeStringArg(args['name']);
         const description = this.normalizeStringArg(args['description']);
         const location = this.normalizeStringArg(args['location']);
-        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
-        const callerNumber = sessionContext?.callerNumber ?? null;
+        const providedPhoneNumber = this.normalizeStringArg(args['phoneNumber']);
+        const sessionPhoneNumber = this.normalizeStringArg(sessionContext?.callerNumber);
+        const rawPhoneNumber = providedPhoneNumber ?? sessionPhoneNumber ?? null;
+        const phoneNumber = this.normalizePhoneNumber(rawPhoneNumber);
 
         console.log(`[VapiClient] Event params:`, {
           summary,
           start,
           end,
           name,
-          dateOfBirth,
-          callerNumber,
+          rawPhoneNumber,
+          phoneNumber,
         });
 
-        if (!summary || !start || !end || !name || !dateOfBirth) {
+        if (!summary || !start || !end || !name) {
           throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
         }
 
         const details: string[] = [];
         if (description) details.push(description);
         details.push(`Naam: ${name}`);
-        details.push(`Geboortedatum: ${dateOfBirth}`);
-        if (callerNumber) details.push(`Telefoonnummer: ${callerNumber}`);
+        if (phoneNumber) details.push(`Telefoonnummer: ${phoneNumber}`);
         const compiledDescription = details.join('\n');
 
         const event: calendar_v3.Schema$Event = {
@@ -1760,11 +1853,10 @@ export class VapiClient {
 
         const privateProperties: Record<string, string> = {
           customerName: name,
-          customerDateOfBirth: dateOfBirth,
         };
 
-        if (callerNumber) {
-          privateProperties.customerPhoneNumber = callerNumber;
+        if (phoneNumber) {
+          privateProperties.customerPhoneNumber = phoneNumber;
         }
 
         event.extendedProperties = { private: privateProperties };
@@ -1778,28 +1870,28 @@ export class VapiClient {
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
         console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
 
-        const eventId = this.normalizeStringArg(args['eventId']);
+        const start = this.normalizeStringArg(args['start'] ?? args['startTime']);
         const name = this.normalizeStringArg(args['name']);
-        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
+        const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
         const reason = this.normalizeStringArg(args['reason']);
 
-        console.log(`[VapiClient] Cancel params:`, { eventId, name, dateOfBirth, reason });
+        console.log(`[VapiClient] Cancel params:`, { start, name, phoneNumber, reason });
 
-        if (!eventId) {
-          throw new Error('Ontbreekt eventId om te annuleren.');
+        if (!start || !phoneNumber) {
+          throw new Error('Ontbrekende starttijd of telefoonnummer om te annuleren.');
         }
 
         console.log(`[VapiClient] Calling GoogleService.cancelEvent...`);
         await this.googleService.cancelEvent(
           companyId,
-          eventId,
+          start,
+          phoneNumber,
           name ?? undefined,
-          dateOfBirth ?? undefined,
         );
         console.log(`[VapiClient] ✅ Event cancelled`);
 
         return sendSuccess({
-          eventId,
+          start,
           cancelled: true,
           reason: reason ?? null,
         });
@@ -1850,19 +1942,29 @@ export class VapiClient {
     return finalPayload;
   }
 
-  private async getAvailabilitySlotsWithCache(
+  private async getAvailabilityWithCache(
     companyId: bigint,
     date: string,
     openHour: number,
     closeHour: number,
-  ): Promise<{ slots: string[]; source: 'fresh' | 'cache' | 'pending'; durationMs: number }> {
+  ): Promise<{
+    availability: CalendarAvailability;
+    availableRanges: AvailableRange[];
+    source: 'fresh' | 'cache' | 'pending';
+    durationMs: number;
+  }> {
     const key = this.buildAvailabilityCacheKey(companyId, date, openHour, closeHour);
     const now = Date.now();
     const cached = this.availabilityCache.get(key);
 
     if (cached) {
       if (cached.expiresAt > now) {
-        return { slots: cached.slots, source: 'cache', durationMs: 0 };
+        return {
+          availability: cached.availability,
+          availableRanges: cached.availableRanges,
+          source: 'cache',
+          durationMs: 0,
+        };
       }
 
       this.availabilityCache.delete(key);
@@ -1871,14 +1973,28 @@ export class VapiClient {
     const pending = this.availabilityPending.get(key);
     if (pending) {
       console.log(`[VapiClient] ⏳ Awaiting in-flight availability request for ${key}`);
-      const slots = await pending.promise;
-      return { slots, source: 'pending', durationMs: Date.now() - pending.startedAt };
+      const result = await pending.promise;
+      return {
+        availability: result.availability,
+        availableRanges: result.availableRanges,
+        source: 'pending',
+        durationMs: Date.now() - pending.startedAt,
+      };
     }
 
     const startedAt = Date.now();
-    const availabilityPromise = (async () =>
-      this.googleService.getAvailableSlots(companyId, date, openHour, closeHour)
-    )();
+    const availabilityPromise = (async () => {
+      const availability = await this.googleService.getAvailableSlots(
+        companyId,
+        date,
+        openHour,
+        closeHour,
+      );
+      return {
+        availability,
+        availableRanges: this.deriveAvailableRanges(availability),
+      };
+    })();
     const fetchPromise = this.runWithTimeout(
       availabilityPromise,
       this.availabilityRequestTimeoutMs,
@@ -1888,12 +2004,18 @@ export class VapiClient {
     this.availabilityPending.set(key, { promise: fetchPromise, startedAt });
 
     try {
-      const slots = await fetchPromise;
+      const result = await fetchPromise;
       this.availabilityCache.set(key, {
-        slots,
+        availability: result.availability,
+        availableRanges: result.availableRanges,
         expiresAt: Date.now() + this.availabilityCacheTtlMs,
       });
-      return { slots, source: 'fresh', durationMs: Date.now() - startedAt };
+      return {
+        availability: result.availability,
+        availableRanges: result.availableRanges,
+        source: 'fresh',
+        durationMs: Date.now() - startedAt,
+      };
     } finally {
       this.availabilityPending.delete(key);
     }
@@ -2253,6 +2375,41 @@ export class VapiClient {
     return KNOWN_TOOL_NAMES.has(snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
       ? (snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
       : null;
+  }
+
+  private normalizePhoneNumber(value: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const hasLeadingPlus = trimmed.startsWith('+');
+    const digitsOnly = trimmed.replace(/[^0-9]/g, '');
+    if (!digitsOnly) {
+      return null;
+    }
+
+    if (hasLeadingPlus) {
+      return `+${digitsOnly}`;
+    }
+
+    if (digitsOnly.startsWith('00')) {
+      return `+${digitsOnly.slice(2)}`;
+    }
+
+    if (digitsOnly.length === 10 && digitsOnly.startsWith('06')) {
+      return `+31${digitsOnly.slice(1)}`;
+    }
+
+    if (digitsOnly.length === 9 && digitsOnly.startsWith('6')) {
+      return `+31${digitsOnly}`;
+    }
+
+    return digitsOnly;
   }
 
   private normalizeStringArg(value: unknown): string | null {
