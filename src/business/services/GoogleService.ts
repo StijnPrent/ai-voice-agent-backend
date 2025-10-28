@@ -178,9 +178,9 @@ export class GoogleService {
 
     async cancelEvent(
         companyId: bigint,
-        eventId: string,
-        name?: string,
-        dateOfBirth?: string
+        startDateTime: string,
+        phoneNumber: string,
+        name?: string
     ): Promise<boolean> {
         const model = await this.repo.fetchGoogleTokens(companyId);
         if (!model) {
@@ -194,23 +194,131 @@ export class GoogleService {
             throw new Error(`Failed to refetch Google integration for company ${companyId} after token refresh.`);
         }
 
-        if (!eventId) {
-            throw new Error("Missing eventId to cancel");
+        if (!startDateTime) {
+            throw new Error("Missing event start time to cancel");
         }
 
-        if (name || dateOfBirth) {
+        if (!phoneNumber) {
+            throw new Error("Missing phone number to cancel");
+        }
+
+        let parsedStart: Date;
+        try {
+            parsedStart = parseISO(startDateTime);
+        } catch {
+            throw new Error("Invalid event start time format");
+        }
+
+        if (Number.isNaN(parsedStart.getTime())) {
+            throw new Error("Invalid event start time format");
+        }
+
+        const normalizedTargetPhone = this.normalizePhoneNumber(phoneNumber);
+
+        const windowStart = addMinutes(parsedStart, -60).toISOString();
+        const windowEnd = addMinutes(parsedStart, 60).toISOString();
+
+        console.log(
+            `[GoogleService] Searching for events to cancel around ${startDateTime} with phone ${normalizedTargetPhone}`
+        );
+
+        const eventsResponse = await this.gcalClient.listEvents(refreshedModel, redirectUri, {
+            timeMin: windowStart,
+            timeMax: windowEnd,
+            q: normalizedTargetPhone,
+            maxResults: 10,
+        });
+
+        const items = eventsResponse.data.items ?? [];
+        if (items.length === 0) {
+            throw new Error("No matching event found to cancel");
+        }
+
+        const matchingEvent = items.find((event) => {
+            const eventStartIso = event.start?.dateTime ?? event.start?.date;
+            if (!eventStartIso) {
+                return false;
+            }
+
+            let eventStart: Date;
+            try {
+                eventStart = parseISO(eventStartIso);
+            } catch {
+                return false;
+            }
+
+            if (Number.isNaN(eventStart.getTime())) {
+                return false;
+            }
+
+            const startDelta = Math.abs(eventStart.getTime() - parsedStart.getTime());
+            if (startDelta > 15 * 60 * 1000) {
+                return false;
+            }
+
+            const eventPhone = this.extractPhoneNumber(event);
+            if (!eventPhone) {
+                return false;
+            }
+
+            const normalizedEventPhone = this.normalizePhoneNumber(eventPhone);
+            return normalizedEventPhone === normalizedTargetPhone;
+        });
+
+        if (!matchingEvent || !matchingEvent.id) {
+            throw new Error("No matching event found to cancel");
+        }
+
+        if (name || phoneNumber) {
             console.log(
-              `[GoogleService] Cancel request verification data — name: ${name ?? "n/a"}, DOB: ${dateOfBirth ?? "n/a"}`
+                `[GoogleService] Cancel request verification data — name: ${name ?? "n/a"}, phone: ${phoneNumber}`
             );
         }
 
-        await this.gcalClient.deleteEvent(refreshedModel, redirectUri, eventId);
+        console.log(`[GoogleService] Cancelling event ${matchingEvent.id}`);
+        await this.gcalClient.deleteEvent(refreshedModel, redirectUri, matchingEvent.id);
         return true;
     }
 
 
     async disconnect(companyId: bigint): Promise<void> {
         await this.repo.deleteGoogleTokens(companyId);
+    }
+
+    private normalizePhoneNumber(value: string): string {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return "";
+        }
+
+        const hasLeadingPlus = trimmed.startsWith("+");
+        const digitsOnly = trimmed.replace(/[^0-9]/g, "");
+
+        if (hasLeadingPlus) {
+            return `+${digitsOnly}`;
+        }
+
+        if (digitsOnly.startsWith("00")) {
+            return `+${digitsOnly.slice(2)}`;
+        }
+
+        return digitsOnly;
+    }
+
+    private extractPhoneNumber(event: calendar_v3.Schema$Event): string | null {
+        const extendedPhone = event.extendedProperties?.private?.customerPhoneNumber;
+        if (extendedPhone && extendedPhone.trim()) {
+            return extendedPhone;
+        }
+
+        if (event.description) {
+            const match = event.description.match(/Telefoonnummer:\s*([^\n]+)/i);
+            if (match && match[1]?.trim()) {
+                return match[1].trim();
+            }
+        }
+
+        return null;
     }
 
     private async refreshAndSaveTokens(model: any, redirectUri: string): Promise<void> {

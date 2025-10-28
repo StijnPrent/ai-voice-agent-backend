@@ -280,7 +280,11 @@ describe('VapiClient tool dispatcher', () => {
     const result = await execute({
       id: 'tool-5',
       name: 'cancel_google_calendar_event',
-      args: { eventId: 'evt-1' },
+      args: {
+        start: '2024-02-20T10:00:00+01:00',
+        name: 'Jane Doe',
+        phoneNumber: '+31612345678',
+      },
     });
 
     expect(result).toMatchObject({
@@ -288,6 +292,12 @@ describe('VapiClient tool dispatcher', () => {
       error: 'Event not found',
     });
     expect(result.details).toBeInstanceOf(Error);
+    expect(googleService.cancelEvent).toHaveBeenCalledWith(
+      1n,
+      '2024-02-20T10:00:00+01:00',
+      '+31612345678',
+      'Jane Doe',
+    );
   });
 
   it('rejects Google tools when integration is disabled', async () => {
