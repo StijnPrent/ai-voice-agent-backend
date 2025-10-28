@@ -6,7 +6,7 @@ import { IGoogleRepository } from "../../data/interfaces/IGoogleRepository";
 import { GoogleCalendarClient, GoogleAppCredentials } from "../../clients/GoogleCalenderClient";
 import config from "../../config/config";
 import {encrypt} from "../../utils/crypto";
-import { parseISO } from "date-fns";
+import { parseISO, addMinutes } from "date-fns";
 import { GoogleReauthRequiredError } from "../errors/GoogleReauthRequiredError";
 
 export type CalendarBusyInterval = { start: string; end: string };
@@ -300,6 +300,14 @@ export class GoogleService {
 
         if (digitsOnly.startsWith("00")) {
             return `+${digitsOnly.slice(2)}`;
+        }
+
+        if (digitsOnly.length === 10 && digitsOnly.startsWith("06")) {
+            return `+31${digitsOnly.slice(1)}`;
+        }
+
+        if (digitsOnly.length === 9 && digitsOnly.startsWith("6")) {
+            return `+31${digitsOnly}`;
         }
 
         return digitsOnly;
