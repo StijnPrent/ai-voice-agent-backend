@@ -13,6 +13,7 @@ import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
+import type { CalendarAvailability } from '../business/services/GoogleService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -24,6 +25,12 @@ type CompanyContext = {
 type SchedulingContext = {
   appointmentTypes: AppointmentTypeModel[];
   staffMembers: StaffMemberModel[];
+};
+
+type AvailableRange = {
+  start: string;
+  end: string;
+  durationMinutes: number;
 };
 
 type CompanySnapshot = {
@@ -193,11 +200,11 @@ export class VapiClient {
   private readonly assistantCache = new Map<string, string>();
   private readonly availabilityCache = new Map<
     string,
-    { slots: string[]; expiresAt: number }
+    { availability: CalendarAvailability; availableRanges: AvailableRange[]; expiresAt: number }
   >();
   private readonly availabilityPending = new Map<
     string,
-    { promise: Promise<string[]>; startedAt: number }
+    { promise: Promise<{ availability: CalendarAvailability; availableRanges: AvailableRange[] }>; startedAt: number }
   >();
   private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
   private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
@@ -306,6 +313,70 @@ export class VapiClient {
     return this.sessionConfigs.get(callSid) ?? this.currentConfig;
   }
 
+  private deriveAvailableRanges(availability: CalendarAvailability): AvailableRange[] {
+    const { operatingWindow, busy } = availability;
+
+    const windowStart = new Date(operatingWindow.start);
+    const windowEnd = new Date(operatingWindow.end);
+
+    if (Number.isNaN(windowStart.getTime()) || Number.isNaN(windowEnd.getTime()) || windowEnd.getTime() <= windowStart.getTime()) {
+      return [];
+    }
+
+    const busyIntervals = busy
+      .map((interval) => {
+        const start = new Date(interval.start);
+        const end = new Date(interval.end);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+          return null;
+        }
+        return { start, end };
+      })
+      .filter((interval): interval is { start: Date; end: Date } => interval !== null)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    const ranges: AvailableRange[] = [];
+    let cursor = windowStart;
+
+    for (const interval of busyIntervals) {
+      if (interval.start.getTime() > cursor.getTime()) {
+        const rangeStart = new Date(cursor.getTime());
+        const rangeEnd = new Date(Math.min(interval.start.getTime(), windowEnd.getTime()));
+        const durationMinutes = Math.max(0, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 60000));
+        if (durationMinutes > 0) {
+          ranges.push({
+            start: rangeStart.toISOString(),
+            end: rangeEnd.toISOString(),
+            durationMinutes,
+          });
+        }
+      }
+
+      if (interval.end.getTime() > cursor.getTime()) {
+        cursor = new Date(Math.min(interval.end.getTime(), windowEnd.getTime()));
+      }
+
+      if (cursor.getTime() >= windowEnd.getTime()) {
+        break;
+      }
+    }
+
+    if (cursor.getTime() < windowEnd.getTime()) {
+      const rangeStart = new Date(cursor.getTime());
+      const rangeEnd = windowEnd;
+      const durationMinutes = Math.max(0, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 60000));
+      if (durationMinutes > 0) {
+        ranges.push({
+          start: rangeStart.toISOString(),
+          end: rangeEnd.toISOString(),
+          durationMinutes,
+        });
+      }
+    }
+
+    return ranges;
+  }
+
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
     const effectiveConfig = config ?? this.currentConfig;
     if (!effectiveConfig) {
@@ -325,6 +396,9 @@ export class VapiClient {
       'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
+      'Wanneer je agenda-informatie deelt, benoem expliciet welke tijden al bezet zijn en welke blokken nog vrij zijn.',
+      'Als een dag volledig vrij is, zeg duidelijk dat de hele dag beschikbaar is.',
+      'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
@@ -1677,39 +1751,48 @@ export class VapiClient {
         );
 
         try {
-          const availability = await this.getAvailabilitySlotsWithCache(
+          const availabilityResult = await this.getAvailabilityWithCache(
             companyId,
             date,
             openHour,
             closeHour,
           );
 
-          if (availability.durationMs > 0) {
+          if (availabilityResult.durationMs > 0) {
             console.log(
-              `[VapiClient] ⏱️ Google availability resolved in ${availability.durationMs}ms (${availability.source})`,
+              `[VapiClient] ⏱️ Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
             );
           } else {
             console.log(`[VapiClient] ♻️ Using cached availability result`);
           }
 
-          const slots = availability.slots;
-          const isCacheHit = availability.source === 'cache';
-          console.log(`[VapiClient] ✅ Received ${slots?.length || 0} slots:`, slots);
+          const { availability, availableRanges } = availabilityResult;
+          const isCacheHit = availabilityResult.source === 'cache';
+          console.log(`[VapiClient] ✅ Busy intervals:`, availability.busy);
+          console.log(`[VapiClient] ✅ Derived available ranges:`, availableRanges);
+
+          const busyCount = availability.busy.length;
+          const availableCount = availableRanges.length;
+          const message = busyCount === 0
+            ? 'Geen afspraken gepland: de volledige dag is beschikbaar.'
+            : availableCount === 0
+              ? 'Alle tijden binnen het venster zijn bezet.'
+              : `Beschikbaarheid gevonden in ${availableCount} vrije blok${availableCount === 1 ? '' : 'ken'}.`;
 
           return sendSuccess({
             date,
             openHour,
             closeHour,
-            slots,
+            operatingWindow: availability.operatingWindow,
+            busy: availability.busy,
+            availableRanges,
             cached: isCacheHit,
-            sharedRequest: availability.source === 'pending' ? true : undefined,
-            retrievalDurationMs: availability.durationMs,
-            message: `Found ${slots?.length || 0} available time slots${
-              isCacheHit ? ' (cached)' : ''
-            }`,
+            sharedRequest: availabilityResult.source === 'pending' ? true : undefined,
+            retrievalDurationMs: availabilityResult.durationMs,
+            message,
           });
         } catch (error) {
-          console.error(`[VapiClient] ❌ Error getting slots:`, error);
+          console.error(`[VapiClient] ❌ Error getting beschikbaarheid:`, error);
           const fallbackMessage =
             error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
               ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
@@ -1848,19 +1931,29 @@ export class VapiClient {
     return finalPayload;
   }
 
-  private async getAvailabilitySlotsWithCache(
+  private async getAvailabilityWithCache(
     companyId: bigint,
     date: string,
     openHour: number,
     closeHour: number,
-  ): Promise<{ slots: string[]; source: 'fresh' | 'cache' | 'pending'; durationMs: number }> {
+  ): Promise<{
+    availability: CalendarAvailability;
+    availableRanges: AvailableRange[];
+    source: 'fresh' | 'cache' | 'pending';
+    durationMs: number;
+  }> {
     const key = this.buildAvailabilityCacheKey(companyId, date, openHour, closeHour);
     const now = Date.now();
     const cached = this.availabilityCache.get(key);
 
     if (cached) {
       if (cached.expiresAt > now) {
-        return { slots: cached.slots, source: 'cache', durationMs: 0 };
+        return {
+          availability: cached.availability,
+          availableRanges: cached.availableRanges,
+          source: 'cache',
+          durationMs: 0,
+        };
       }
 
       this.availabilityCache.delete(key);
@@ -1869,14 +1962,28 @@ export class VapiClient {
     const pending = this.availabilityPending.get(key);
     if (pending) {
       console.log(`[VapiClient] ⏳ Awaiting in-flight availability request for ${key}`);
-      const slots = await pending.promise;
-      return { slots, source: 'pending', durationMs: Date.now() - pending.startedAt };
+      const result = await pending.promise;
+      return {
+        availability: result.availability,
+        availableRanges: result.availableRanges,
+        source: 'pending',
+        durationMs: Date.now() - pending.startedAt,
+      };
     }
 
     const startedAt = Date.now();
-    const availabilityPromise = (async () =>
-      this.googleService.getAvailableSlots(companyId, date, openHour, closeHour)
-    )();
+    const availabilityPromise = (async () => {
+      const availability = await this.googleService.getAvailableSlots(
+        companyId,
+        date,
+        openHour,
+        closeHour,
+      );
+      return {
+        availability,
+        availableRanges: this.deriveAvailableRanges(availability),
+      };
+    })();
     const fetchPromise = this.runWithTimeout(
       availabilityPromise,
       this.availabilityRequestTimeoutMs,
@@ -1886,12 +1993,18 @@ export class VapiClient {
     this.availabilityPending.set(key, { promise: fetchPromise, startedAt });
 
     try {
-      const slots = await fetchPromise;
+      const result = await fetchPromise;
       this.availabilityCache.set(key, {
-        slots,
+        availability: result.availability,
+        availableRanges: result.availableRanges,
         expiresAt: Date.now() + this.availabilityCacheTtlMs,
       });
-      return { slots, source: 'fresh', durationMs: Date.now() - startedAt };
+      return {
+        availability: result.availability,
+        availableRanges: result.availableRanges,
+        source: 'fresh',
+        durationMs: Date.now() - startedAt,
+      };
     } finally {
       this.availabilityPending.delete(key);
     }
