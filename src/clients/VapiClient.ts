@@ -399,11 +399,13 @@ export class VapiClient {
       'Wanneer je agenda-informatie deelt, benoem expliciet welke tijden al bezet zijn en welke blokken nog vrij zijn.',
       'Als een dag volledig vrij is, zeg duidelijk dat de hele dag beschikbaar is.',
       'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
+      'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
+      'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt en vraag om de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' of '${TOOL_NAMES.cancelGoogleCalendarEvent}' gebruikt. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en bevestig de naam.`,
+        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd.`,
         `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
       );
     } else {
@@ -599,7 +601,6 @@ export class VapiClient {
         start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
         end: { type: 'string', description: 'Einde in ISO 8601' },
         name: { type: 'string', description: 'Volledige naam van de klant' },
-        phoneNumber: { type: 'string', description: 'Telefoonnummer van de klant' },
         description: { type: 'string', description: 'Aanvullende details' },
         location: { type: 'string', description: 'Locatie van de afspraak' },
       },
@@ -624,7 +625,8 @@ export class VapiClient {
         name: { type: 'string', description: 'Naam van de klant (optioneel ter verificatie)' },
         phoneNumber: {
           type: 'string',
-          description: 'Telefoonnummer van de klant (verplicht ter verificatie)',
+          description:
+            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '06…' gelijk staat aan '+316…'.",
         },
         reason: { type: 'string', description: 'Reden van annulering' },
       },
@@ -637,7 +639,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.scheduleGoogleCalendarEvent,
           description:
-            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd; daarna naam en telefoonnummer ter verificatie.',
+            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
           parameters: createCalendarParameters,
         },
         server: {
@@ -661,7 +663,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.cancelGoogleCalendarEvent,
           description:
-            'Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer.',
+            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06…' gelijk is aan '+316…').",
           parameters: cancelCalendarParameters,
         },
         server: {
@@ -1818,13 +1820,16 @@ export class VapiClient {
         const description = this.normalizeStringArg(args['description']);
         const location = this.normalizeStringArg(args['location']);
         const providedPhoneNumber = this.normalizeStringArg(args['phoneNumber']);
-        const phoneNumber = providedPhoneNumber ?? sessionContext?.callerNumber ?? null;
+        const sessionPhoneNumber = this.normalizeStringArg(sessionContext?.callerNumber);
+        const rawPhoneNumber = providedPhoneNumber ?? sessionPhoneNumber ?? null;
+        const phoneNumber = this.normalizePhoneNumber(rawPhoneNumber);
 
         console.log(`[VapiClient] Event params:`, {
           summary,
           start,
           end,
           name,
+          rawPhoneNumber,
           phoneNumber,
         });
 
@@ -2370,6 +2375,41 @@ export class VapiClient {
     return KNOWN_TOOL_NAMES.has(snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
       ? (snakeCase as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES])
       : null;
+  }
+
+  private normalizePhoneNumber(value: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const hasLeadingPlus = trimmed.startsWith('+');
+    const digitsOnly = trimmed.replace(/[^0-9]/g, '');
+    if (!digitsOnly) {
+      return null;
+    }
+
+    if (hasLeadingPlus) {
+      return `+${digitsOnly}`;
+    }
+
+    if (digitsOnly.startsWith('00')) {
+      return `+${digitsOnly.slice(2)}`;
+    }
+
+    if (digitsOnly.length === 10 && digitsOnly.startsWith('06')) {
+      return `+31${digitsOnly.slice(1)}`;
+    }
+
+    if (digitsOnly.length === 9 && digitsOnly.startsWith('6')) {
+      return `+31${digitsOnly}`;
+    }
+
+    return digitsOnly;
   }
 
   private normalizeStringArg(value: unknown): string | null {
