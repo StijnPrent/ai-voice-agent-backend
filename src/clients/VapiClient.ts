@@ -522,13 +522,14 @@ export class VapiClient {
       type: 'object',
       properties: {
         summary: { type: 'string', description: 'Titel van de afspraak' },
-        location: { type: 'string', description: 'Locatie van de afspraak' },
-        description: { type: 'string', description: 'Aanvullende details' },
         start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
         end: { type: 'string', description: 'Einde in ISO 8601' },
         name: { type: 'string', description: 'Volledige naam van de klant' },
+        phoneNumber: { type: 'string', description: 'Telefoonnummer van de klant' },
+        description: { type: 'string', description: 'Aanvullende details' },
+        location: { type: 'string', description: 'Locatie van de afspraak' },
       },
-      required: ['summary', 'start', 'end', 'name', 'dateOfBirth'],
+      required: ['summary', 'start', 'end', 'name'],
     };
 
     const checkAvailabilityParameters = {
@@ -1727,27 +1728,25 @@ export class VapiClient {
         const name = this.normalizeStringArg(args['name']);
         const description = this.normalizeStringArg(args['description']);
         const location = this.normalizeStringArg(args['location']);
-        const dateOfBirth = this.normalizeStringArg(args['dateOfBirth']);
-        const callerNumber = sessionContext?.callerNumber ?? null;
+        const providedPhoneNumber = this.normalizeStringArg(args['phoneNumber']);
+        const phoneNumber = providedPhoneNumber ?? sessionContext?.callerNumber ?? null;
 
         console.log(`[VapiClient] Event params:`, {
           summary,
           start,
           end,
           name,
-          dateOfBirth,
-          callerNumber,
+          phoneNumber,
         });
 
-        if (!summary || !start || !end || !name || !dateOfBirth) {
+        if (!summary || !start || !end || !name) {
           throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
         }
 
         const details: string[] = [];
         if (description) details.push(description);
         details.push(`Naam: ${name}`);
-        details.push(`Geboortedatum: ${dateOfBirth}`);
-        if (callerNumber) details.push(`Telefoonnummer: ${callerNumber}`);
+        if (phoneNumber) details.push(`Telefoonnummer: ${phoneNumber}`);
         const compiledDescription = details.join('\n');
 
         const event: calendar_v3.Schema$Event = {
@@ -1760,11 +1759,10 @@ export class VapiClient {
 
         const privateProperties: Record<string, string> = {
           customerName: name,
-          customerDateOfBirth: dateOfBirth,
         };
 
-        if (callerNumber) {
-          privateProperties.customerPhoneNumber = callerNumber;
+        if (phoneNumber) {
+          privateProperties.customerPhoneNumber = phoneNumber;
         }
 
         event.extendedProperties = { private: privateProperties };
