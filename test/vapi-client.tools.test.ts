@@ -143,7 +143,7 @@ describe('VapiClient tool dispatcher', () => {
         start: '2024-01-08T09:00:00+01:00',
         end: '2024-01-08T09:30:00+01:00',
         name: 'Jane Doe',
-        dateOfBirth: '01-01-1990',
+        phoneNumber: '+31612345678',
         attendeeEmail: 'jane@example.com',
         description: 'Controle afspraak',
         location: 'Praktijk 1',
@@ -154,7 +154,6 @@ describe('VapiClient tool dispatcher', () => {
     const [, event] = googleService.scheduleEvent.mock.calls[0];
     expect(event).toMatchObject({
       summary: 'Consult',
-      description: expect.stringContaining('Naam: Jane Doe'),
       start: { dateTime: '2024-01-08T09:00:00+01:00' },
       end: { dateTime: '2024-01-08T09:30:00+01:00' },
     });
@@ -176,7 +175,6 @@ describe('VapiClient tool dispatcher', () => {
         start: '2024-02-01T10:00:00+01:00',
         end: '2024-02-01T10:30:00+01:00',
         name: 'Jan Jansen',
-        dateOfBirth: '02-02-1980',
       },
     });
 
@@ -302,7 +300,7 @@ describe('VapiClient tool dispatcher', () => {
       {
         id: 'tool-6',
         name: 'schedule_google_calendar_event',
-        args: { summary: 'A', start: 's', end: 'e', name: 'n', dateOfBirth: 'd' },
+        args: { summary: 'A', start: 's', end: 'e', name: 'n' },
       },
       session,
       baseCallbacks,
