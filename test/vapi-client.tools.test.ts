@@ -157,12 +157,6 @@ describe('VapiClient tool dispatcher', () => {
       description: expect.stringContaining('Naam: Jane Doe'),
       start: { dateTime: '2024-01-08T09:00:00+01:00' },
       end: { dateTime: '2024-01-08T09:30:00+01:00' },
-      attendees: [
-        {
-          email: 'jane@example.com',
-          displayName: 'Jane Doe',
-        },
-      ],
     });
     expect(result).toEqual({
       success: true,
@@ -193,8 +187,19 @@ describe('VapiClient tool dispatcher', () => {
     });
   });
 
-  it('requests availability slots with derived business hours', async () => {
-    googleService.getAvailableSlots.mockResolvedValue(['09:00', '09:30']);
+  it('requests calendar availability with derived business hours', async () => {
+    googleService.getAvailableSlots.mockResolvedValue({
+      operatingWindow: {
+        start: '2024-01-08T09:00:00.000Z',
+        end: '2024-01-08T17:00:00.000Z',
+      },
+      busy: [
+        {
+          start: '2024-01-08T10:00:00.000Z',
+          end: '2024-01-08T11:30:00.000Z',
+        },
+      ],
+    } as any);
 
     const result = await execute({
       id: 'tool-4',
@@ -209,14 +214,42 @@ describe('VapiClient tool dispatcher', () => {
         date: '2024-01-08',
         openHour: 9,
         closeHour: 17,
-        slots: ['09:00', '09:30'],
-        message: 'Found 2 available time slots',
+        busy: [
+          {
+            start: '2024-01-08T10:00:00.000Z',
+            end: '2024-01-08T11:30:00.000Z',
+          },
+        ],
+        availableRanges: [
+          {
+            start: '2024-01-08T09:00:00.000Z',
+            end: '2024-01-08T10:00:00.000Z',
+            durationMinutes: 60,
+          },
+          {
+            start: '2024-01-08T11:30:00.000Z',
+            end: '2024-01-08T17:00:00.000Z',
+            durationMinutes: 330,
+          },
+        ],
+        message: 'Beschikbaarheid gevonden in 2 vrije blokken.',
       }),
     });
   });
 
   it('normalizes camelCase tool names for calendar availability', async () => {
-    googleService.getAvailableSlots.mockResolvedValue(['10:00']);
+    googleService.getAvailableSlots.mockResolvedValue({
+      operatingWindow: {
+        start: '2024-01-09T09:00:00.000Z',
+        end: '2024-01-09T17:00:00.000Z',
+      },
+      busy: [
+        {
+          start: '2024-01-09T09:00:00.000Z',
+          end: '2024-01-09T17:00:00.000Z',
+        },
+      ],
+    } as any);
 
     const result = await execute({
       id: 'tool-4b',
@@ -231,8 +264,14 @@ describe('VapiClient tool dispatcher', () => {
         date: '2024-01-09',
         openHour: 9,
         closeHour: 17,
-        slots: ['10:00'],
-        message: 'Found 1 available time slots',
+        busy: [
+          {
+            start: '2024-01-09T09:00:00.000Z',
+            end: '2024-01-09T17:00:00.000Z',
+          },
+        ],
+        availableRanges: [],
+        message: 'Alle tijden binnen het venster zijn bezet.',
       }),
     });
   });

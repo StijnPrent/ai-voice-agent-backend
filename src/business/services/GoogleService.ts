@@ -6,8 +6,15 @@ import { IGoogleRepository } from "../../data/interfaces/IGoogleRepository";
 import { GoogleCalendarClient, GoogleAppCredentials } from "../../clients/GoogleCalenderClient";
 import config from "../../config/config";
 import {encrypt} from "../../utils/crypto";
-import {addMinutes, format, isBefore, parseISO} from "date-fns";
+import { parseISO } from "date-fns";
 import { GoogleReauthRequiredError } from "../errors/GoogleReauthRequiredError";
+
+export type CalendarBusyInterval = { start: string; end: string };
+export type CalendarAvailabilityWindow = { start: string; end: string };
+export type CalendarAvailability = {
+    operatingWindow: CalendarAvailabilityWindow;
+    busy: CalendarBusyInterval[];
+};
 
 @injectable()
 export class GoogleService {
@@ -78,7 +85,12 @@ export class GoogleService {
         return res.data;
     }
 
-    async getAvailableSlots(companyId: bigint, date: string, openHour: number, closeHour: number): Promise<string[]> {
+    async getAvailableSlots(
+        companyId: bigint,
+        date: string,
+        openHour: number,
+        closeHour: number
+    ): Promise<CalendarAvailability> {
         const model = await this.repo.fetchGoogleTokens(companyId);
         if (!model) {
             throw new Error(`No Google Calendar integration for company ${companyId}`);
@@ -101,25 +113,67 @@ export class GoogleService {
         console.log("[FB] window", timeMin.toISOString(), "->", timeMax.toISOString());
         console.log("[FB] busy", busySlots);
 
-        const availableSlots: string[] = [];
-        let currentTime = timeMin;
+        const operatingWindow: CalendarAvailabilityWindow = {
+            start: timeMin.toISOString(),
+            end: timeMax.toISOString(),
+        };
 
-        while (isBefore(currentTime, timeMax)) {
-            const slotEnd = addMinutes(currentTime, 30);
-            const isBusy = busySlots.some(busy => {
-                const busyStart = parseISO(busy.start!);
-                const busyEnd = parseISO(busy.end!);
-                return (isBefore(currentTime, busyEnd) && isBefore(busyStart, slotEnd));
-            });
+        const windowStart = timeMin.getTime();
+        const windowEnd = timeMax.getTime();
 
-            if (!isBusy) {
-                availableSlots.push(format(currentTime, "HH:mm"));
-            }
+        const normalizedBusy = busySlots
+            .map((busy) => {
+                if (!busy.start || !busy.end) {
+                    return null;
+                }
 
-            currentTime = slotEnd;
-        }
+                const rawStart = parseISO(busy.start).getTime();
+                const rawEnd = parseISO(busy.end).getTime();
 
-        return availableSlots;
+                if (Number.isNaN(rawStart) || Number.isNaN(rawEnd)) {
+                    return null;
+                }
+
+                const clampedStart = Math.max(windowStart, rawStart);
+                const clampedEnd = Math.min(windowEnd, rawEnd);
+
+                if (clampedEnd <= clampedStart) {
+                    return null;
+                }
+
+                return {
+                    start: clampedStart,
+                    end: clampedEnd,
+                };
+            })
+            .filter((interval): interval is { start: number; end: number } => interval !== null)
+            .filter((interval) => interval.end > windowStart && interval.start < windowEnd)
+            .sort((a, b) => a.start - b.start)
+            .reduce((merged: { start: number; end: number }[], interval) => {
+                const last = merged[merged.length - 1];
+                if (!last) {
+                    merged.push({ ...interval });
+                    return merged;
+                }
+
+                if (interval.start <= last.end) {
+                    last.end = Math.max(last.end, interval.end);
+                    return merged;
+                }
+
+                merged.push({ ...interval });
+                return merged;
+            }, []);
+
+        const busy = normalizedBusy.map((interval) => ({
+            start: new Date(interval.start).toISOString(),
+            end: new Date(interval.end).toISOString(),
+        }));
+
+        return {
+            operatingWindow,
+            busy,
+        };
     }
 
     async cancelEvent(
