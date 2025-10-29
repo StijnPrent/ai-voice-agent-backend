@@ -56,14 +56,6 @@ export class VoiceService {
         }
 
         this.twilioMessagesReceived += 1;
-        if (
-            this.twilioMessagesReceived <= 5 ||
-            this.twilioMessagesReceived % 100 === 0
-        ) {
-            console.log(
-                `[${this.callSid ?? "unknown"}] Twilio message #${this.twilioMessagesReceived} received`
-            );
-        }
 
         let parsed: TwilioMediaStreamEvent;
         try {
@@ -292,10 +284,6 @@ export class VoiceService {
         const activeCallSid = this.callSid;
         const callId = activeCallSid ?? "unknown";
 
-        if (!this.vapiSession) {
-            console.log(`[${callId}] Vapi session is null, not sending audio`);
-            return;
-        }
 
         // Decode the base64 payload (Twilio sends audio as 8-bit mu-law at 8kHz)
         const muLawBuffer = Buffer.from(payload, "base64");
@@ -313,15 +301,6 @@ export class VoiceService {
         const energy = this.computeEnergy(pcmBuffer);
         this.lastUserEnergy = energy;
 
-        if (
-            this.totalAudioChunksForwardedToVapi <= 3 ||
-            this.totalAudioChunksForwardedToVapi % 50 === 0
-        ) {
-            console.log(
-                `[${callId}] Forwarded audio chunk #${this.totalAudioChunksForwardedToVapi} to Vapi (muLawBytes=${muLawBuffer.length}, energy=${energy.toFixed(2)})`
-            );
-        }
-
         if (!this.userSpeaking && energy >= SPEECH_ENERGY_THRESHOLD) {
             this.userSpeaking = true;
             this.silenceFrames = 0;
@@ -329,9 +308,6 @@ export class VoiceService {
             this.activeSpeechFrames = 0;
             this.cumulativeSpeechEnergy = 0;
             const callId = this.callSid ?? "unknown";
-            console.log(
-                `[${callId}] Detected user speech start (energy=${energy.toFixed(2)})`
-            );
         }
 
         if (this.userSpeaking) {
@@ -663,11 +639,6 @@ export class VoiceService {
 
         this.totalAssistantAudioChunks += 1;
         const callId = this.callSid ?? "unknown";
-        if (this.totalAssistantAudioChunks <= 3 || this.totalAssistantAudioChunks % 50 === 0) {
-            console.log(
-                `[${callId}] Forwarding assistant audio chunk #${this.totalAssistantAudioChunks} to Twilio (payloadBytes=${Buffer.from(audioPayload, "base64").length})`
-            );
-        }
 
         this.ws.send(
             JSON.stringify({

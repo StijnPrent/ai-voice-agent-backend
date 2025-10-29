@@ -1867,7 +1867,7 @@ export class VapiClient {
         const payload = {
           success: false,
           error: callId
-            ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
+            ? `Geen actieve Vapi-sessie gevonden voor callId ${callId} ${this.activeSessionsByCallId}.`
             : 'Geen actieve Vapi-sessie beschikbaar voor tool webhook.',
         };
         this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
