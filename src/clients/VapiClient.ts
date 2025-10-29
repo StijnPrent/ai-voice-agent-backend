@@ -2318,6 +2318,8 @@ export class VapiClient {
     }
 
     const candidates: unknown[] = [
+      body?.message?.call?.id,
+      body?.message?.callId,
       body.callId,
       body.call_id,
       body?.call?.id,
