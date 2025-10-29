@@ -927,7 +927,48 @@ export class VapiClient {
       : [];
 
     // ✅ The Vapi Call ID is just data.id
-    const callId = (typeof data?.id === 'string' ? data.id : null) ?? null;
+    const callIdCandidates: unknown[] = [
+      data?.message?.call?.id,
+      data?.message?.callId,
+      data.callId,
+      data.call_id,
+      data?.call?.id,
+      data?.call?.callId,
+      data?.call?.call_id,
+      data?.call?.vapi_call_id,
+      data?.data?.callId,
+      data?.data?.call_id,
+      data?.data?.call?.id,
+      data?.event?.callId,
+      data?.event?.call_id,
+      data?.event?.call?.id,
+      data?.session?.callId,
+      data?.session?.call_id,
+      data?.session?.call?.id,
+      data?.toolCall?.callId,
+      data?.tool_call?.call_id,
+      data?.tool?.callId,
+      data?.tool?.call_id,
+    ];
+
+    let callId: string | null = null;
+    for (const candidate of callIdCandidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) {
+          callId = trimmed;
+          break;
+        }
+      }
+
+      if (typeof candidate === 'number' || typeof candidate === 'bigint') {
+        const text = candidate.toString().trim();
+        if (text) {
+          callId = text;
+          break;
+        }
+      }
+    }
 
     return { primaryUrl, fallbackUrls, callId };
   }
