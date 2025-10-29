@@ -899,7 +899,7 @@ export class VapiClient {
   ): Promise<{ primaryUrl: string; fallbackUrls: string[]; callId?: string | null }> {
 
     const transport = {
-      provider: this.transportProvider, // "vapi.websocket"
+      provider: this.transportProvider,
       audioFormat: {
         format: 'mulaw',
         container: 'raw',
@@ -911,6 +911,7 @@ export class VapiClient {
     const payload = { assistantId, transport };
 
     const response = await this.http.post(this.buildApiPath('/call'), payload);
+    console.log(response)
     const info = this.extractWebsocketCallInfo(response.data);
     if (!info) throw new Error('Vapi create call response did not include a websocket URL');
     return info;
@@ -1347,8 +1348,8 @@ export class VapiClient {
 
   private async executeToolCall(
     call: NormalizedToolCall,
-    session: VapiRealtimeSession,
-    callbacks: VapiRealtimeCallbacks,
+    session?: VapiRealtimeSession | null,
+    callbacks?: VapiRealtimeCallbacks | null,
   ): Promise<unknown> {
     console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
     console.log(`[VapiClient] Tool ID: ${call.id}`);
@@ -1370,7 +1371,7 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    const sessionContext = this.sessionContexts.get(session);
+    const sessionContext = this.sessionContexts.get(session!);
     const config = this.getConfigForCall(sessionContext?.callSid);
 
     let finalPayload: unknown = null;
@@ -1446,7 +1447,7 @@ export class VapiClient {
       [TOOL_NAMES.transferCall]: async () => {
         console.log(`[VapiClient] 📞 === TRANSFER CALL ===`);
 
-        if (!callbacks.onTransferCall) {
+        if (!callbacks!.onTransferCall) {
           throw new Error('Doorverbinden is niet beschikbaar in deze sessie.');
         }
 
@@ -1459,11 +1460,15 @@ export class VapiClient {
 
         console.log(`[VapiClient] Transfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
 
-        const result = await callbacks.onTransferCall({ phoneNumber, callSid, callerId, reason });
+        const result = await callbacks!.onTransferCall({ phoneNumber, callSid, callerId, reason });
+
+        if (!result) {
+          return
+        }
 
         return sendSuccess({
           message: 'Doorverbinden gestart',
-          transferredTo: result?.transferredTo ?? phoneNumber ?? null,
+          transferredTo: result.transferredTo ?? phoneNumber ?? null,
           callSid: result?.callSid ?? callSid ?? sessionCallSid ?? null,
           reason: reason ?? null,
         });
@@ -1805,102 +1810,66 @@ export class VapiClient {
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
+
+    // 1) Extract call + tool info from Vapi payloads (robust to variants)
     const callId = VapiClient.extractCallIdFromWebhook(raw);
     const rawToolCall = this.extractToolCallPayload(raw);
     const normalized = this.normalizeToolCall(rawToolCall);
-    const fallbackToolCallId = this.extractToolCallId(raw);
-    const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
-    console.log(
-      '[VapiClient] 🔎 Extracted webhook context',
-      {
-        callId: callId ?? '<none>',
-        normalizedName: normalized?.name ?? '<unknown>',
-        normalizedId: normalized?.id ?? '<none>',
-        fallbackToolCallId: fallbackToolCallId ?? '<none>',
-        finalToolCallId: toolCallId,
-      },
-    );
+    const extractedToolCallId = this.extractToolCallId(raw); // from message.toolCalls / toolCallList / toolWithToolCallList…
+    const toolCallId = normalized?.id ?? extractedToolCallId ?? `tool_${Date.now()}`;
 
+    console.log('[VapiClient] 🔎 Extracted webhook context', {
+      callId: callId ?? '<none>',
+      normalizedName: normalized?.name ?? '<unknown>',
+      normalizedId: normalized?.id ?? '<none>',
+      extractedToolCallId: extractedToolCallId ?? '<none>',
+      finalToolCallId: toolCallId,
+    });
+
+    // 2) If we can’t normalize, still echo back the *real* toolCallId
     if (!normalized) {
       console.warn('[VapiClient] ⚠️ Unable to normalize tool call payload');
-
-      // ⬇️ IMPORTANT: pull the real id from message.* and echo it back
-      const realId =
-        this.extractToolCallId(raw)  // now checks message.toolCalls / toolCallList / toolWithToolCallList
-        ?? toolCallId                // keep your earlier computed value as fallback
-        ?? `tool_${Date.now()}`;
-
+      const realId = extractedToolCallId ?? toolCallId;
       const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
-
       this.recordToolResponse(realId, payload, null);
-
       return { results: [{ toolCallId: realId, result: payload }] };
     }
 
+    // 3) Try to find a matching realtime session (nice-to-have, not required)
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
-    console.log(
-      '[VapiClient] 🔍 Session lookup result',
-      {
-        callId: callId ?? '<none>',
-        sessionFound: Boolean(sessionInfo),
-        activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
-        totalActiveSessions: this.activeSessionsByCallId.size,
-      },
-    );
-    if (!sessionInfo) {
-      // Try to find session by any available callId in the active sessions
-      let fallbackSessionInfo: { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string } | undefined;
-      
-      if (this.activeSessionsByCallId.size > 0) {
-        // If we have active sessions but no matching callId, use the first available session
-        const firstCallId = Array.from(this.activeSessionsByCallId.keys())[0];
-        fallbackSessionInfo = this.activeSessionsByCallId.get(firstCallId);
-        console.log(`[VapiClient] 🔄 Using fallback session for callId: ${firstCallId}`);
-      }
-      
-      const sessionToUse = sessionInfo || fallbackSessionInfo;
-      
-      if (!sessionToUse) {
-        const recorded = this.toolResponseLog.get(toolCallId);
-        if (recorded?.payload) {
-          console.log(
-            `[VapiClient] ♻️ Returning cached tool response for ${toolCallId} (no active session)`,
-          );
-          const response = { results: [{ toolCallId, result: recorded.payload }] };
-          logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
-          return response;
-        }
-        const payload = {
-          success: false,
-          error: callId
-            ? `Geen actieve Vapi-sessie gevonden voor callId ${callId} ${Array.from(this.activeSessionsByCallId.keys())}.`
-            : 'Geen actieve Vapi-sessie beschikbaar voor tool webhook.',
-        };
-        this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
-        const response = { results: [{ toolCallId, result: payload }] };
-        logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
-        return response;
-      }
 
-      // Use the fallback session
-      const payload =
-        await this.executeToolCall(normalized, sessionToUse.session, sessionToUse.callbacks)
-        ?? { success: false, error: 'Tool execution returned empty result.' };
+    console.log('[VapiClient] 🔍 Session lookup result', {
+      callId: callId ?? '<none>',
+      sessionFound: Boolean(sessionInfo),
+      activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
+      totalActiveSessions: this.activeSessionsByCallId.size,
+    });
 
-      logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
-      const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-      logPayload('[VapiClient] ⇨ Tool webhook response (fallback session)', response);
-      return response;
+    // 4) Execute tool call — stateless if no live session
+    let payload: unknown;
+    try {
+      payload =
+        (await this.executeToolCall(
+          normalized,
+          sessionInfo?.session ?? null,
+          sessionInfo?.callbacks ?? null,
+        )) ?? { success: false, error: 'Tool execution returned empty result.' };
+    } catch (err) {
+      console.error('[VapiClient] ❌ executeToolCall threw', err);
+      payload = {
+        success: false,
+        error:
+          err instanceof Error
+            ? err.message || 'Tool execution failed.'
+            : 'Tool execution failed.',
+        details: err,
+      };
     }
 
-    const payload =
-      await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks)
-      ?? { success: false, error: 'Tool execution returned empty result.' };
-
-    // IMPORTANT: return the RAW payload object (not stringified, not just a message)
+    // 5) Return RAW payload with the exact toolCallId Vapi expects
     logPayload('[VapiClient] 📦 Tool execution payload', payload);
-    const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-    logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
+    const response = { results: [{ toolCallId, result: payload }] };
+    logPayload('[VapiClient] ⇨ Tool webhook response', response);
     return response;
   }
 
