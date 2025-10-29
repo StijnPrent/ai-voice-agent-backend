@@ -805,9 +805,7 @@ export class VapiClient {
     ws.on('message', async (raw, isBinary) => {
       if (isBinary) {
         const buffer = this.normalizeBinaryAudioFrame(raw);
-        if (buffer?.length && callbacks.onAudio) {
-          callbacks.onAudio(buffer.toString('base64'));
-        }
+        if (buffer?.length && callbacks.onAudio) callbacks.onAudio(buffer.toString('base64'));
         return;
       }
 
@@ -816,6 +814,21 @@ export class VapiClient {
 
       try {
         const parsed = JSON.parse(s);
+
+        // 👉 Late-bind the Vapi callId if /call response didn’t include it
+        const runtimeCallId =
+          parsed?.message?.call?.id ??
+          parsed?.call?.id ??
+          parsed?.session?.call?.id ??
+          null;
+
+        if (runtimeCallId && !this.activeSessionsByCallId.has(runtimeCallId)) {
+          this.activeSessionsByCallId.set(runtimeCallId, { session, callbacks, callSid });
+          const ctx = this.sessionContexts.get(session);
+          if (ctx) ctx.callId = runtimeCallId;
+          console.log(`[${callSid}] [Vapi] Late-registered callId=${runtimeCallId}`);
+        }
+
         await this.handleRealtimeEvent(parsed, session, callbacks);
       } catch (e) {
         console.error(`[${callSid}] [Vapi] Bad JSON frame`, s.slice(0, 120), e);
@@ -909,7 +922,6 @@ export class VapiClient {
   ): { primaryUrl: string; fallbackUrls: string[]; callId?: string | null } | null {
     if (!data) return null;
 
-    // Explicit, no recursion.
     const primaryUrl =
       data?.transport?.websocketCallUrl ??
       data?.websocketCallUrl ??
@@ -920,30 +932,37 @@ export class VapiClient {
       return null;
     }
 
-    // If Vapi ever adds fallbacks, pick them up here (otherwise empty).
     const fallbackUrls = Array.isArray(data?.transport?.fallbackUrls)
       ? data.transport.fallbackUrls.filter((u: any) => typeof u === 'string' && u.startsWith('ws'))
       : [];
 
-    // ✅ The Vapi Call ID is just data.id
+    // Try legacy/common locations FIRST, then everything else
     const callIdCandidates: unknown[] = [
+      data?.id,                      // ← most common on POST /call
+      data?.session?.id,
+      data?.call?.id,
+
       data?.message?.call?.id,
       data?.message?.callId,
-      data.callId,
-      data.call_id,
-      data?.call?.id,
+
+      data?.callId,
+      data?.call_id,
       data?.call?.callId,
       data?.call?.call_id,
       data?.call?.vapi_call_id,
+
+      data?.data?.call?.id,
       data?.data?.callId,
       data?.data?.call_id,
-      data?.data?.call?.id,
+
+      data?.event?.call?.id,
       data?.event?.callId,
       data?.event?.call_id,
-      data?.event?.call?.id,
+
+      data?.session?.call?.id,
       data?.session?.callId,
       data?.session?.call_id,
-      data?.session?.call?.id,
+
       data?.toolCall?.callId,
       data?.tool_call?.call_id,
       data?.tool?.callId,
@@ -951,21 +970,10 @@ export class VapiClient {
     ];
 
     let callId: string | null = null;
-    for (const candidate of callIdCandidates) {
-      if (typeof candidate === 'string') {
-        const trimmed = candidate.trim();
-        if (trimmed) {
-          callId = trimmed;
-          break;
-        }
-      }
-
-      if (typeof candidate === 'number' || typeof candidate === 'bigint') {
-        const text = candidate.toString().trim();
-        if (text) {
-          callId = text;
-          break;
-        }
+    for (const c of callIdCandidates) {
+      if (typeof c === 'string' && c.trim()) { callId = c.trim(); break; }
+      if ((typeof c === 'number' || typeof c === 'bigint') && `${c}`.trim()) {
+        callId = `${c}`.trim(); break;
       }
     }
 
