@@ -2112,12 +2112,13 @@ export class VapiClient {
 
   public async handleToolWebhookRequest(
     body: unknown,
+    callIdHint?: string | null,
   ): Promise<{ results: Array<{ toolCallId: string; result?: any; error?: any }> }> {
     console.log('[VapiClient] 🌐 Received tool webhook payload');
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
-    const callId = VapiClient.extractCallIdFromWebhook(raw);
+    const callId = callIdHint ?? VapiClient.extractCallIdFromWebhook(raw);
     const rawToolCall = this.extractToolCallPayload(raw);
     const normalized = this.normalizeToolCall(rawToolCall);
     const fallbackToolCallId = this.extractToolCallId(raw);
@@ -2130,6 +2131,7 @@ export class VapiClient {
         normalizedId: normalized?.id ?? '<none>',
         fallbackToolCallId: fallbackToolCallId ?? '<none>',
         finalToolCallId: toolCallId,
+        callIdHint: callIdHint ?? '<none>',
       },
     );
 
@@ -2186,21 +2188,21 @@ export class VapiClient {
           success: false,
           error: callId
             ? `Geen actieve Vapi-sessie gevonden voor callId ${callId}.`
-            : 'callId ontbreekt in tool webhook payload.',
+            : 'Geen actieve Vapi-sessie beschikbaar voor tool webhook.',
         };
         this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
         const response = { results: [{ toolCallId, result: payload }] };
         logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
         return response;
       }
-      
+
       // Use the fallback session
       const payload =
         await this.executeToolCall(normalized, sessionToUse.session, sessionToUse.callbacks)
         ?? { success: false, error: 'Tool execution returned empty result.' };
 
       logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
-      const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+      const response = { results: [{ toolCallId, result: payload }] };
       logPayload('[VapiClient] ⇨ Tool webhook response (fallback session)', response);
       return response;
     }
@@ -2211,7 +2213,7 @@ export class VapiClient {
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
     logPayload('[VapiClient] 📦 Tool execution payload', payload);
-    const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+    const response = { results: [{ toolCallId, result: payload }] };
     logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
     return response;
   }

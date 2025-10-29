@@ -511,9 +511,10 @@ export class VoiceService {
         return this.callSid;
     }
 
-    public async handleVapiToolWebhook(body: unknown) {
+    public async handleVapiToolWebhook(body: unknown, callIdHint?: string | null) {
         const callSid = this.callSid ?? "unknown";
-        const callId = VapiClient.extractCallIdFromWebhook(body);
+        const bodyCallId = VapiClient.extractCallIdFromWebhook(body);
+        const callId = callIdHint ?? bodyCallId ?? this.vapiCallId ?? null;
         const contextLabel = VapiClient.formatToolLogContext({
             callSid: this.callSid,
             callId,
@@ -526,7 +527,8 @@ export class VoiceService {
             console.warn(`[${callSid}] [VoiceService] ⚠️ Failed to preview incoming tool webhook ${contextLabel}`, error);
         }
 
-        const result = await this.vapiClient.handleToolWebhookRequest(body);
+        const callIdForWebhook = callIdHint ?? bodyCallId ?? this.vapiCallId ?? null;
+        const result = await this.vapiClient.handleToolWebhookRequest(body, callIdForWebhook);
 
         try {
             const preview = this.safeSerialize(result);
