@@ -790,7 +790,7 @@ export class VapiClient {
     if (callId) {
       this.activeSessionsByCallId.set(callId, { session, callbacks, callSid });
     }
-    console.log(Array.from(this.activeSessionsByCallId.keys()));
+    console.log(`[${callSid}] [Vapi] Registered active session (total=${this.activeSessionsByCallId.size})`);
 
     const keepAlive = setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) {
