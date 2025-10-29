@@ -790,6 +790,7 @@ export class VapiClient {
     if (callId) {
       this.activeSessionsByCallId.set(callId, { session, callbacks, callSid });
     }
+    console.log(Array.from(this.activeSessionsByCallId.keys()));
 
     const keepAlive = setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -911,7 +912,6 @@ export class VapiClient {
     const payload = { assistantId, transport };
 
     const response = await this.http.post(this.buildApiPath('/call'), payload);
-    console.log(response)
     const info = this.extractWebsocketCallInfo(response.data);
     if (!info) throw new Error('Vapi create call response did not include a websocket URL');
     return info;
@@ -1810,66 +1810,102 @@ export class VapiClient {
     logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
-
-    // 1) Extract call + tool info from Vapi payloads (robust to variants)
     const callId = VapiClient.extractCallIdFromWebhook(raw);
     const rawToolCall = this.extractToolCallPayload(raw);
     const normalized = this.normalizeToolCall(rawToolCall);
-    const extractedToolCallId = this.extractToolCallId(raw); // from message.toolCalls / toolCallList / toolWithToolCallList…
-    const toolCallId = normalized?.id ?? extractedToolCallId ?? `tool_${Date.now()}`;
+    const fallbackToolCallId = this.extractToolCallId(raw);
+    const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
+    console.log(
+      '[VapiClient] 🔎 Extracted webhook context',
+      {
+        callId: callId ?? '<none>',
+        normalizedName: normalized?.name ?? '<unknown>',
+        normalizedId: normalized?.id ?? '<none>',
+        fallbackToolCallId: fallbackToolCallId ?? '<none>',
+        finalToolCallId: toolCallId,
+      },
+    );
 
-    console.log('[VapiClient] 🔎 Extracted webhook context', {
-      callId: callId ?? '<none>',
-      normalizedName: normalized?.name ?? '<unknown>',
-      normalizedId: normalized?.id ?? '<none>',
-      extractedToolCallId: extractedToolCallId ?? '<none>',
-      finalToolCallId: toolCallId,
-    });
-
-    // 2) If we can’t normalize, still echo back the *real* toolCallId
     if (!normalized) {
       console.warn('[VapiClient] ⚠️ Unable to normalize tool call payload');
-      const realId = extractedToolCallId ?? toolCallId;
+
+      // ⬇️ IMPORTANT: pull the real id from message.* and echo it back
+      const realId =
+        this.extractToolCallId(raw)  // now checks message.toolCalls / toolCallList / toolWithToolCallList
+        ?? toolCallId                // keep your earlier computed value as fallback
+        ?? `tool_${Date.now()}`;
+
       const payload = { success: false, error: 'Kon tool-aanroep niet verwerken (ongeldig formaat).' };
+
       this.recordToolResponse(realId, payload, null);
+
       return { results: [{ toolCallId: realId, result: payload }] };
     }
 
-    // 3) Try to find a matching realtime session (nice-to-have, not required)
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
+    console.log(
+      '[VapiClient] 🔍 Session lookup result',
+      {
+        callId: callId ?? '<none>',
+        sessionFound: Boolean(sessionInfo),
+        activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
+        totalActiveSessions: this.activeSessionsByCallId.size,
+      },
+    );
+    if (!sessionInfo) {
+      // Try to find session by any available callId in the active sessions
+      let fallbackSessionInfo: { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string } | undefined;
 
-    console.log('[VapiClient] 🔍 Session lookup result', {
-      callId: callId ?? '<none>',
-      sessionFound: Boolean(sessionInfo),
-      activeTrackedCallIds: Array.from(this.activeSessionsByCallId.keys()),
-      totalActiveSessions: this.activeSessionsByCallId.size,
-    });
+      if (this.activeSessionsByCallId.size > 0) {
+        // If we have active sessions but no matching callId, use the first available session
+        const firstCallId = Array.from(this.activeSessionsByCallId.keys())[0];
+        fallbackSessionInfo = this.activeSessionsByCallId.get(firstCallId);
+        console.log(`[VapiClient] 🔄 Using fallback session for callId: ${firstCallId}`);
+      }
 
-    // 4) Execute tool call — stateless if no live session
-    let payload: unknown;
-    try {
-      payload =
-        (await this.executeToolCall(
-          normalized,
-          sessionInfo?.session ?? null,
-          sessionInfo?.callbacks ?? null,
-        )) ?? { success: false, error: 'Tool execution returned empty result.' };
-    } catch (err) {
-      console.error('[VapiClient] ❌ executeToolCall threw', err);
-      payload = {
-        success: false,
-        error:
-          err instanceof Error
-            ? err.message || 'Tool execution failed.'
-            : 'Tool execution failed.',
-        details: err,
-      };
+      const sessionToUse = sessionInfo || fallbackSessionInfo;
+
+      if (!sessionToUse) {
+        const recorded = this.toolResponseLog.get(toolCallId);
+        if (recorded?.payload) {
+          console.log(
+            `[VapiClient] ♻️ Returning cached tool response for ${toolCallId} (no active session)`,
+          );
+          const response = { results: [{ toolCallId, result: recorded.payload }] };
+          logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+          return response;
+        }
+        const payload = {
+          success: false,
+          error: callId
+            ? `Geen actieve Vapi-sessie gevonden voor callId ${callId} ${Array.from(this.activeSessionsByCallId.keys())}.`
+            : 'Geen actieve Vapi-sessie beschikbaar voor tool webhook.',
+        };
+        this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
+        const response = { results: [{ toolCallId, result: payload }] };
+        logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
+        return response;
+      }
+
+      // Use the fallback session
+      const payload =
+        await this.executeToolCall(normalized, sessionToUse.session, sessionToUse.callbacks)
+        ?? { success: false, error: 'Tool execution returned empty result.' };
+
+      logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
+      const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+      logPayload('[VapiClient] ⇨ Tool webhook response (fallback session)', response);
+      return response;
     }
 
-    // 5) Return RAW payload with the exact toolCallId Vapi expects
+    const payload =
+      await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks)
+      ?? { success: false, error: 'Tool execution returned empty result.' };
+
+    // IMPORTANT: return the RAW payload object (not stringified, not just a message)
     logPayload('[VapiClient] 📦 Tool execution payload', payload);
-    const response = { results: [{ toolCallId, result: payload }] };
-    logPayload('[VapiClient] ⇨ Tool webhook response', response);
+    const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+    logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
     return response;
   }
 
