@@ -22,6 +22,7 @@ export class VapiRoute {
       try {
 
         const callId = VapiClient.extractCallIdFromWebhook(req.body);
+        console.log(`[VapiRoute] 📬 Received tool webhook for callId=${callId ?? "<none>"}`);
         const activeCallSids = this.sessionManager.listActiveCallSids();
         console.log(
           `[VapiRoute] 🔍 Extracted callId=${callId ?? "<none>"} (activeCallSids=${
