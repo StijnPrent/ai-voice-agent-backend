@@ -53,8 +53,8 @@ export class VapiRoute {
         }
 
         const result = voiceService
-          ? await voiceService.handleVapiToolWebhook(req.body, callId)
-          : await container.resolve(VapiClient).handleToolWebhookRequest(req.body, callId);
+          ? await voiceService.handleVapiToolWebhook(req.body)
+          : await container.resolve(VapiClient).handleToolWebhookRequest(req.body);
         res.status(200).json(result);
       } catch (error) {
         console.error("[VapiRoute] Tool webhook error", error);
