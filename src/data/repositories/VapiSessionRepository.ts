@@ -20,6 +20,7 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
                 call_sid VARCHAR(191) NULL,
                 worker_id VARCHAR(191) NOT NULL,
                 worker_address VARCHAR(512) NULL,
+                config_json LONGTEXT NULL,
                 registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 expires_at DATETIME NULL,
                 INDEX idx_worker_id (worker_id)
@@ -27,6 +28,13 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
         `;
 
         await this.pool.query(sql);
+
+        const alterSql = `
+            ALTER TABLE vapi_active_sessions
+            ADD COLUMN IF NOT EXISTS config_json LONGTEXT NULL
+        `;
+
+        await this.pool.query(alterSql);
         this.initialized = true;
     }
 
@@ -35,8 +43,8 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
 
         const sql = `
             REPLACE INTO vapi_active_sessions
-                (call_id, call_sid, worker_id, worker_address, registered_at, expires_at)
-            VALUES (?, ?, ?, ?, NOW(), ?)
+                (call_id, call_sid, worker_id, worker_address, config_json, registered_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), ?)
         `;
 
         await this.pool.query(sql, [
@@ -44,6 +52,7 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
             input.callSid,
             input.workerId,
             input.workerAddress,
+            input.configJson,
             input.expiresAt,
         ]);
     }
@@ -65,7 +74,8 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
                 worker_id AS workerId,
                 worker_address AS workerAddress,
                 registered_at AS registeredAt,
-                expires_at AS expiresAt
+                expires_at AS expiresAt,
+                config_json AS configJson
             FROM vapi_active_sessions
             WHERE call_id = ?
             LIMIT 1
@@ -84,6 +94,7 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
             workerAddress: row.workerAddress ? String(row.workerAddress) : null,
             registeredAt: row.registeredAt instanceof Date ? row.registeredAt : null,
             expiresAt: row.expiresAt instanceof Date ? row.expiresAt : null,
+            configJson: typeof row.configJson === "string" ? row.configJson : null,
         };
     }
 

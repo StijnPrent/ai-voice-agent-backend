@@ -14,8 +14,8 @@ import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
 import type { CalendarAvailability } from '../business/services/GoogleService';
-import { VapiSessionRegistry } from '../business/services/VapiSessionRegistry';
-import { getWorkerId, getWorkerInternalUrl } from '../config/workerIdentity';
+import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
+import { getWorkerId } from '../config/workerIdentity';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -228,7 +228,6 @@ export class VapiClient {
   private currentConfig: VapiAssistantConfig | null = null;
   private toolResults = new Map<string, unknown>();
   private readonly workerId: string;
-  private readonly workerInternalUrl: string | null;
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
@@ -248,7 +247,6 @@ export class VapiClient {
     this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
 
     this.workerId = getWorkerId();
-    this.workerInternalUrl = getWorkerInternalUrl();
 
     this.http = axios.create({
       baseURL: apiBaseUrl,
@@ -1360,8 +1358,12 @@ export class VapiClient {
 
   private async executeToolCall(
     call: NormalizedToolCall,
-    session?: VapiRealtimeSession | null,
-    callbacks?: VapiRealtimeCallbacks | null,
+    context: {
+      session?: VapiRealtimeSession | null;
+      callbacks?: VapiRealtimeCallbacks | null;
+      callSid?: string | null;
+      config?: VapiAssistantConfig | null;
+    },
   ): Promise<unknown> {
     console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
     console.log(`[VapiClient] Tool ID: ${call.id}`);
@@ -1383,8 +1385,11 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    const sessionContext = this.sessionContexts.get(session!);
-    const config = this.getConfigForCall(sessionContext?.callSid);
+    const sessionRef = context.session ?? null;
+    const callbacks = context.callbacks ?? null;
+    const sessionContext = sessionRef ? this.sessionContexts.get(sessionRef) ?? null : null;
+    const callSidForConfig = context.callSid ?? sessionContext?.callSid ?? null;
+    const config = context.config ?? this.getConfigForCall(callSidForConfig);
 
     let finalPayload: unknown = null;
     let payloadWasSet = false;
@@ -1459,12 +1464,13 @@ export class VapiClient {
       [TOOL_NAMES.transferCall]: async () => {
         console.log(`[VapiClient] 📞 === TRANSFER CALL ===`);
 
-        if (!callbacks!.onTransferCall) {
+        const transferCallback = callbacks?.onTransferCall;
+        if (!transferCallback) {
           throw new Error('Doorverbinden is niet beschikbaar in deze sessie.');
         }
 
         const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
-        const sessionCallSid = sessionContext?.callSid ?? null;
+        const sessionCallSid = sessionContext?.callSid ?? callSidForConfig ?? null;
         const callSidFromArgs = this.normalizeStringArg(args['callSid']);
         const callSid = callSidFromArgs ?? sessionCallSid;
         const callerId = this.normalizeStringArg(args['callerId']);
@@ -1472,7 +1478,7 @@ export class VapiClient {
 
         console.log(`[VapiClient] Transfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
 
-        const result = await callbacks!.onTransferCall({ phoneNumber, callSid, callerId, reason });
+        const result = await transferCallback({ phoneNumber, callSid, callerId, reason });
 
         if (!result) {
           return
@@ -1865,6 +1871,39 @@ export class VapiClient {
       },
     );
     if (!sessionInfo) {
+      let registryContext: { callSid: string | null; config: VapiAssistantConfig | null } | null = null;
+      if (callId) {
+        registryContext = await this.loadSessionContextFromRegistry(callId);
+        if (registryContext?.config) {
+          try {
+            const payload =
+              (await this.executeToolCall(normalized, {
+                session: null,
+                callbacks: null,
+                callSid: registryContext.callSid,
+                config: registryContext.config,
+              })) ?? { success: false, error: 'Tool execution returned empty result.' };
+
+            logPayload('[VapiClient] 📦 Tool execution payload (registry session)', payload);
+            const response = { results: [{ toolCallId: normalized.id, result: payload }] };
+            logPayload('[VapiClient] ⇨ Tool webhook response (registry session)', response);
+            return response;
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : 'Tool execution failed for registry session.';
+            console.error('[VapiClient] ❌ Registry-backed tool execution failed', {
+              callId,
+              error,
+            });
+            const payload = { success: false, error: message };
+            this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
+            const response = { results: [{ toolCallId, result: payload }] };
+            logPayload('[VapiClient] ⇨ Tool webhook response (registry session error)', response);
+            return response;
+          }
+        }
+      }
+
       // Try to find session by any available callId in the active sessions
       let fallbackSessionInfo: { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string } | undefined;
 
@@ -1901,7 +1940,11 @@ export class VapiClient {
 
       // Use the fallback session
       const payload =
-        await this.executeToolCall(normalized, sessionToUse.session, sessionToUse.callbacks)
+        await this.executeToolCall(normalized, {
+          session: sessionToUse.session,
+          callbacks: sessionToUse.callbacks,
+          callSid: sessionToUse.callSid,
+        })
         ?? { success: false, error: 'Tool execution returned empty result.' };
 
       logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
@@ -1911,7 +1954,11 @@ export class VapiClient {
     }
 
     const payload =
-      await this.executeToolCall(normalized, sessionInfo.session, sessionInfo.callbacks)
+      await this.executeToolCall(normalized, {
+        session: sessionInfo.session,
+        callbacks: sessionInfo.callbacks,
+        callSid: sessionInfo.callSid,
+      })
       ?? { success: false, error: 'Tool execution returned empty result.' };
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
@@ -1968,15 +2015,63 @@ export class VapiClient {
 
   private async persistSharedSession(callId: string, callSid: string) {
     try {
+      const config = this.getConfigForCall(callSid);
       await this.sessionRegistry.registerSession({
         callId,
         callSid,
         workerId: this.workerId,
-        workerAddress: this.workerInternalUrl ?? undefined,
+        config,
       });
     } catch (error) {
       console.error(`[${callSid}] [Vapi] Failed to persist session mapping`, error);
     }
+  }
+
+  private async loadSessionContextFromRegistry(
+    callId: string,
+  ): Promise<{ callSid: string | null; config: VapiAssistantConfig | null }> {
+    try {
+      const record = await this.sessionRegistry.findSession(callId);
+      if (!record) {
+        console.warn(`[VapiClient] 📭 No registry session found for callId=${callId}`);
+        return { callSid: null, config: null };
+      }
+
+      const config = this.resolveConfigFromRecord(record);
+      return {
+        callSid: record.callSid ?? null,
+        config,
+      };
+    } catch (error) {
+      console.error('[VapiClient] ❌ Failed to load session context from registry', { callId, error });
+      return { callSid: null, config: null };
+    }
+  }
+
+  private resolveConfigFromRecord(record: VapiSessionRecord): VapiAssistantConfig | null {
+    const existingConfig = record.callSid ? this.getConfigForCall(record.callSid) : null;
+    if (existingConfig) {
+      return existingConfig;
+    }
+
+    if (record.configJson) {
+      try {
+        const parsed = JSON.parse(record.configJson) as VapiAssistantConfig;
+        if (record.callSid) {
+          this.sessionConfigs.set(record.callSid, parsed);
+        } else {
+          this.currentConfig = parsed;
+        }
+        return parsed;
+      } catch (error) {
+        console.error('[VapiClient] ❌ Failed to parse registry session config', {
+          callId: record.callId,
+          error,
+        });
+      }
+    }
+
+    return null;
   }
 
   private extractToolCallPayload(body: any): any {

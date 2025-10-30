@@ -38,7 +38,6 @@ import { AnalyticsRepository } from "../data/repositories/AnalyticsRepository";
 import { VapiSessionRegistry } from "../business/services/VapiSessionRegistry";
 import { IVapiSessionRepository } from "../data/interfaces/IVapiSessionRepository";
 import { VapiSessionRepository } from "../data/repositories/VapiSessionRepository";
-import InternalVapiRoute from "../routes/InternalVapiRoute";
 import { VapiRoute } from "../routes/VapiRoute";
 
 // Register all clients in the container
@@ -57,7 +56,6 @@ container.register("OutlookCalendarClient", {
 container.registerSingleton(VoiceSessionManager, VoiceSessionManager);
 container.registerSingleton(VapiSessionRegistry, VapiSessionRegistry);
 container.registerSingleton(VapiRoute, VapiRoute);
-container.registerSingleton(InternalVapiRoute, InternalVapiRoute);
 container.register(VoiceService, { useClass: VoiceService });
 container.register(GoogleService, { useClass: GoogleService });
 container.register("OutlookService", { useClass: OutlookService });
