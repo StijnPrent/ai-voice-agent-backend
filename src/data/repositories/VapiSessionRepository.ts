@@ -14,7 +14,7 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
             return;
         }
 
-        const sql = `
+        const createSql = `
             CREATE TABLE IF NOT EXISTS vapi_active_sessions (
                 call_id VARCHAR(191) PRIMARY KEY,
                 call_sid VARCHAR(191) NULL,
@@ -27,14 +27,23 @@ export class VapiSessionRepository extends BaseRepository implements IVapiSessio
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `;
 
-        await this.pool.query(sql);
+        await this.pool.query(createSql);
 
-        const alterSql = `
-            ALTER TABLE vapi_active_sessions
-            ADD COLUMN IF NOT EXISTS config_json LONGTEXT NULL
-        `;
+        const [rows] = await this.pool.query<RowDataPacket[]>(
+            "SHOW COLUMNS FROM vapi_active_sessions LIKE 'config_json'",
+        );
 
-        await this.pool.query(alterSql);
+        const hasConfigColumn = Array.isArray(rows) && rows.length > 0;
+
+        if (!hasConfigColumn) {
+            const alterSql = `
+                ALTER TABLE vapi_active_sessions
+                ADD COLUMN config_json LONGTEXT NULL AFTER worker_address
+            `;
+
+            await this.pool.query(alterSql);
+        }
+
         this.initialized = true;
     }
 
