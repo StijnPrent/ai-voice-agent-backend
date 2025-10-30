@@ -14,6 +14,8 @@ import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
 import type { CalendarAvailability } from '../business/services/GoogleService';
+import { VapiSessionRegistry } from '../business/services/VapiSessionRegistry';
+import { getWorkerId, getWorkerInternalUrl } from '../config/workerIdentity';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -225,8 +227,13 @@ export class VapiClient {
   >();
   private currentConfig: VapiAssistantConfig | null = null;
   private toolResults = new Map<string, unknown>();
+  private readonly workerId: string;
+  private readonly workerInternalUrl: string | null;
 
-  constructor(@inject(GoogleService) private readonly googleService: GoogleService) {
+  constructor(
+    @inject(GoogleService) private readonly googleService: GoogleService,
+    @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
+  ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
       console.warn('[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.');
@@ -239,6 +246,9 @@ export class VapiClient {
     this.transportProvider = 'vapi.websocket';
 
     this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
+
+    this.workerId = getWorkerId();
+    this.workerInternalUrl = getWorkerInternalUrl();
 
     this.http = axios.create({
       baseURL: apiBaseUrl,
@@ -789,6 +799,7 @@ export class VapiClient {
     });
     if (callId) {
       this.activeSessionsByCallId.set(callId, { session, callbacks, callSid });
+      await this.persistSharedSession(callId, callSid);
     }
     console.log(`[${callSid}] [Vapi] Registered active session (total=${this.activeSessionsByCallId.size})`);
 
@@ -828,6 +839,7 @@ export class VapiClient {
           const ctx = this.sessionContexts.get(session);
           if (ctx) ctx.callId = runtimeCallId;
           console.log(`[${callSid}] [Vapi] Late-registered callId=${runtimeCallId}`);
+          await this.persistSharedSession(runtimeCallId, callSid);
         }
 
         await this.handleRealtimeEvent(parsed, session, callbacks);
@@ -1942,8 +1954,29 @@ export class VapiClient {
         context.callId,
       );
       this.activeSessionsByCallId.delete(context.callId);
+      void this.sessionRegistry
+        .unregisterSession(context.callId)
+        .catch((error) =>
+          console.error('[VapiClient] Failed to unregister session from registry', {
+            callId: context.callId,
+            error,
+          }),
+        );
     }
     this.sessionContexts.delete(session);
+  }
+
+  private async persistSharedSession(callId: string, callSid: string) {
+    try {
+      await this.sessionRegistry.registerSession({
+        callId,
+        callSid,
+        workerId: this.workerId,
+        workerAddress: this.workerInternalUrl ?? undefined,
+      });
+    } catch (error) {
+      console.error(`[${callSid}] [Vapi] Failed to persist session mapping`, error);
+    }
   }
 
   private extractToolCallPayload(body: any): any {
