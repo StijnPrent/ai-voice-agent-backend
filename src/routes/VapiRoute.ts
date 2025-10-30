@@ -1,8 +1,11 @@
+import axios from "axios";
 import { Router } from "express";
 import { inject, injectable } from "tsyringe";
 import type { VoiceService } from "../business/services/VoiceService";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 import { VapiClient } from "../clients/VapiClient";
+import { VapiSessionRegistry, VapiSessionRecord } from "../business/services/VapiSessionRegistry";
+import { workerIdentity } from "../config/workerIdentity";
 
 @injectable()
 export class VapiRoute {
@@ -69,6 +72,55 @@ export class VapiRoute {
         });
       }
     });
+  }
+
+  private async tryProxyWebhook(
+    registryEntry: VapiSessionRecord | null,
+    body: unknown,
+    callId: string | null,
+  ): Promise<{ status: number; payload: unknown } | null> {
+    if (!registryEntry) {
+      return null;
+    }
+
+    if (!registryEntry.workerId || registryEntry.workerId === this.workerId) {
+      return null;
+    }
+
+    if (!registryEntry.workerAddress) {
+      console.warn(
+        `[VapiRoute] ⚠️ Registry entry for callId=${registryEntry.callId} is missing worker address. Cannot proxy request.`,
+      );
+      return null;
+    }
+
+    const targetUrl = this.buildProxyUrl(registryEntry.workerAddress);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (this.proxyToken) {
+      headers["x-internal-tool-proxy-token"] = this.proxyToken;
+    }
+    if (callId) {
+      headers["x-vapi-call-id"] = callId;
+    }
+
+    try {
+      console.log(
+        `[VapiRoute] 🔁 Proxying tool webhook for callId=${registryEntry.callId} to worker=${registryEntry.workerId} (${targetUrl})`,
+      );
+      const response = await axios.post(targetUrl, body, {
+        headers,
+        timeout: 10000,
+      });
+      return { status: response.status, payload: response.data };
+    } catch (error) {
+      console.error(
+        `[VapiRoute] ❌ Failed to proxy tool webhook to worker=${registryEntry.workerId} (${targetUrl})`,
+        error,
+      );
+      return null;
+    }
   }
 
   private resolveVoiceService(body: unknown, explicitCallId?: string | null): VoiceService | undefined {
