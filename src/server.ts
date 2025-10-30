@@ -17,11 +17,13 @@ import schedulingRoute from "./routes/SchedulingRoute";
 import callRoute from "./routes/CallRoute";
 import analyticsRoute from "./routes/AnalyticsRoute";
 import { VapiRoute } from "./routes/VapiRoute";
+import InternalVapiRoute from "./routes/InternalVapiRoute";
 
 const app = express();
 
 const voiceSessionManager = container.resolve(VoiceSessionManager);
 const vapiRoute = container.resolve(VapiRoute);
+const internalVapiRoute = container.resolve(InternalVapiRoute);
 
 app.set("trust proxy", true);
 
@@ -44,6 +46,7 @@ app.use("/scheduling", schedulingRoute)
 app.use("/calls", callRoute)
 app.use("/analytics", analyticsRoute)
 app.use("/vapi", vapiRoute.getRouter())
+app.use("/internal/vapi", internalVapiRoute.getRouter())
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
