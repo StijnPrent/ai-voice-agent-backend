@@ -2038,6 +2038,22 @@ export class VapiClient {
       }
 
       const config = this.resolveConfigFromRecord(record);
+
+      try {
+        await this.sessionRegistry.registerSession({
+          callId: record.callId,
+          callSid: record.callSid ?? undefined,
+          workerId: this.workerId,
+          workerAddress: record.workerAddress ?? undefined,
+          config,
+        });
+      } catch (error) {
+        console.error('[VapiClient] ⚠️ Failed to refresh session TTL in registry', {
+          callId,
+          error,
+        });
+      }
+
       return {
         callSid: record.callSid ?? null,
         config,
