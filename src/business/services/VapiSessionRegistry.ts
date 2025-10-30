@@ -1,5 +1,6 @@
 import { inject, injectable } from "tsyringe";
 import { workerIdentity } from "../../config/workerIdentity";
+import type { VapiAssistantConfig } from "../../clients/VapiClient";
 import {
   IVapiSessionRepository,
   UpsertVapiSessionInput,
@@ -14,7 +15,7 @@ type RegisterSessionInput = {
   workerId: string;
   workerAddress?: string | null;
   ttlSeconds?: number;
-  config?: unknown;
+  config?: VapiAssistantConfig | null;
 };
 
 @injectable()
@@ -38,15 +39,7 @@ export class VapiSessionRegistry {
     const ttlSeconds = input.ttlSeconds ?? this.defaultTtlSeconds;
     const expiresAt = ttlSeconds > 0 ? new Date(Date.now() + ttlSeconds * 1000) : null;
 
-    let configJson: string | null = null;
-
-    if (typeof input.config !== 'undefined') {
-      try {
-        configJson = input.config === null ? null : JSON.stringify(input.config);
-      } catch (error) {
-        console.error('[VapiSessionRegistry] Failed to serialize session config', { callId, error });
-      }
-    }
+    const configJson = this.serializeConfig(callId, input.config);
 
     const record: UpsertVapiSessionInput = {
       callId,
@@ -118,6 +111,28 @@ export class VapiSessionRegistry {
       await this.repository.clearWorkerSessions(workerIdentity.id);
     } catch (error) {
       console.error("[VapiSessionRegistry] Failed to initialize", error);
+    }
+  }
+
+  private serializeConfig(
+    callId: string,
+    config: VapiAssistantConfig | null | undefined,
+  ): string | null {
+    if (typeof config === 'undefined') {
+      return null;
+    }
+
+    if (config === null) {
+      return null;
+    }
+
+    try {
+      return JSON.stringify(config, (_key, value) =>
+        typeof value === 'bigint' ? value.toString() : value,
+      );
+    } catch (error) {
+      console.error('[VapiSessionRegistry] Failed to serialize session config', { callId, error });
+      return null;
     }
   }
 }
