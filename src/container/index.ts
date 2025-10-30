@@ -35,6 +35,10 @@ import { CallLogRepository } from "../data/repositories/CallLogRepository";
 import { AnalyticsService } from "../business/services/AnalyticsService";
 import { IAnalyticsRepository } from "../data/interfaces/IAnalyticsRepository";
 import { AnalyticsRepository } from "../data/repositories/AnalyticsRepository";
+import { VapiSessionRegistry } from "../business/services/VapiSessionRegistry";
+import { IVapiSessionRepository } from "../data/interfaces/IVapiSessionRepository";
+import { VapiSessionRepository } from "../data/repositories/VapiSessionRepository";
+import { VapiRoute } from "../routes/VapiRoute";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -50,6 +54,8 @@ container.register("OutlookCalendarClient", {
 
 // Register business services
 container.registerSingleton(VoiceSessionManager, VoiceSessionManager);
+container.registerSingleton(VapiSessionRegistry, VapiSessionRegistry);
+container.registerSingleton(VapiRoute, VapiRoute);
 container.register(VoiceService, { useClass: VoiceService });
 container.register(GoogleService, { useClass: GoogleService });
 container.register("OutlookService", { useClass: OutlookService });
@@ -96,4 +102,7 @@ container.register<ICallLogRepository>("ICallLogRepository", {
 })
 container.register<IAnalyticsRepository>("IAnalyticsRepository", {
     useClass: AnalyticsRepository,
+})
+container.register<IVapiSessionRepository>("IVapiSessionRepository", {
+    useClass: VapiSessionRepository,
 })

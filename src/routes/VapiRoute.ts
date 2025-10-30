@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { container, injectable } from "tsyringe";
+import { inject, injectable } from "tsyringe";
 import type { VoiceService } from "../business/services/VoiceService";
 import { VoiceSessionManager } from "../business/services/VoiceSessionManager";
 import { VapiClient } from "../clients/VapiClient";
@@ -8,7 +8,10 @@ import { VapiClient } from "../clients/VapiClient";
 export class VapiRoute {
   private readonly router: Router;
 
-  constructor(private readonly sessionManager: VoiceSessionManager) {
+  constructor(
+    private readonly sessionManager: VoiceSessionManager,
+    @inject(VapiClient) private readonly vapiClient: VapiClient,
+  ) {
     this.router = Router();
     this.registerRoutes();
   }
@@ -46,15 +49,13 @@ export class VapiRoute {
         );
 
         const voiceService = this.resolveVoiceService(req.body, callId);
-        if (voiceService) {
-
-        } else {
+        if (!voiceService) {
           console.warn(`[VapiRoute] ⚠️ Falling back to transient VapiClient for tool webhook`);
         }
 
         const result = voiceService
           ? await voiceService.handleVapiToolWebhook(req.body)
-          : await container.resolve(VapiClient).handleToolWebhookRequest(req.body);
+          : await this.vapiClient.handleToolWebhookRequest(req.body);
         res.status(200).json(result);
       } catch (error) {
         console.error("[VapiRoute] Tool webhook error", error);
@@ -129,6 +130,7 @@ export class VapiRoute {
     const sanitized = rawMessage.replace(/[\r\n\t]+/g, " ").trim();
     return sanitized.length > 0 ? sanitized : fallback;
   }
+
 }
 
 export default VapiRoute;
