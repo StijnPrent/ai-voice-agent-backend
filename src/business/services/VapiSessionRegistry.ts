@@ -14,6 +14,7 @@ type RegisterSessionInput = {
   workerId: string;
   workerAddress?: string | null;
   ttlSeconds?: number;
+  config?: unknown;
 };
 
 @injectable()
@@ -37,12 +38,23 @@ export class VapiSessionRegistry {
     const ttlSeconds = input.ttlSeconds ?? this.defaultTtlSeconds;
     const expiresAt = ttlSeconds > 0 ? new Date(Date.now() + ttlSeconds * 1000) : null;
 
+    let configJson: string | null = null;
+
+    if (typeof input.config !== 'undefined') {
+      try {
+        configJson = input.config === null ? null : JSON.stringify(input.config);
+      } catch (error) {
+        console.error('[VapiSessionRegistry] Failed to serialize session config', { callId, error });
+      }
+    }
+
     const record: UpsertVapiSessionInput = {
       callId,
       callSid: input.callSid?.trim() || null,
       workerId,
       workerAddress: input.workerAddress?.trim() || null,
       expiresAt,
+      configJson,
     };
 
     try {

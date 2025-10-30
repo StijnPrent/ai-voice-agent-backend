@@ -5,6 +5,7 @@ export type VapiSessionRecord = {
     workerAddress: string | null;
     registeredAt: Date | null;
     expiresAt: Date | null;
+    configJson: string | null;
 };
 
 export type UpsertVapiSessionInput = {
@@ -13,6 +14,7 @@ export type UpsertVapiSessionInput = {
     workerId: string;
     workerAddress: string | null;
     expiresAt: Date | null;
+    configJson: string | null;
 };
 
 export interface IVapiSessionRepository {

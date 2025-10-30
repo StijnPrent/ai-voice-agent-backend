@@ -10,12 +10,9 @@ import { workerIdentity } from "../config/workerIdentity";
 @injectable()
 export class VapiRoute {
   private readonly router: Router;
-  private readonly workerId = workerIdentity.id;
-  private readonly proxyToken = workerIdentity.proxyToken;
 
   constructor(
     private readonly sessionManager: VoiceSessionManager,
-    @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
     @inject(VapiClient) private readonly vapiClient: VapiClient,
   ) {
     this.router = Router();
@@ -53,21 +50,6 @@ export class VapiRoute {
             activeCallSids.length > 0 ? activeCallSids.join(", ") : "<none>"
           })`,
         );
-
-        const registryEntry = await this.sessionRegistry.findSession(callId);
-        if (registryEntry) {
-          console.log(
-            `[VapiRoute] 📦 Registry entry for callId=${callId}: workerId=${registryEntry.workerId}, address=${registryEntry.workerAddress ?? "<none>"}`,
-          );
-        } else if (callId) {
-          console.log(`[VapiRoute] 📭 No registry entry found for callId=${callId}`);
-        }
-
-        const proxied = await this.tryProxyWebhook(registryEntry, req.body, normalizedHeaderCallId ?? bodyCallId ?? null);
-        if (proxied) {
-          res.status(proxied.status).json(proxied.payload);
-          return;
-        }
 
         const voiceService = this.resolveVoiceService(req.body, callId);
         if (!voiceService) {
@@ -201,10 +183,6 @@ export class VapiRoute {
     return sanitized.length > 0 ? sanitized : fallback;
   }
 
-  private buildProxyUrl(base: string): string {
-    const normalizedBase = base.replace(/\/$/, "");
-    return `${normalizedBase}/tools`;
-  }
 }
 
 export default VapiRoute;
