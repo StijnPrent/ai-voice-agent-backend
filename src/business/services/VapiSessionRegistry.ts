@@ -20,7 +20,7 @@ type RegisterSessionInput = {
 
 @injectable()
 export class VapiSessionRegistry {
-  private readonly defaultTtlSeconds = 5 * 60; // 5 minutes
+  private readonly defaultTtlSeconds = 60 * 60; // 60 minutes
 
   constructor(
     @inject("IVapiSessionRepository") private readonly repository: IVapiSessionRepository,
