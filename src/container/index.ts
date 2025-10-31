@@ -39,6 +39,9 @@ import { VapiSessionRegistry } from "../business/services/VapiSessionRegistry";
 import { IVapiSessionRepository } from "../data/interfaces/IVapiSessionRepository";
 import { VapiSessionRepository } from "../data/repositories/VapiSessionRepository";
 import { VapiRoute } from "../routes/VapiRoute";
+import { AdminService } from "../business/services/AdminService";
+import { IAdminRepository } from "../data/interfaces/IAdminRepository";
+import { AdminRepository } from "../data/repositories/AdminRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -68,6 +71,7 @@ container.register(AssistantSyncService, { useClass: AssistantSyncService });
 container.register(UsageService, { useClass: UsageService });
 container.register(CallLogService, { useClass: CallLogService });
 container.register(AnalyticsService, { useClass: AnalyticsService });
+container.register(AdminService, { useClass: AdminService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -105,4 +109,7 @@ container.register<IAnalyticsRepository>("IAnalyticsRepository", {
 })
 container.register<IVapiSessionRepository>("IVapiSessionRepository", {
     useClass: VapiSessionRepository,
+})
+container.register<IAdminRepository>("IAdminRepository", {
+    useClass: AdminRepository,
 })
