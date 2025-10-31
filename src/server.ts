@@ -18,6 +18,7 @@ import callRoute from "./routes/CallRoute";
 import analyticsRoute from "./routes/AnalyticsRoute";
 import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
+import adminRoute from "./routes/AdminRoute";
 
 const app = express();
 
@@ -38,15 +39,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/voice", voiceRoutes(voiceSessionManager));
 app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);
-app.use("/google", googleRoute)
-app.use("/outlook", outlookRoute)
-app.use("/integrations", integrationRoute)
-app.use("/updates", updateRoute)
-app.use("/scheduling", schedulingRoute)
-app.use("/calls", callRoute)
-app.use("/analytics", analyticsRoute)
-app.use("/vapi", vapiRoute.getRouter())
-app.use("/internal/vapi", internalVapiRoute.getRouter())
+app.use("/google", googleRoute);
+app.use("/outlook", outlookRoute);
+app.use("/integrations", integrationRoute);
+app.use("/updates", updateRoute);
+app.use("/scheduling", schedulingRoute);
+app.use("/calls", callRoute);
+app.use("/analytics", analyticsRoute);
+app.use("/vapi", vapiRoute.getRouter());
+app.use("/internal/vapi", internalVapiRoute.getRouter());
+app.use("/admin", adminRoute);
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
