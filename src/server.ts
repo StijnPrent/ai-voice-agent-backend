@@ -28,11 +28,36 @@ const internalVapiRoute = container.resolve(InternalVapiRoute);
 
 app.set("trust proxy", true);
 
-app.use(cors({
-    origin: process.env.FRONTEND_URL,
-    methods: ["GET","POST","PUT","DELETE","OPTIONS"],
-    allowedHeaders: ["Content-Type","Authorization","X-Internal-Api-Key"]
-}));
+const allowedOrigins = [
+    "http://localhost:3000", // local dev
+    "http://localhost:3001",
+    "https://app.callingbird.nl",
+    "https://admin.callingbird.nl",
+    /\.callingbird\.nl$/, // any subdomain *.callingbird.nl
+];
+
+app.use(
+  cors({
+      origin: function (origin, callback) {
+          if (!origin) return callback(null, true); // allow curl / postman etc.
+
+          // Check if origin is an exact match or matches regex (for wildcard)
+          if (
+            allowedOrigins.some((o) =>
+              typeof o === "string" ? o === origin : o.test(origin)
+            )
+          ) {
+              callback(null, true);
+          } else {
+              console.warn("❌ Blocked CORS origin:", origin);
+              callback(new Error("Not allowed by CORS"));
+          }
+      },
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Internal-Api-Key"],
+  })
+);
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
