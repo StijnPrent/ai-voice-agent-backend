@@ -55,12 +55,12 @@ const config: Config = {
     twilioTo: process.env.TWILIO_TO || "",
 
     //redirect URI for Google OAuth
-    googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000",
+    googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || "https://app.callingbird.nl",
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
 
     //redirect URI for Outlook OAuth
-    outlookRedirectUri: process.env.OUTLOOK_REDIRECT_URI || "http://localhost:3000",
+    outlookRedirectUri: process.env.OUTLOOK_REDIRECT_URI || "https://app.callingbird.nl",
     outlookClientId: process.env.OUTLOOK_CLIENT_ID,
     outlookClientSecret: process.env.OUTLOOK_CLIENT_SECRET,
     outlookTenantId: process.env.OUTLOOK_TENANT_ID,
@@ -71,14 +71,14 @@ const config: Config = {
     dbName: process.env.DB_NAME || "",
     dbPort: Number(process.env.DB_PORT) || 3306,
 
-    frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+    frontendUrl: process.env.FRONTEND_URL || "https://app.callingbird.nl",
 
     jwtSecret: process.env.JWT_SECRET || "",
     jwtExpiration: process.env.JWT_EXPIRATION || "8h",
 
     masterKey: process.env.MASTER_KEY || "",
 
-    serverUrl: process.env.SERVER_URL || "http://localhost:3002",
+    serverUrl: process.env.SERVER_URL || "https://api.callingbird.nl",
 };
 
 // Validate critical values
