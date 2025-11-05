@@ -7,6 +7,7 @@ export class CompanyModel {
         private _createdAt: Date,
         private _updatedAt: Date,
         private _assistantId: string | null = null,
+        private _assistantEnabled: boolean = true,
     ) {}
 
     public toJSON(): Record<string, any> {
@@ -18,6 +19,7 @@ export class CompanyModel {
             createdAt: this.createdAt.toISOString(),
             updatedAt: this.updatedAt.toISOString(),
             assistantId: this.assistantId,
+            assistantEnabled: this.assistantEnabled,
         };
     }
 
@@ -47,5 +49,9 @@ export class CompanyModel {
 
     public get assistantId(): string | null {
         return this._assistantId ?? null;
+    }
+
+    public get assistantEnabled(): boolean {
+        return this._assistantEnabled;
     }
 }

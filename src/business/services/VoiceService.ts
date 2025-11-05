@@ -31,6 +31,7 @@ export class VoiceService {
     private callStartedAt: Date | null = null;
     private activeCompanyId: bigint | null = null;
     private callerNumber: string | null = null;
+    private callerName: string | null = null;
     private companyTwilioNumber: string | null = null;
     private companyTransferNumber: string | null = null;
     private usageRecorded = false;
@@ -190,12 +191,52 @@ export class VoiceService {
             this.voiceSettings = await this.voiceRepository.fetchVoiceSettings(company.id);
             this.companyTwilioNumber = company.twilioNumber?.trim() || null;
             const companyContext = await this.companyService.getCompanyContext(company.id);
+            this.callerName = await this.companyService.resolveCallerName(
+                company.id,
+                this.callerNumber
+            );
+            if (this.callerName) {
+                console.log(
+                    `[${callSid}] Matched caller name '${this.callerName}' for number ${this.callerNumber ?? "unknown"}`
+                );
+            }
             this.companyTransferNumber = this.sanitizeTransferTarget(
                 companyContext.contact?.phone ?? ""
             ) || null;
             const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
             const schedulingContext = await this.schedulingService.getSchedulingContext(company.id);
             const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
+
+            if (!company.assistantEnabled) {
+                console.warn(
+                    `[${callSid}] Assistant disabled for company ${company.id.toString()}; initiating direct transfer.`
+                );
+                const transferTarget = this.resolveTransferTarget();
+
+                if (!transferTarget) {
+                    console.error(
+                        `[${callSid}] No transfer target available while assistant disabled; ending streaming session.`
+                    );
+                    this.stopStreaming("assistant disabled (no transfer target)");
+                    return;
+                }
+
+                try {
+                    await this.transferCall(transferTarget, {
+                        callSid,
+                        callerId: this.companyTwilioNumber ?? undefined,
+                        reason: "assistant_disabled",
+                    });
+                } catch (transferError) {
+                    console.error(
+                        `[${callSid}] Failed to transfer call after assistant disabled`,
+                        transferError
+                    );
+                } finally {
+                    this.stopStreaming("assistant disabled (transferred)");
+                }
+                return;
+            }
 
             this.vapiClient.setCompanyInfo(
                 callSid,
@@ -248,7 +289,7 @@ export class VoiceService {
                     },
 
                 },
-                { callerNumber: this.callerNumber }
+                { callerNumber: this.callerNumber, callerName: this.callerName }
             );
 
             this.vapiSession = session;
@@ -275,8 +316,7 @@ export class VoiceService {
             // Trigger the welcome line by forcing an initial response turn
             this.vapiSession.commitUserAudio();
         } catch (error) {
-            console.error(`[${callSid}] Failed to start Vapi session`, error);
-            this.stopStreaming();
+            await this.handleVapiStartupFailure(to, error);
         }
     }
 
@@ -411,11 +451,60 @@ export class VoiceService {
         this.callStartedAt = null;
         this.activeCompanyId = null;
         this.callerNumber = null;
+        this.callerName = null;
         this.vapiCallId = null;
         this.assistantSpeaking = false;
         this.companyTwilioNumber = null;
         this.companyTransferNumber = null;
         this.resetSpeechTracking();
+    }
+
+    private async handleVapiStartupFailure(twilioToNumber: string, error: unknown) {
+        const callSid = this.callSid ?? "unknown";
+        console.error(`[${callSid}] Failed to start Vapi session`, error);
+        this.logSessionSnapshot("vapi start failure");
+
+        if (!this.companyTransferNumber) {
+            try {
+                const fallbackCompany = await this.companyService.findByTwilioNumber(twilioToNumber);
+                const fallbackContext = await this.companyService.getCompanyContext(fallbackCompany.id);
+                this.companyTransferNumber =
+                    this.sanitizeTransferTarget(fallbackContext.contact?.phone ?? "") || null;
+                this.companyTwilioNumber = fallbackCompany.twilioNumber?.trim() || null;
+            } catch (lookupError) {
+                console.error(
+                    `[${callSid}] Failed to resolve fallback transfer number after Vapi failure`,
+                    lookupError
+                );
+            }
+        }
+
+        const transferTarget = this.resolveTransferTarget();
+        if (!transferTarget) {
+            console.error(
+                `[${callSid}] No company phone number available for fallback transfer; ending call after Vapi failure.`
+            );
+            this.stopStreaming("vapi start failure (no fallback target)");
+            return;
+        }
+
+        const transferReason = "fallback_vapi_start_failure";
+        try {
+            console.log(
+                `[${callSid}] Initiating fallback transfer to company phone ${transferTarget} after Vapi failure.`
+            );
+            await this.transferCall(transferTarget, {
+                callerId: this.companyTwilioNumber ?? undefined,
+                reason: transferReason,
+            });
+        } catch (transferError) {
+            console.error(
+                `[${callSid}] Fallback transfer to company phone failed after Vapi failure`,
+                transferError
+            );
+        } finally {
+            this.stopStreaming("fallback transfer initiated after vapi start failure");
+        }
     }
 
     public async transferCall(
@@ -513,6 +602,28 @@ export class VoiceService {
         }
 
         return result;
+    }
+
+    private resolveTransferTarget(): string | null {
+        if (this.companyTransferNumber) {
+            return this.companyTransferNumber;
+        }
+
+        const envFallback = process.env.TWILIO_TO?.trim();
+        if (!envFallback) {
+            return null;
+        }
+
+        const sanitized = this.sanitizeTransferTarget(envFallback);
+        if (!sanitized) {
+            return null;
+        }
+
+        console.log(
+            `[${this.callSid ?? "unknown"}] Using TWILIO_TO as fallback transfer target: ${sanitized}`
+        );
+        this.companyTransferNumber = sanitized;
+        return sanitized;
     }
 
     private sanitizeTransferTarget(target: string): string {

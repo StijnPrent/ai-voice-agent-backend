@@ -60,27 +60,44 @@ export class GoogleCalendarClient {
     }
 
 
-    async createEvent(model: GoogleIntegrationModel, redirectUri: string, event: calendar_v3.Schema$Event) {
+    async createEvent(
+        model: GoogleIntegrationModel,
+        redirectUri: string,
+        event: calendar_v3.Schema$Event,
+        calendarId?: string
+    ) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({
             version: "v3",
             auth: oauth2Client,
         });
         return calendar.events.insert({
-            calendarId: "primary",
+            calendarId: calendarId && calendarId.trim() ? calendarId.trim() : "primary",
             requestBody: event,
         });
     }
 
-    async getFreeBusy(model: GoogleIntegrationModel, redirectUri: string, timeMin: string, timeMax: string) {
+    async getFreeBusy(
+        model: GoogleIntegrationModel,
+        redirectUri: string,
+        timeMin: string,
+        timeMax: string,
+        calendarIds?: string[]
+    ) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        const items =
+            calendarIds && calendarIds.length > 0
+                ? calendarIds
+                      .filter((id) => typeof id === "string" && id.trim().length > 0)
+                      .map((id) => ({ id: id.trim() }))
+                : [{ id: "primary" }];
         return calendar.freebusy.query({
             requestBody: {
                 timeMin,
                 timeMax,
                 timeZone: "Europe/Amsterdam",
-                items: [{ id: "primary" }],
+                items,
             },
         });
     }
@@ -88,12 +105,13 @@ export class GoogleCalendarClient {
     async listEvents(
         model: GoogleIntegrationModel,
         redirectUri: string,
-        options: { timeMin: string; timeMax?: string; q?: string; maxResults?: number }
+        options: { timeMin: string; timeMax?: string; q?: string; maxResults?: number },
+        calendarId?: string
     ) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
         return calendar.events.list({
-            calendarId: "primary",
+            calendarId: calendarId && calendarId.trim() ? calendarId.trim() : "primary",
             timeMin: options.timeMin,
             timeMax: options.timeMax,
             q: options.q,
@@ -103,11 +121,26 @@ export class GoogleCalendarClient {
         });
     }
 
-    async deleteEvent(model: GoogleIntegrationModel, redirectUri: string, eventId: string) {
+    async listCalendars(model: GoogleIntegrationModel, redirectUri: string) {
+        const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
+        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        return calendar.calendarList.list({
+            minAccessRole: "reader",
+            maxResults: 250,
+            showHidden: false,
+        });
+    }
+
+    async deleteEvent(
+        model: GoogleIntegrationModel,
+        redirectUri: string,
+        eventId: string,
+        calendarId?: string
+    ) {
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({ version: "v3", auth: oauth2Client });
         return calendar.events.delete({
-            calendarId: "primary",
+            calendarId: calendarId && calendarId.trim() ? calendarId.trim() : "primary",
             eventId,
         });
     }

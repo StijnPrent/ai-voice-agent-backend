@@ -6,6 +6,7 @@ import { CompanyInfoModel } from "../models/CompanyInfoModel";
 import { CompanyDetailsModel } from "../models/CompanyDetailsModel";
 import { CompanyContactModel } from "../models/CompanyContactModel";
 import { CompanyHourModel } from "../models/CompanyHourModel";
+import { CompanyCallerModel } from "../models/CompanyCallerModel";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -40,6 +41,26 @@ export class CompanyService {
         if (!normalized || !allowedCodes.includes(normalized)) {
             throw new InvalidAccessCodeError();
         }
+    }
+
+    private tryNormalizeCallerPhoneNumber(raw: string | null | undefined): string | null {
+        if (typeof raw !== "string") {
+            return null;
+        }
+        const trimmed = raw.trim();
+        if (!trimmed) {
+            return null;
+        }
+        const compact = trimmed.replace(/\s+/g, "");
+        return compact.length > 0 ? compact : null;
+    }
+
+    private normalizeCallerPhoneNumber(raw: string | null | undefined): string {
+        const normalized = this.tryNormalizeCallerPhoneNumber(raw);
+        if (!normalized) {
+            throw new Error("A valid phoneNumber is required.");
+        }
+        return normalized;
     }
 
     public async registerCompany(params: {
@@ -115,6 +136,14 @@ export class CompanyService {
         return token;
     }
 
+    public async findById(companyId: bigint): Promise<CompanyModel> {
+        const company = await this.companyRepo.findById(companyId);
+        if (!company) {
+            throw new Error("Company not found");
+        }
+        return company;
+    }
+
     public async findByTwilioNumber(twilio: string): Promise<CompanyModel> {
         const sanitized = twilio.replace(/\s+/g, "");
         const company = await this.companyRepo.findByTwilioNumber(sanitized);
@@ -127,6 +156,10 @@ export class CompanyService {
         connected: boolean
     ): Promise<void> {
         await this.companyRepo.setCalendarConnected(companyId, connected);
+    }
+
+    public async setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void> {
+        await this.companyRepo.setAssistantEnabled(companyId, enabled);
     }
 
     // Company Info
@@ -247,6 +280,82 @@ export class CompanyService {
         }
     }
 
+    // Company Callers
+    public async listCompanyCallers(companyId: bigint): Promise<CompanyCallerModel[]> {
+        return this.companyRepo.fetchCompanyCallers(companyId);
+    }
+
+    public async createCompanyCaller(
+        companyId: bigint,
+        payload: { name?: string; phoneNumber?: string }
+    ): Promise<CompanyCallerModel> {
+        const name = (payload.name ?? "").trim();
+        if (!name) {
+            throw new Error("Caller name is required.");
+        }
+        const phoneNumber = this.normalizeCallerPhoneNumber(payload.phoneNumber);
+
+        const existing = await this.companyRepo.findCompanyCallerByPhone(companyId, phoneNumber);
+        const model = new CompanyCallerModel(existing?.id ?? 0, companyId, name, phoneNumber);
+
+        const saved = existing
+            ? await this.companyRepo.updateCompanyCaller(model)
+            : await this.companyRepo.addCompanyCaller(model);
+
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return saved;
+    }
+
+    public async updateCompanyCaller(
+        companyId: bigint,
+        callerId: number,
+        payload: { name?: string; phoneNumber?: string }
+    ): Promise<CompanyCallerModel> {
+        const existing = await this.companyRepo.findCompanyCallerById(callerId);
+        if (!existing || existing.companyId !== companyId) {
+            throw new Error("Caller not found.");
+        }
+
+        const nextName = (payload.name ?? existing.name).trim();
+        if (!nextName) {
+            throw new Error("Caller name is required.");
+        }
+        const nextPhone = payload.phoneNumber
+            ? this.normalizeCallerPhoneNumber(payload.phoneNumber)
+            : existing.phoneNumber;
+
+        const collision = await this.companyRepo.findCompanyCallerByPhone(companyId, nextPhone);
+        if (collision && collision.id !== callerId) {
+            throw new Error("Another caller already uses this phone number.");
+        }
+
+        const updated = await this.companyRepo.updateCompanyCaller(
+            new CompanyCallerModel(existing.id, companyId, nextName, nextPhone)
+        );
+
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return updated;
+    }
+
+    public async deleteCompanyCaller(companyId: bigint, callerId: number): Promise<void> {
+        const ownerCompanyId = await this.companyRepo.getCompanyIdForCaller(callerId);
+        if (!ownerCompanyId || ownerCompanyId !== companyId) {
+            throw new Error("Caller not found.");
+        }
+
+        await this.companyRepo.deleteCompanyCaller(callerId);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+    }
+
+    public async resolveCallerName(companyId: bigint, phoneNumber: string | null | undefined): Promise<string | null> {
+        const normalized = this.tryNormalizeCallerPhoneNumber(phoneNumber);
+        if (!normalized) {
+            return null;
+        }
+        const caller = await this.companyRepo.findCompanyCallerByPhone(companyId, normalized);
+        return caller?.name ?? null;
+    }
+
     // Company Hours
     public async addCompanyHour(
         companyId: bigint,
@@ -298,12 +407,14 @@ export class CompanyService {
         const contact = await this.getCompanyContact(companyId);
         const hours = await this.getCompanyHours(companyId);
         const info = await this.getCompanyInfo(companyId);
+        const callers = await this.listCompanyCallers(companyId);
 
         return {
             details,
             contact,
             hours,
             info,
+            callers,
         };
     }
 }

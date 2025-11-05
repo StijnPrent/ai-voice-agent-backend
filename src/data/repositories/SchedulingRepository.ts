@@ -82,14 +82,15 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
 
         const sql = `
             INSERT INTO staff_members
-                (company_id, name, role_title, created_at, updated_at)
-            VALUES (?, ?, ?, NOW(), NOW())
+                (company_id, name, role_title, google_calendar_id, google_calendar_summary, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
         `;
         const res = await this.execute<ResultSetHeader>(sql, [
             model.companyId,
             model.name,
             model.role,
-            activeFlag // ⬅ afgeleid van availability
+            model.googleCalendarId ?? null,
+            model.googleCalendarSummary ?? null
         ]);
         const staffId = res.insertId;
 
@@ -108,11 +109,19 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
      * vervangen ze de volledige bestaande set (replace-all).
      */
     public async updateStaffMember(model: StaffMemberModel): Promise<void> {
-        // Dynamische set, zodat we is_active alleen aanpassen als availability is meegegeven
-        const sets: string[] = ["name = ?", "role_title = ?"];
-        const params: any[] = [model.name, model.role];
-
-        sets.push("updated_at = NOW()");
+        const sets: string[] = [
+            "name = ?",
+            "role_title = ?",
+            "google_calendar_id = ?",
+            "google_calendar_summary = ?",
+            "updated_at = NOW()"
+        ];
+        const params: any[] = [
+            model.name,
+            model.role,
+            model.googleCalendarId ?? null,
+            model.googleCalendarSummary ?? null
+        ];
 
         const sql = `
             UPDATE staff_members
@@ -146,6 +155,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         const baseSql = `
             SELECT
                 sm.id AS staff_id, sm.company_id, sm.name, sm.role_title,
+                sm.google_calendar_id, sm.google_calendar_summary,
                 sm.created_at, sm.updated_at,
                 s.id AS spec_id, s.name AS spec_name
             FROM staff_members sm
@@ -167,6 +177,12 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
                     [], // specialties vullen we direct hieronder
                     r.role_title,
                     [], // availability vullen we in tweede query
+                    typeof r.google_calendar_id === "string" && r.google_calendar_id.trim().length > 0
+                        ? r.google_calendar_id.trim()
+                        : null,
+                    typeof r.google_calendar_summary === "string" && r.google_calendar_summary.trim().length > 0
+                        ? r.google_calendar_summary.trim()
+                        : null,
                     r.created_at,
                     r.updated_at
                 );

@@ -121,7 +121,7 @@ export class SchedulingController {
 
     public async addStaffMember(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { name, specialties, role, availability } = req.body;
+            const { name, specialties, role, availability, googleCalendarId, googleCalendarSummary } = req.body;
             const companyId = req.companyId;
             if (!companyId) {
                 res.status(400).json({ message: "Company ID is missing from token." });
@@ -131,9 +131,11 @@ export class SchedulingController {
             const data = await this.service.addStaffMember(
                 companyId,
                 name,
-                specialties,    // verwacht SpecialtyModel[] of {name:string}[]
+                Array.isArray(specialties) ? specialties : [],
                 role,
-                availability     // nieuw: StaffAvailabilityModel[]
+                Array.isArray(availability) ? availability : [],
+                googleCalendarId,
+                googleCalendarSummary
             );
 
             res.status(201).json({
@@ -142,6 +144,8 @@ export class SchedulingController {
                 role,
                 specialties,
                 availability,
+                googleCalendarId: googleCalendarId ?? null,
+                googleCalendarSummary: googleCalendarSummary ?? null,
             });
         } catch (err) {
             this.handleError(res, err, "Error adding staff member");
@@ -150,7 +154,7 @@ export class SchedulingController {
 
     public async updateStaffMember(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { id, name, specialties, role, availability } = req.body;
+            const { id, name, specialties, role, availability, googleCalendarId, googleCalendarSummary } = req.body;
             const companyId = req.companyId!;
 
             await this.service.updateStaffMember(
@@ -158,9 +162,11 @@ export class SchedulingController {
                     id,
                     companyId,
                     name,
-                    specialties,
+                    Array.isArray(specialties) ? specialties : [],
                     role,
-                    availability
+                    Array.isArray(availability) ? availability : [],
+                    googleCalendarId ?? null,
+                    googleCalendarSummary ?? null
                 )
             );
             res.json({
@@ -169,6 +175,8 @@ export class SchedulingController {
                 role,
                 specialties,
                 availability,
+                googleCalendarId: googleCalendarId ?? null,
+                googleCalendarSummary: googleCalendarSummary ?? null,
             });
         } catch (err) {
             this.handleError(res, err, "Error updating staff member");

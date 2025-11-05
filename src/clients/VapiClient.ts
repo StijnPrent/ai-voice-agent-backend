@@ -1,19 +1,21 @@
 // src/clients/VapiClient.ts
 import axios, { AxiosInstance } from 'axios';
 import WebSocket, { RawData } from 'ws';
-import { inject, injectable } from 'tsyringe';
+import { inject, injectable, delay } from 'tsyringe';
 import { CompanyModel } from '../business/models/CompanyModel';
 import { ReplyStyleModel } from '../business/models/ReplyStyleModel';
 import { CompanyInfoModel } from '../business/models/CompanyInfoModel';
 import { CompanyDetailsModel } from '../business/models/CompanyDetailsModel';
 import { CompanyHourModel } from '../business/models/CompanyHourModel';
+import { CompanyCallerModel } from '../business/models/CompanyCallerModel';
 import { CompanyContactModel } from '../business/models/CompanyContactModel';
 import { AppointmentTypeModel } from '../business/models/AppointmentTypeModel';
 import { StaffMemberModel } from '../business/models/StaffMemberModel';
 import { VoiceSettingModel } from '../business/models/VoiceSettingsModel';
 import type { calendar_v3 } from 'googleapis';
 import { GoogleService } from '../business/services/GoogleService';
-import type { CalendarAvailability } from '../business/services/GoogleService';
+import { CompanyService } from '../business/services/CompanyService';
+import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvailabilityWindow } from '../business/services/GoogleService';
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
 
@@ -22,6 +24,7 @@ type CompanyContext = {
   contact: CompanyContactModel | null;
   hours: CompanyHourModel[];
   info: CompanyInfoModel[];
+  callers: CompanyCallerModel[];
 };
 
 type SchedulingContext = {
@@ -33,6 +36,28 @@ type AvailableRange = {
   start: string;
   end: string;
   durationMinutes: number;
+};
+
+type SessionContextState = {
+  callSid: string;
+  callerNumber: string | null;
+  callerName: string | null;
+  callId: string | null;
+  preferredStaffId: number | null;
+  preferredCalendarId: string | null;
+};
+
+type CachedAvailabilityEntry = {
+  availability: CalendarAvailability;
+  availableRanges: AvailableRange[];
+  perCalendarRanges: Record<string, AvailableRange[]>;
+  expiresAt: number;
+};
+
+type PendingAvailabilityResult = {
+  availability: CalendarAvailability;
+  availableRanges: AvailableRange[];
+  perCalendarRanges: Record<string, AvailableRange[]>;
 };
 
 type CompanySnapshot = {
@@ -55,6 +80,7 @@ type CompanySnapshot = {
     skills?: string[];
     availability?: { day: string; ranges: string[] }[];
   }[];
+  callers?: { name: string; phoneNumber: string }[];
 };
 
 export type VapiAssistantConfig = {
@@ -200,22 +226,16 @@ export class VapiClient {
   private readonly modelProvider: string;
   private readonly modelName: string;
   private readonly assistantCache = new Map<string, string>();
-  private readonly availabilityCache = new Map<
-    string,
-    { availability: CalendarAvailability; availableRanges: AvailableRange[]; expiresAt: number }
-  >();
+  private readonly availabilityCache = new Map<string, CachedAvailabilityEntry>();
   private readonly availabilityPending = new Map<
     string,
-    { promise: Promise<{ availability: CalendarAvailability; availableRanges: AvailableRange[] }>; startedAt: number }
+    { promise: Promise<PendingAvailabilityResult>; startedAt: number }
   >();
   private readonly availabilityCacheTtlMs = 2 * 60 * 1000; // 2 minutes
   private readonly availabilityRequestTimeoutMs = 2500; // 2.5 seconds
   private readonly toolBaseUrl: string;
   private readonly transportProvider: string;
-  private readonly sessionContexts = new WeakMap<
-    VapiRealtimeSession,
-    { callSid: string; callerNumber: string | null; callId: string | null }
-  >();
+  private readonly sessionContexts = new WeakMap<VapiRealtimeSession, SessionContextState>();
   private readonly activeSessionsByCallId = new Map<
     string,
     { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string }
@@ -231,6 +251,7 @@ export class VapiClient {
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
+    @inject(delay(() => CompanyService)) private readonly companyService: CompanyService,
     @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
@@ -244,7 +265,7 @@ export class VapiClient {
     this.modelName = process.env.VAPI_MODEL_NAME || 'gpt-4o-mini';
     this.transportProvider = 'vapi.websocket';
 
-    this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.voiceagent.stite.nl').replace(/\/$/, '');
+    this.toolBaseUrl = (process.env.SERVER_URL || 'https://api.callingbird.nl').replace(/\/$/, '');
 
     this.workerId = getWorkerId();
 
@@ -322,8 +343,13 @@ export class VapiClient {
   }
 
   private deriveAvailableRanges(availability: CalendarAvailability): AvailableRange[] {
-    const { operatingWindow, busy } = availability;
+    return this.deriveAvailableRangesFromBusy(availability.operatingWindow, availability.busy);
+  }
 
+  private deriveAvailableRangesFromBusy(
+    operatingWindow: CalendarAvailabilityWindow,
+    busy: CalendarAvailability['busy'],
+  ): AvailableRange[] {
     const windowStart = new Date(operatingWindow.start);
     const windowEnd = new Date(operatingWindow.end);
 
@@ -385,6 +411,186 @@ export class VapiClient {
     return ranges;
   }
 
+  private mergeAvailableRanges(rangeSets: AvailableRange[][]): AvailableRange[] {
+    const intervals = rangeSets
+      .flat()
+      .map((range) => {
+        const start = new Date(range.start).getTime();
+        const end = new Date(range.end).getTime();
+        if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+          return null;
+        }
+        return { start, end };
+      })
+      .filter((entry): entry is { start: number; end: number } => entry !== null)
+      .sort((a, b) => a.start - b.start);
+
+    if (intervals.length === 0) {
+      return [];
+    }
+
+    const merged: { start: number; end: number }[] = [];
+    for (const interval of intervals) {
+      const last = merged[merged.length - 1];
+      if (!last) {
+        merged.push({ ...interval });
+        continue;
+      }
+
+      if (interval.start <= last.end) {
+        last.end = Math.max(last.end, interval.end);
+      } else {
+        merged.push({ ...interval });
+      }
+    }
+
+    return merged.map((interval) => {
+      const durationMinutes = Math.max(0, Math.round((interval.end - interval.start) / 60000));
+      return {
+        start: new Date(interval.start).toISOString(),
+        end: new Date(interval.end).toISOString(),
+        durationMinutes,
+      };
+    });
+  }
+
+  private buildStaffCalendarMap(config: VapiAssistantConfig): Map<string, StaffMemberModel[]> {
+    const map = new Map<string, StaffMemberModel[]>();
+    const staffMembers = config.schedulingContext.staffMembers ?? [];
+    for (const member of staffMembers) {
+      const calendarId = this.normalizeStringArg((member as any)?.googleCalendarId ?? null);
+      if (!calendarId) {
+        continue;
+      }
+      const existing = map.get(calendarId) ?? [];
+      existing.push(member);
+      map.set(calendarId, existing);
+    }
+    return map;
+  }
+
+  private resolveStaffPreference(
+    config: VapiAssistantConfig,
+    args: Record<string, unknown>,
+    sessionContext: SessionContextState | null,
+  ): {
+    staffMember: StaffMemberModel | null;
+    calendarId: string | null;
+    explicitCalendarId: string | null;
+  } {
+    const staffMembers = config.schedulingContext.staffMembers ?? [];
+    const staffById = new Map<number, StaffMemberModel>();
+    const staffByName = new Map<string, StaffMemberModel>();
+
+    for (const member of staffMembers) {
+      staffById.set(member.id, member);
+      const normalizedName = this.normalizeStringArg(member.name)?.toLowerCase();
+      if (normalizedName) {
+        staffByName.set(normalizedName, member);
+      }
+    }
+
+    const staffIdArgs = [
+      this.normalizeStringArg(args['staffMemberId']),
+      this.normalizeStringArg(args['preferredStaffId']),
+      this.normalizeStringArg(args['staffId']),
+    ];
+
+    let matchedStaff: StaffMemberModel | null = null;
+    for (const candidate of staffIdArgs) {
+      if (!candidate) continue;
+      const parsed = Number.parseInt(candidate, 10);
+      if (!Number.isNaN(parsed)) {
+        const staff = staffById.get(parsed);
+        if (staff) {
+          matchedStaff = staff;
+          break;
+        }
+      }
+    }
+
+    if (!matchedStaff) {
+      const staffNameArgs = [
+        this.normalizeStringArg(args['staffMemberName']),
+        this.normalizeStringArg(args['preferredStaffName']),
+        this.normalizeStringArg(args['staffName']),
+        this.normalizeStringArg(args['preferredStaff']),
+        this.normalizeStringArg(args['employeeName']),
+      ];
+
+      for (const candidate of staffNameArgs) {
+        if (!candidate) continue;
+        const normalized = candidate.toLowerCase();
+        const direct = staffByName.get(normalized);
+        if (direct) {
+          matchedStaff = direct;
+          break;
+        }
+
+        const partial = staffMembers.find((member) =>
+          this.normalizeStringArg(member.name)?.toLowerCase().includes(normalized),
+        );
+        if (partial) {
+          matchedStaff = partial;
+          break;
+        }
+      }
+    }
+
+    if (!matchedStaff && typeof sessionContext?.preferredStaffId === 'number') {
+      matchedStaff = staffById.get(sessionContext.preferredStaffId) ?? null;
+    }
+
+    const explicitCalendarId =
+      this.normalizeStringArg(args['calendarId']) ??
+      this.normalizeStringArg(args['staffCalendarId']) ??
+      this.normalizeStringArg(args['googleCalendarId']);
+
+    let calendarId = explicitCalendarId;
+    if (!calendarId && matchedStaff) {
+      calendarId = this.normalizeStringArg((matchedStaff as any)?.googleCalendarId ?? null);
+    }
+
+    if (!calendarId && sessionContext?.preferredCalendarId) {
+      calendarId = sessionContext.preferredCalendarId;
+    }
+
+    return {
+      staffMember: matchedStaff ?? null,
+      calendarId: calendarId ?? null,
+      explicitCalendarId: explicitCalendarId ?? null,
+    };
+  }
+
+  private updateSessionStaffPreference(
+    session: VapiRealtimeSession | null | undefined,
+    sessionContext: SessionContextState | null,
+    updates: { staffMember?: StaffMemberModel | null; calendarId?: string | null },
+  ): void {
+    if (!session) {
+      return;
+    }
+
+    const current = sessionContext ?? this.sessionContexts.get(session);
+    if (!current) {
+      return;
+    }
+
+    const next: SessionContextState = {
+      ...current,
+      preferredStaffId:
+        updates.staffMember !== undefined
+          ? updates.staffMember
+            ? updates.staffMember.id
+            : null
+          : current.preferredStaffId,
+      preferredCalendarId:
+        updates.calendarId !== undefined ? (updates.calendarId ?? null) : current.preferredCalendarId,
+    };
+
+    this.sessionContexts.set(session, next);
+  }
+
   public buildSystemPrompt(config?: VapiAssistantConfig): string {
     const effectiveConfig = config ?? this.currentConfig;
     if (!effectiveConfig) {
@@ -393,14 +599,13 @@ export class VapiClient {
       );
     }
 
-    const todayText = formatDutchDate(new Date());
-
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
       'Praat natuurlijk en menselijk en help de beller snel verder.',
-      'Vandaag is {{ "now" | date: "%A %d %B %Y", "Europe/Amsterdam" }}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.',
+      'Vandaag is {{"now" | date: "%Y-%m-%d %I:%M %p", "Europe/Amsterdam"}}. Gebruik deze datum als referentiepunt voor alle afspraken en antwoorden.',
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
-      'Vraag wanneer mensen naar beschikbaarheid vragen altijd eerst naar hun voorkeur voor een dag.',
+      'Als iemand al een dag of datum noemt (bijv. "morgen", "maandag" of een concrete datum), ga daar direct mee verder zonder extra bevestiging. Vraag alleen naar een dag als deze nog niet is genoemd.',
+      'Interpreteer relatieve aanduidingen (zoals "vandaag", "morgen", "volgende week") zelf ten opzichte van de huidige datum in de tijdzone Europe/Amsterdam en ga door zonder de datum terug te bevestigen.',
       'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
@@ -415,6 +620,8 @@ export class VapiClient {
       instructions.push(
         `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
         `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
+        'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
+        'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
       );
     } else {
       instructions.push(
@@ -466,6 +673,15 @@ export class VapiClient {
       .map((entry) => limitString(entry.value, 320))
       .filter((value): value is string => Boolean(value));
 
+    const callers = (config.companyContext.callers ?? [])
+      .filter((entry) => entry.name && entry.phoneNumber)
+      .slice(0, 50)
+      .map((entry) => ({
+        name: entry.name.trim(),
+        phoneNumber: entry.phoneNumber.trim(),
+      }))
+      .filter((entry) => entry.name.length > 0 && entry.phoneNumber.length > 0);
+
     const appointmentTypes = (config.schedulingContext.appointmentTypes ?? [])
       .slice(0, 8)
       .map((appointment) => {
@@ -512,6 +728,8 @@ export class VapiClient {
           role?: string;
           skills?: string[];
           availability?: { day: string; ranges: string[] }[];
+          calendarId?: string;
+          calendarSummary?: string;
         } = {
           name: staff.name,
         };
@@ -529,6 +747,15 @@ export class VapiClient {
 
         if (availability.length > 0) {
           result.availability = availability;
+        }
+
+        const calendarId = this.normalizeStringArg((staff as any)?.googleCalendarId ?? null);
+        if (calendarId) {
+          result.calendarId = calendarId;
+        }
+        const calendarSummary = this.normalizeStringArg((staff as any)?.googleCalendarSummary ?? null);
+        if (calendarSummary) {
+          result.calendarSummary = calendarSummary;
         }
 
         return result;
@@ -559,6 +786,7 @@ export class VapiClient {
     if (Object.keys(contact).length > 0) snapshot.contact = contact;
     if (hours.length > 0) snapshot.hours = hours;
     if (info.length > 0) snapshot.info = info;
+    if (callers.length > 0) snapshot.callers = callers;
     if (appointmentTypes.length > 0) snapshot.appointmentTypes = appointmentTypes;
     if (staffMembers.length > 0) snapshot.staffMembers = staffMembers;
 
@@ -724,6 +952,15 @@ export class VapiClient {
       contextPayload.scheduling = scheduling;
     }
 
+    if (companyContext.callers && companyContext.callers.length > 0) {
+      contextPayload.callers = companyContext.callers
+        .filter((caller) => caller.name && caller.phoneNumber)
+        .map((caller) => ({
+          name: caller.name,
+          phoneNumber: caller.phoneNumber,
+        }));
+    }
+
     const messageContent = [
       instructions.trim(),
       '',
@@ -749,7 +986,7 @@ export class VapiClient {
   public async openRealtimeSession(
     callSid: string,
     callbacks: VapiRealtimeCallbacks,
-    options?: { callerNumber?: string | null },
+    options?: { callerNumber?: string | null; callerName?: string | null },
   ): Promise<{ session: VapiRealtimeSession; callId: string | null }> {
     const config = this.getConfigForCall(callSid);
     if (!config) {
@@ -793,7 +1030,10 @@ export class VapiClient {
     this.sessionContexts.set(session, {
       callSid,
       callerNumber: options?.callerNumber ?? null,
+      callerName: options?.callerName ?? null,
       callId: callId ?? null,
+      preferredStaffId: null,
+      preferredCalendarId: null,
     });
     if (callId) {
       this.activeSessionsByCallId.set(callId, { session, callbacks, callSid });
@@ -861,7 +1101,64 @@ export class VapiClient {
       this.clearSessionConfig(callSid);
     });
 
+    this.sendCallerContextToSession(session, {
+      name: options?.callerName ?? null,
+      phoneNumber: options?.callerNumber ?? null,
+    });
+
     return { session, callId: callId ?? null };
+  }
+
+  private sendCallerContextToSession(
+    session: VapiRealtimeSession,
+    caller: { name?: string | null; phoneNumber?: string | null },
+  ) {
+    if (!session) {
+      return;
+    }
+
+    const name = typeof caller?.name === 'string' ? caller.name.trim() : '';
+    const phone = typeof caller?.phoneNumber === 'string' ? caller.phoneNumber.trim() : '';
+
+    if (!name && !phone) {
+      return;
+    }
+
+    const metadata: Record<string, unknown> = {};
+    if (name) metadata.name = name;
+    if (phone) metadata.phoneNumber = phone;
+
+    if (Object.keys(metadata).length > 0) {
+      session.sendJsonFrame({
+        type: 'session.update',
+        session: {
+          metadata: {
+            caller: metadata,
+          },
+        },
+      });
+    }
+
+    if (name) {
+      const statements = [`De beller heet ${name}. Spreek de beller aan met deze naam.`];
+      if (phone) {
+        statements.push(`Het telefoonnummer van de beller is ${phone}.`);
+      }
+
+      session.sendJsonFrame({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: statements.join(' '),
+            },
+          ],
+        },
+      });
+    }
   }
 
   private async establishRealtimeSocket(
@@ -1506,9 +1803,19 @@ export class VapiClient {
         const { openHour, closeHour } = this.getBusinessHoursForDate(config, date);
         console.log(`[VapiClient] Business hours: ${openHour}:00 - ${closeHour}:00`);
 
-        console.log(
-          `[VapiClient] Calling GoogleService.getAvailableSlots(${companyId}, ${date}, ${openHour}, ${closeHour})...`,
-        );
+        const staffPreference = this.resolveStaffPreference(config, args, sessionContext);
+        const staffCalendarMap = this.buildStaffCalendarMap(config);
+        const calendarIdsToQuery = staffPreference.calendarId
+          ? [staffPreference.calendarId]
+          : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
+
+        console.log(`[VapiClient] Staff preference`, {
+          staffMemberId: staffPreference.staffMember?.id ?? null,
+          staffMemberName: staffPreference.staffMember?.name ?? null,
+          explicitCalendarId: staffPreference.explicitCalendarId,
+          resolvedCalendarId: staffPreference.calendarId ?? null,
+          calendarIdsToQuery,
+        });
 
         try {
           const availabilityResult = await this.getAvailabilityWithCache(
@@ -1516,20 +1823,40 @@ export class VapiClient {
             date,
             openHour,
             closeHour,
+            calendarIdsToQuery,
           );
 
           if (availabilityResult.durationMs > 0) {
             console.log(
-              `[VapiClient] ⏱️ Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
+              `[VapiClient] Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
             );
           } else {
-            console.log(`[VapiClient] ♻️ Using cached availability result`);
+            console.log(`[VapiClient] Using cached availability result`);
           }
 
-          const { availability, availableRanges } = availabilityResult;
+          const { availability, availableRanges, perCalendarRanges } = availabilityResult;
           const isCacheHit = availabilityResult.source === 'cache';
-          console.log(`[VapiClient] ✅ Busy intervals:`, availability.busy);
-          console.log(`[VapiClient] ✅ Derived available ranges:`, availableRanges);
+
+          const calendarMeta = new Map<string, CalendarAvailabilityCalendar>();
+          (availability.calendars ?? []).forEach((calendar) => {
+            if (calendar?.calendarId) {
+              calendarMeta.set(calendar.calendarId, calendar);
+            }
+          });
+
+          const perCalendarAvailability = Object.entries(perCalendarRanges).map(([calendarId, ranges]) => {
+            const meta = calendarMeta.get(calendarId) ?? null;
+            const staff = staffCalendarMap.get(calendarId) ?? [];
+            return {
+              calendarId,
+              calendarSummary: meta?.summary ?? null,
+              staffMembers: staff.map((member) => ({ id: member.id, name: member.name })),
+              availableRanges: ranges,
+            };
+          });
+
+          console.log(`[VapiClient] Busy intervals:`, availability.busy);
+          console.log(`[VapiClient] Derived available ranges:`, availableRanges);
 
           const busyCount = availability.busy.length;
           const availableCount = availableRanges.length;
@@ -1539,6 +1866,13 @@ export class VapiClient {
               ? 'Alle tijden binnen het venster zijn bezet.'
               : `Beschikbaarheid gevonden in ${availableCount} vrije blok${availableCount === 1 ? '' : 'ken'}.`;
 
+          if (sessionRef) {
+            this.updateSessionStaffPreference(sessionRef, sessionContext, {
+              staffMember: staffPreference.staffMember,
+              calendarId: staffPreference.calendarId ?? calendarIdsToQuery?.[0] ?? null,
+            });
+          }
+
           return sendSuccess({
             date,
             openHour,
@@ -1546,13 +1880,18 @@ export class VapiClient {
             operatingWindow: availability.operatingWindow,
             busy: availability.busy,
             availableRanges,
+            perCalendarAvailability,
+            selectedStaffMemberId: staffPreference.staffMember?.id ?? null,
+            selectedStaffMemberName: staffPreference.staffMember?.name ?? null,
+            selectedCalendarId: staffPreference.calendarId ?? null,
             cached: isCacheHit,
             sharedRequest: availabilityResult.source === 'pending' ? true : undefined,
             retrievalDurationMs: availabilityResult.durationMs,
+            calendarIdsQueried: calendarIdsToQuery,
             message,
           });
         } catch (error) {
-          console.error(`[VapiClient] ❌ Error getting beschikbaarheid:`, error);
+          console.error('[VapiClient] Error getting beschikbaarheid:', error);
           const fallbackMessage =
             error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
               ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
@@ -1568,7 +1907,8 @@ export class VapiClient {
         const summary = this.normalizeStringArg(args['summary']);
         const start = this.normalizeStringArg(args['start']);
         const end = this.normalizeStringArg(args['end']);
-        const name = this.normalizeStringArg(args['name']);
+        const sessionCallerName = this.normalizeStringArg(sessionContext?.callerName);
+        const name = this.normalizeStringArg(args['name']) ?? sessionCallerName;
         const description = this.normalizeStringArg(args['description']);
         const location = this.normalizeStringArg(args['location']);
         const providedPhoneNumber = this.normalizeStringArg(args['phoneNumber']);
@@ -1589,10 +1929,71 @@ export class VapiClient {
           throw new Error('Ontbrekende verplichte velden voor het maken van een agenda item.');
         }
 
+        const staffPreference = this.resolveStaffPreference(config, args, sessionContext);
+        const staffCalendarMap = this.buildStaffCalendarMap(config);
+        let selectedCalendarId = staffPreference.calendarId ?? null;
+        let assignedStaff = staffPreference.staffMember ?? null;
+
+        const candidateCalendarIds = selectedCalendarId
+          ? [selectedCalendarId]
+          : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : []);
+
+        if (!selectedCalendarId && candidateCalendarIds.length > 0) {
+          try {
+            const calendarSelection = await this.googleService.findFirstAvailableCalendar(
+              companyId,
+              start,
+              end,
+              candidateCalendarIds,
+            );
+            if (calendarSelection) {
+              selectedCalendarId = calendarSelection.calendarId;
+              console.log(`[VapiClient] Selected calendar ${selectedCalendarId} (${calendarSelection.summary ?? 'unknown'}) for booking.`);
+              const staffForCalendar = staffCalendarMap.get(calendarSelection.calendarId) ?? [];
+              if (!assignedStaff && staffForCalendar.length > 0) {
+                assignedStaff = staffForCalendar[0];
+              }
+            }
+          } catch (selectionError) {
+            console.warn('[VapiClient] Failed to resolve calendar availability', selectionError);
+          }
+        }
+
+        if (!selectedCalendarId && candidateCalendarIds.length > 0) {
+          selectedCalendarId = candidateCalendarIds[0];
+        }
+
+        if (!assignedStaff && selectedCalendarId) {
+          const staffForCalendar = staffCalendarMap.get(selectedCalendarId);
+          if (staffForCalendar && staffForCalendar.length > 0) {
+            assignedStaff = staffForCalendar[0];
+          }
+        }
+
+        console.log(`[VapiClient] Calendar assignment`, {
+          candidateCalendarIds,
+          selectedCalendarId,
+          assignedStaffId: assignedStaff?.id ?? null,
+          assignedStaffName: assignedStaff?.name ?? null,
+        });
+
+        if (phoneNumber) {
+          try {
+            console.log(`[VapiClient] Persisting caller ${phoneNumber} (${name})`);
+            await this.companyService.createCompanyCaller(companyId, { name, phoneNumber });
+          } catch (error) {
+            console.error('[VapiClient] Failed to persist caller info', error);
+          }
+        } else {
+          console.log('[VapiClient] No phone number provided; skipping caller persistence.');
+        }
+
         const details: string[] = [];
         if (description) details.push(description);
         details.push(`Naam: ${name}`);
         if (phoneNumber) details.push(`Telefoonnummer: ${phoneNumber}`);
+        if (assignedStaff) details.push(`Medewerker: ${assignedStaff.name}`);
+        if (selectedCalendarId) details.push(`Agenda: ${selectedCalendarId}`);
         const compiledDescription = details.join('\n');
 
         const event: calendar_v3.Schema$Event = {
@@ -1610,24 +2011,59 @@ export class VapiClient {
         if (phoneNumber) {
           privateProperties.customerPhoneNumber = phoneNumber;
         }
+        if (assignedStaff) {
+          privateProperties.staffMemberId = String(assignedStaff.id);
+          privateProperties.staffMemberName = assignedStaff.name;
+        }
+        if (selectedCalendarId) {
+          privateProperties.googleCalendarId = selectedCalendarId;
+        }
 
         event.extendedProperties = { private: privateProperties };
 
-        console.log(`[VapiClient] Creating event in calendar...`);
-        const created = await this.googleService.scheduleEvent(companyId, event);
-        console.log(`[VapiClient] ✅ Event created:`, created.id);
+        console.log(`[VapiClient] Creating event in calendar ${selectedCalendarId ?? 'primary'}...`);
+        const created = await this.googleService.scheduleEvent(companyId, event, {
+          calendarId: selectedCalendarId ?? undefined,
+        });
+        console.log(`[VapiClient] Event created:`, created.id);
 
-        return sendSuccess({ event: created });
+        if (sessionRef) {
+          this.updateSessionStaffPreference(sessionRef, sessionContext, {
+            staffMember: assignedStaff,
+            calendarId: selectedCalendarId,
+          });
+        }
+
+        return sendSuccess({
+          event: created,
+          calendarId: selectedCalendarId ?? null,
+          staffMemberId: assignedStaff?.id ?? null,
+          staffMemberName: assignedStaff?.name ?? null,
+          calendarIdsQueried: candidateCalendarIds,
+        });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
         console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
 
         const start = this.normalizeStringArg(args['start'] ?? args['startTime']);
-        const name = this.normalizeStringArg(args['name']);
+        const sessionCallerName = this.normalizeStringArg(sessionContext?.callerName);
+        const name = this.normalizeStringArg(args['name']) ?? sessionCallerName;
         const phoneNumber = this.normalizeStringArg(args['phoneNumber']);
         const reason = this.normalizeStringArg(args['reason']);
 
-        console.log(`[VapiClient] Cancel params:`, { start, name, phoneNumber, reason });
+        const staffPreference = this.resolveStaffPreference(config, args, sessionContext);
+        const staffCalendarMap = this.buildStaffCalendarMap(config);
+        const calendarIdsToQuery = staffPreference.calendarId
+          ? [staffPreference.calendarId]
+          : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
+
+        console.log(`[VapiClient] Cancel params:`, {
+          start,
+          name,
+          phoneNumber,
+          reason,
+          calendarIdsToQuery,
+        });
 
         if (!start || !phoneNumber) {
           throw new Error('Ontbrekende starttijd of telefoonnummer om te annuleren.');
@@ -1639,13 +2075,22 @@ export class VapiClient {
           start,
           phoneNumber,
           name ?? undefined,
+          { calendarIds: calendarIdsToQuery ?? undefined },
         );
-        console.log(`[VapiClient] ✅ Event cancelled`);
+        console.log(`[VapiClient] Event cancelled`);
+
+        if (sessionRef) {
+          this.updateSessionStaffPreference(sessionRef, sessionContext, {
+            staffMember: staffPreference.staffMember,
+            calendarId: staffPreference.calendarId ?? null,
+          });
+        }
 
         return sendSuccess({
           start,
           cancelled: true,
           reason: reason ?? null,
+          calendarIdsQueried: calendarIdsToQuery,
         });
       },
     };
@@ -1699,13 +2144,27 @@ export class VapiClient {
     date: string,
     openHour: number,
     closeHour: number,
+    calendarIds: string[] | null,
   ): Promise<{
     availability: CalendarAvailability;
     availableRanges: AvailableRange[];
+    perCalendarRanges: Record<string, AvailableRange[]>;
     source: 'fresh' | 'cache' | 'pending';
     durationMs: number;
   }> {
-    const key = this.buildAvailabilityCacheKey(companyId, date, openHour, closeHour);
+    const normalizedIds = calendarIds
+      ?.map((id) => (typeof id === 'string' ? id.trim() : ''))
+      .filter((id) => id.length > 0);
+    const uniqueOrderedIds = normalizedIds
+      ? normalizedIds.filter((id, index) => normalizedIds.indexOf(id) === index)
+      : null;
+    const key = this.buildAvailabilityCacheKey(
+      companyId,
+      date,
+      openHour,
+      closeHour,
+      uniqueOrderedIds,
+    );
     const now = Date.now();
     const cached = this.availabilityCache.get(key);
 
@@ -1714,6 +2173,7 @@ export class VapiClient {
         return {
           availability: cached.availability,
           availableRanges: cached.availableRanges,
+          perCalendarRanges: cached.perCalendarRanges,
           source: 'cache',
           durationMs: 0,
         };
@@ -1724,11 +2184,12 @@ export class VapiClient {
 
     const pending = this.availabilityPending.get(key);
     if (pending) {
-      console.log(`[VapiClient] ⏳ Awaiting in-flight availability request for ${key}`);
+      console.log(`[VapiClient] �?� Awaiting in-flight availability request for ${key}`);
       const result = await pending.promise;
       return {
         availability: result.availability,
         availableRanges: result.availableRanges,
+        perCalendarRanges: result.perCalendarRanges,
         source: 'pending',
         durationMs: Date.now() - pending.startedAt,
       };
@@ -1741,12 +2202,33 @@ export class VapiClient {
         date,
         openHour,
         closeHour,
+        { calendarIds: uniqueOrderedIds ?? undefined },
       );
+
+      const perCalendarRanges: Record<string, AvailableRange[]> = {};
+      const calendarEntries = availability.calendars ?? [];
+      for (const calendar of calendarEntries) {
+        const calendarId = this.normalizeStringArg(calendar?.calendarId) ?? null;
+        if (!calendarId) continue;
+        perCalendarRanges[calendarId] = this.deriveAvailableRangesFromBusy(
+          availability.operatingWindow,
+          calendar.busy ?? [],
+        );
+      }
+
+      const rangeSets = Object.values(perCalendarRanges);
+      const availableRanges =
+        rangeSets.length > 0
+          ? this.mergeAvailableRanges(rangeSets)
+          : this.deriveAvailableRanges(availability);
+
       return {
         availability,
-        availableRanges: this.deriveAvailableRanges(availability),
+        availableRanges,
+        perCalendarRanges,
       };
     })();
+
     const fetchPromise = this.runWithTimeout(
       availabilityPromise,
       this.availabilityRequestTimeoutMs,
@@ -1760,11 +2242,13 @@ export class VapiClient {
       this.availabilityCache.set(key, {
         availability: result.availability,
         availableRanges: result.availableRanges,
+        perCalendarRanges: result.perCalendarRanges,
         expiresAt: Date.now() + this.availabilityCacheTtlMs,
       });
       return {
         availability: result.availability,
         availableRanges: result.availableRanges,
+        perCalendarRanges: result.perCalendarRanges,
         source: 'fresh',
         durationMs: Date.now() - startedAt,
       };
@@ -1778,8 +2262,10 @@ export class VapiClient {
     date: string,
     openHour: number,
     closeHour: number,
+    calendarIds: string[] | null,
   ): string {
-    return [companyId.toString(), date, openHour, closeHour].join('|');
+    const calendarKey = calendarIds && calendarIds.length > 0 ? calendarIds.slice().sort().join('~') : 'default';
+    return [companyId.toString(), date, openHour, closeHour, calendarKey].join('|');
   }
 
   private runWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -2629,3 +3115,10 @@ export class VapiClient {
 }
 
 export type { VapiRealtimeSession };
+
+
+
+
+
+
+
