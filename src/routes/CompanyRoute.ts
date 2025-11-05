@@ -51,6 +51,28 @@ router.put(
     controller.updateCompanyContact.bind(controller)
 );
 
+// Company Callers
+router.get(
+    "/callers",
+    authenticateToken,
+    controller.getCompanyCallers.bind(controller)
+);
+router.post(
+    "/callers",
+    authenticateToken,
+    controller.createCompanyCaller.bind(controller)
+);
+router.put(
+    "/callers/:callerId",
+    authenticateToken,
+    controller.updateCompanyCaller.bind(controller)
+);
+router.delete(
+    "/callers/:callerId",
+    authenticateToken,
+    controller.deleteCompanyCaller.bind(controller)
+);
+
 // Company Hours
 router.get(
     "/hours",

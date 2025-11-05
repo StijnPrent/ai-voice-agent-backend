@@ -5,10 +5,12 @@ import { CompanyInfoModel } from "../../business/models/CompanyInfoModel";
 import { CompanyDetailsModel } from "../../business/models/CompanyDetailsModel";
 import { CompanyContactModel } from "../../business/models/CompanyContactModel";
 import { CompanyHourModel } from "../../business/models/CompanyHourModel";
+import { CompanyCallerModel } from "../../business/models/CompanyCallerModel";
 import { ICompanyRepository } from "../interfaces/ICompanyRepository";
 import { BaseRepository } from "./BaseRepository";
 
 export class CompanyRepository extends BaseRepository implements ICompanyRepository {
+
     private async touchCompany(companyId: bigint): Promise<void> {
         const sql = `UPDATE company SET updated_at = NOW() WHERE id = ?`;
         await this.execute<ResultSetHeader>(sql, [companyId]);
@@ -18,19 +20,20 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
             INSERT INTO company
-                (id, email, twilio_number, created_at, updated_at)
-            VALUES (?, ?, ?, NOW(), NOW())
+                (id, email, twilio_number, assistant_enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NOW(), NOW())
         `;
         await this.execute<ResultSetHeader>(sql, [
             company.id,
             company.email,
-            company.twilioNumber
+            company.twilioNumber,
+            company.assistantEnabled ? 1 : 0
         ]);
     }
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.twilio_number = ?
@@ -40,6 +43,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         if (rows.length === 0) return null;
         const r = rows[0];
         const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+        const assistantEnabled =
+            typeof r.assistant_enabled === "undefined" || r.assistant_enabled === null
+                ? true
+                : r.assistant_enabled === 1 ||
+                  r.assistant_enabled === "1" ||
+                  r.assistant_enabled === true;
 
         return new CompanyModel(
             BigInt(r.id),
@@ -48,13 +57,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.twilio_number,
             r.created_at,
             r.updated_at,
-            assistantId
+            assistantId,
+            assistantEnabled
         );
     }
 
     public async findByEmail(email: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.email = ?
@@ -64,6 +74,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         if (rows.length === 0) return null;
         const r = rows[0];
         const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+        const assistantEnabled =
+            typeof r.assistant_enabled === "undefined" || r.assistant_enabled === null
+                ? true
+                : r.assistant_enabled === 1 ||
+                  r.assistant_enabled === "1" ||
+                  r.assistant_enabled === true;
 
         return new CompanyModel(
             BigInt(r.id),
@@ -72,13 +88,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.twilio_number,
             r.created_at,
             r.updated_at,
-            assistantId
+            assistantId,
+            assistantEnabled
         );
     }
 
     public async findById(companyId: bigint): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.id = ?
@@ -88,6 +105,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         if (rows.length === 0) return null;
         const r = rows[0];
         const assistantId = r.vapi_assistant_id ? String(r.vapi_assistant_id) : null;
+        const assistantEnabled =
+            typeof r.assistant_enabled === "undefined" || r.assistant_enabled === null
+                ? true
+                : r.assistant_enabled === 1 ||
+                  r.assistant_enabled === "1" ||
+                  r.assistant_enabled === true;
 
         return new CompanyModel(
             BigInt(r.id),
@@ -96,7 +119,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.twilio_number,
             r.created_at,
             r.updated_at,
-            assistantId
+            assistantId,
+            assistantEnabled
         );
     }
 
@@ -117,6 +141,18 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         `;
         await this.execute<ResultSetHeader>(sql, [
             connected ? 1 : 0,
+            companyId
+        ]);
+    }
+
+    public async setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void> {
+        const sql = `
+            UPDATE company
+            SET assistant_enabled = ?, updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [
+            enabled ? 1 : 0,
             companyId
         ]);
     }
@@ -452,6 +488,118 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             row.is_open === 1,
             row.open_time,
             row.close_time
+        );
+    }
+
+    // ---------- Company Callers ----------
+    public async addCompanyCaller(caller: CompanyCallerModel): Promise<CompanyCallerModel> {
+        const sql = `
+            INSERT INTO company_callers
+                (company_id, caller_name, phone_number, created_at, updated_at)
+            VALUES (?, ?, ?, NOW(), NOW())
+        `;
+        const result = await this.execute<ResultSetHeader>(sql, [
+            caller.companyId,
+            caller.name,
+            caller.phoneNumber
+        ]);
+        const insertedId = result.insertId || 0;
+        const saved = await this.findCompanyCallerById(insertedId);
+        if (saved) {
+            await this.touchCompany(saved.companyId);
+            return saved;
+        }
+        await this.touchCompany(caller.companyId);
+        return new CompanyCallerModel(insertedId, caller.companyId, caller.name, caller.phoneNumber);
+    }
+
+    public async updateCompanyCaller(caller: CompanyCallerModel): Promise<CompanyCallerModel> {
+        const sql = `
+            UPDATE company_callers
+            SET caller_name = ?, phone_number = ?, updated_at = NOW()
+            WHERE id = ? AND company_id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [
+            caller.name,
+            caller.phoneNumber,
+            caller.id,
+            caller.companyId
+        ]);
+        const saved = await this.findCompanyCallerById(caller.id);
+        if (saved) {
+            await this.touchCompany(saved.companyId);
+            return saved;
+        }
+        await this.touchCompany(caller.companyId);
+        return new CompanyCallerModel(caller.id, caller.companyId, caller.name, caller.phoneNumber);
+    }
+
+    public async deleteCompanyCaller(callerId: number): Promise<void> {
+        const companyId = await this.getCompanyIdForCaller(callerId);
+        const sql = `DELETE FROM company_callers WHERE id = ?`;
+        await this.execute<ResultSetHeader>(sql, [callerId]);
+        if (companyId) {
+            await this.touchCompany(companyId);
+        }
+    }
+
+    public async fetchCompanyCallers(companyId: bigint): Promise<CompanyCallerModel[]> {
+        const sql = `
+            SELECT *
+            FROM company_callers
+            WHERE company_id = ?
+            ORDER BY caller_name ASC, phone_number ASC
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
+        return rows.map((row) => this.mapCallerRow(row));
+    }
+
+    public async findCompanyCallerByPhone(companyId: bigint, phoneNumber: string): Promise<CompanyCallerModel | null> {
+        const sql = `
+            SELECT *
+            FROM company_callers
+            WHERE company_id = ?
+              AND phone_number = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, phoneNumber]);
+        if (rows.length === 0) {
+            return null;
+        }
+        return this.mapCallerRow(rows[0]);
+    }
+
+    public async findCompanyCallerById(callerId: number): Promise<CompanyCallerModel | null> {
+        const sql = `
+            SELECT *
+            FROM company_callers
+            WHERE id = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [callerId]);
+        if (rows.length === 0) {
+            return null;
+        }
+        return this.mapCallerRow(rows[0]);
+    }
+
+    public async getCompanyIdForCaller(callerId: number): Promise<bigint | null> {
+        const sql = `SELECT company_id FROM company_callers WHERE id = ? LIMIT 1`;
+        const rows = await this.execute<RowDataPacket[]>(sql, [callerId]);
+        if (rows.length === 0) {
+            return null;
+        }
+        return BigInt(rows[0].company_id);
+    }
+
+    private mapCallerRow(row: RowDataPacket): CompanyCallerModel {
+        return new CompanyCallerModel(
+            row.id,
+            BigInt(row.company_id),
+            row.caller_name,
+            row.phone_number,
+            row.created_at ? new Date(row.created_at) : null,
+            row.updated_at ? new Date(row.updated_at) : null
         );
     }
 }

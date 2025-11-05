@@ -21,6 +21,12 @@ router.post(
     controller.scheduleEvent.bind(controller)
 );
 
+router.get(
+    "/calendars",
+    authenticateToken,
+    controller.listCalendars.bind(controller)
+);
+
 router.post(
     "/availability",
   (req, res) => {

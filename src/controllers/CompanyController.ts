@@ -8,6 +8,7 @@ import { InvalidAccessCodeError } from "../business/errors/InvalidAccessCodeErro
 import { CompanyDetailsModel } from "../business/models/CompanyDetailsModel";
 import { CompanyContactModel } from "../business/models/CompanyContactModel";
 import { CompanyHourModel } from "../business/models/CompanyHourModel";
+import { CompanyCallerModel } from "../business/models/CompanyCallerModel";
 
 export class CompanyController {
     private get service(): CompanyService {
@@ -53,6 +54,14 @@ export class CompanyController {
             isOpen: hour.isOpen,
             openTime: hour.openTime,
             closeTime: hour.closeTime,
+        };
+    }
+
+    private static mapCaller(caller: CompanyCallerModel) {
+        return {
+            id: caller.id,
+            name: caller.name,
+            phoneNumber: caller.phoneNumber,
         };
     }
 
@@ -265,6 +274,131 @@ export class CompanyController {
             res.json(CompanyController.mapContact(saved));
         } catch (err) {
             this.handleError(res, err, "Error updating company contact");
+        }
+    }
+
+    // ---------- Company Callers ----------
+    public async getCompanyCallers(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(401).json({ message: "Unauthorized." });
+                return;
+            }
+            const callers = await this.service.listCompanyCallers(companyId);
+            res.json(callers.map(CompanyController.mapCaller));
+        } catch (err) {
+            this.handleError(res, err, "Error fetching caller directory");
+        }
+    }
+
+    public async createCompanyCaller(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(401).json({ message: "Unauthorized." });
+                return;
+            }
+
+            const { name, phoneNumber } = req.body ?? {};
+            if (!name || !phoneNumber) {
+                res.status(400).json({ message: "name and phoneNumber are required." });
+                return;
+            }
+
+            const caller = await this.service.createCompanyCaller(companyId, {
+                name: String(name),
+                phoneNumber: String(phoneNumber),
+            });
+
+            res.status(201).json(CompanyController.mapCaller(caller));
+        } catch (err) {
+            if (err instanceof Error) {
+                const message = err.message;
+                if (message === "Another caller already uses this phone number.") {
+                    res.status(409).json({ message });
+                    return;
+                }
+                if (
+                    message === "Caller name is required." ||
+                    message === "A valid phoneNumber is required."
+                ) {
+                    res.status(400).json({ message });
+                    return;
+                }
+            }
+            this.handleError(res, err, "Error creating caller");
+        }
+    }
+
+    public async updateCompanyCaller(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(401).json({ message: "Unauthorized." });
+                return;
+            }
+
+            const idParam = req.params?.callerId ?? req.params?.id;
+            const callerId = Number.parseInt(idParam ?? "", 10);
+            if (!Number.isFinite(callerId) || callerId <= 0) {
+                res.status(400).json({ message: "Invalid callerId." });
+                return;
+            }
+
+            const { name, phoneNumber } = req.body ?? {};
+            const caller = await this.service.updateCompanyCaller(companyId, callerId, {
+                name: name !== undefined ? String(name) : undefined,
+                phoneNumber: phoneNumber !== undefined ? String(phoneNumber) : undefined,
+            });
+
+            res.json(CompanyController.mapCaller(caller));
+        } catch (err) {
+            if (err instanceof Error) {
+                const message = err.message;
+                if (message === "Caller not found.") {
+                    res.status(404).json({ message });
+                    return;
+                }
+                if (message === "Another caller already uses this phone number.") {
+                    res.status(409).json({ message });
+                    return;
+                }
+                if (
+                    message === "Caller name is required." ||
+                    message === "A valid phoneNumber is required."
+                ) {
+                    res.status(400).json({ message });
+                    return;
+                }
+            }
+            this.handleError(res, err, "Error updating caller");
+        }
+    }
+
+    public async deleteCompanyCaller(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(401).json({ message: "Unauthorized." });
+                return;
+            }
+
+            const idParam = req.params?.callerId ?? req.params?.id;
+            const callerId = Number.parseInt(idParam ?? "", 10);
+            if (!Number.isFinite(callerId) || callerId <= 0) {
+                res.status(400).json({ message: "Invalid callerId." });
+                return;
+            }
+
+            await this.service.deleteCompanyCaller(companyId, callerId);
+            res.status(204).send();
+        } catch (err) {
+            if (err instanceof Error && err.message === "Caller not found.") {
+                res.status(404).json({ message: err.message });
+                return;
+            }
+            this.handleError(res, err, "Error deleting caller");
         }
     }
 

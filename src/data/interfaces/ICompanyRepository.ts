@@ -3,6 +3,7 @@ import { CompanyInfoModel } from "../../business/models/CompanyInfoModel";
 import { CompanyDetailsModel } from "../../business/models/CompanyDetailsModel";
 import { CompanyContactModel } from "../../business/models/CompanyContactModel";
 import { CompanyHourModel } from "../../business/models/CompanyHourModel";
+import { CompanyCallerModel } from "../../business/models/CompanyCallerModel";
 
 export interface ICompanyRepository {
     // ---------- Company ----------
@@ -12,6 +13,7 @@ export interface ICompanyRepository {
     findById(companyId: bigint): Promise<CompanyModel | null>;
     setCalendarConnected(companyId: bigint, connected: boolean): Promise<void>;
     saveAssistantId(companyId: bigint, assistantId: string): Promise<void>;
+    setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void>;
 
     // ---------- Company Info ----------
     addInfo(companyId: bigint, value: string): Promise<CompanyInfoModel>;
@@ -43,4 +45,13 @@ export interface ICompanyRepository {
     getCompanyIdForHour(hourId: number): Promise<bigint | null>;
     findCompanyHourByDay(companyId: bigint, dayOfWeek: number): Promise<CompanyHourModel | null>;
     findCompanyHourById(hourId: number): Promise<CompanyHourModel | null>;
+
+    // ---------- Company Callers ----------
+    addCompanyCaller(caller: CompanyCallerModel): Promise<CompanyCallerModel>;
+    updateCompanyCaller(caller: CompanyCallerModel): Promise<CompanyCallerModel>;
+    deleteCompanyCaller(callerId: number): Promise<void>;
+    fetchCompanyCallers(companyId: bigint): Promise<CompanyCallerModel[]>;
+    findCompanyCallerByPhone(companyId: bigint, phoneNumber: string): Promise<CompanyCallerModel | null>;
+    findCompanyCallerById(callerId: number): Promise<CompanyCallerModel | null>;
+    getCompanyIdForCaller(callerId: number): Promise<bigint | null>;
 }

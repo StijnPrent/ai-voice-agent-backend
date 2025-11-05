@@ -40,15 +40,52 @@ export class SchedulingService {
         return this.schedulingRepo.fetchStaffMembers(companyId);
     }
 
-    public async addStaffMember(companyId: bigint, name: string, specialties: SpecialtyModel[], role: string, availability: StaffAvailabilityModel[]): Promise<number> {
-        const staffMember = new StaffMemberModel(0, companyId, name, specialties, role, availability);
+    private normalizeCalendarField(value: unknown): string | null {
+        if (typeof value !== "string") {
+            return null;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+
+    public async addStaffMember(
+        companyId: bigint,
+        name: string,
+        specialties: SpecialtyModel[],
+        role: string,
+        availability: StaffAvailabilityModel[],
+        googleCalendarId?: string | null,
+        googleCalendarSummary?: string | null
+    ): Promise<number> {
+        const calendarId = this.normalizeCalendarField(googleCalendarId);
+        const calendarSummary = this.normalizeCalendarField(googleCalendarSummary);
+        const staffMember = new StaffMemberModel(
+            0,
+            companyId,
+            name,
+            specialties,
+            role,
+            availability,
+            calendarId,
+            calendarSummary
+        );
         const id = await this.schedulingRepo.addStaffMember(staffMember);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
         return id;
     }
 
     public async updateStaffMember(staffMember: StaffMemberModel): Promise<void> {
-        await this.schedulingRepo.updateStaffMember(staffMember);
+        const normalized = new StaffMemberModel(
+            staffMember.id,
+            staffMember.companyId,
+            staffMember.name,
+            staffMember.specialties,
+            staffMember.role,
+            staffMember.availability,
+            this.normalizeCalendarField(staffMember.googleCalendarId),
+            this.normalizeCalendarField(staffMember.googleCalendarSummary)
+        );
+        await this.schedulingRepo.updateStaffMember(normalized);
         await this.assistantSyncService.syncCompanyAssistant(staffMember.companyId);
     }
 

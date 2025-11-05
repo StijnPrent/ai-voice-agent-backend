@@ -1,6 +1,6 @@
 // src/business/services/AssistantSyncService.ts
 import axios from "axios";
-import { inject, injectable } from "tsyringe";
+import { inject, injectable, delay } from "tsyringe";
 import { VapiAssistantConfig, VapiClient } from "../../clients/VapiClient";
 import { ICompanyRepository } from "../../data/interfaces/ICompanyRepository";
 import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
@@ -11,7 +11,7 @@ import { AssistantSyncError } from "../errors/AssistantSyncError";
 @injectable()
 export class AssistantSyncService {
     constructor(
-        @inject(VapiClient) private readonly vapiClient: VapiClient,
+        @inject(delay(() => VapiClient)) private readonly vapiClient: VapiClient,
         @inject("ICompanyRepository") private readonly companyRepository: ICompanyRepository,
         @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
         @inject("ISchedulingRepository") private readonly schedulingRepository: ISchedulingRepository,
@@ -77,11 +77,12 @@ export class AssistantSyncService {
             return null;
         }
 
-        const [details, contact, hours, info] = await Promise.all([
+        const [details, contact, hours, info, callers] = await Promise.all([
             this.companyRepository.fetchCompanyDetails(companyId),
             this.companyRepository.fetchCompanyContact(companyId),
             this.companyRepository.fetchCompanyHours(companyId),
             this.companyRepository.fetchInfo(companyId),
+            this.companyRepository.fetchCompanyCallers(companyId),
         ]);
 
         const [appointmentTypes, staffMembers, hasGoogleIntegration] = await Promise.all([
@@ -99,6 +100,7 @@ export class AssistantSyncService {
                 contact,
                 hours,
                 info,
+                callers,
             },
             schedulingContext: {
                 appointmentTypes,

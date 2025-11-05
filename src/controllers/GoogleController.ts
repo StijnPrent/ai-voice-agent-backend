@@ -6,6 +6,7 @@ import { GoogleService } from "../business/services/GoogleService";
 import type { CalendarAvailability } from "../business/services/GoogleService";
 import { GoogleReauthRequiredError } from "../business/errors/GoogleReauthRequiredError";
 import { calendar_v3 } from "googleapis";
+import { AuthenticatedRequest } from "../middleware/auth";
 
 @injectable()
 export class GoogleController {
@@ -63,9 +64,10 @@ export class GoogleController {
      */
     async scheduleEvent(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const { companyId, event } = req.body as {
+        const { companyId, event, calendarId } = req.body as {
             companyId: string | number | bigint;
             event: calendar_v3.Schema$Event;
+            calendarId?: string;
         };
         if (!companyId || !event) {
             res.status(400).json({ message: "Missing companyId or event" });
@@ -73,7 +75,9 @@ export class GoogleController {
         }
 
         try {
-            const scheduled = await service.scheduleEvent(BigInt(companyId), event);
+            const scheduled = await service.scheduleEvent(BigInt(companyId), event, {
+                calendarId: typeof calendarId === "string" ? calendarId : undefined,
+            });
             res.json(scheduled);
         } catch (err) {
             if (err instanceof GoogleReauthRequiredError) {
@@ -82,6 +86,51 @@ export class GoogleController {
             }
             console.error("❌ scheduleEvent failed:", err);
             res.status(500).json({ message: "Error scheduling event" });
+        }
+    }
+
+    async listCalendars(req: Request, res: Response): Promise<void> {
+        const service = container.resolve(GoogleService);
+        const authReq = req as AuthenticatedRequest;
+
+        const fromToken = authReq.companyId;
+        const fromQuery = typeof req.query.companyId === "string" ? req.query.companyId.trim() : null;
+        const fromBody = typeof (req.body?.companyId) === "string" ? String(req.body.companyId).trim() : null;
+
+        const candidate =
+            typeof fromToken === "bigint"
+                ? fromToken
+                : fromToken !== undefined && fromToken !== null
+                    ? BigInt(fromToken)
+                    : fromQuery && fromQuery.length > 0
+                        ? fromQuery
+                        : fromBody && fromBody.length > 0
+                            ? fromBody
+                            : null;
+
+        if (candidate === null || candidate === undefined || candidate === "") {
+            res.status(400).json({ message: "Missing companyId" });
+            return;
+        }
+
+        let normalizedCompanyId: bigint;
+        try {
+            normalizedCompanyId = typeof candidate === "bigint" ? candidate : BigInt(candidate);
+        } catch {
+            res.status(400).json({ message: "Invalid companyId" });
+            return;
+        }
+
+        try {
+            const calendars = await service.listCalendars(normalizedCompanyId);
+            res.json({ calendars });
+        } catch (err) {
+            if (err instanceof GoogleReauthRequiredError) {
+                res.status(err.statusCode).json({ message: err.message, authUrl: err.authUrl });
+                return;
+            }
+            console.error("[GoogleController] listCalendars failed:", err);
+            res.status(500).json({ message: "Error loading calendars" });
         }
     }
 
@@ -187,11 +236,12 @@ export class GoogleController {
 
     async cancelEvent(req: Request, res: Response): Promise<void> {
         const service = container.resolve(GoogleService);
-        const { companyId, start, name, phoneNumber } = req.body as {
+        const { companyId, start, name, phoneNumber, calendarIds } = req.body as {
             companyId: string | number | bigint;
             start: string;
             name?: string;
             phoneNumber?: string;
+            calendarIds?: string[] | string | null;
         };
 
         if (!companyId || !start || !phoneNumber) {
@@ -199,8 +249,16 @@ export class GoogleController {
             return;
         }
 
+        const normalizedCalendarIds = Array.isArray(calendarIds)
+            ? calendarIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+            : typeof calendarIds === "string" && calendarIds.trim().length > 0
+                ? [calendarIds.trim()]
+                : undefined;
+
         try {
-            const success = await service.cancelEvent(BigInt(companyId), start, phoneNumber, name);
+            const success = await service.cancelEvent(BigInt(companyId), start, phoneNumber, name, {
+                calendarIds: normalizedCalendarIds,
+            });
             res.json({ success });
         } catch (err) {
             if (err instanceof GoogleReauthRequiredError) {
