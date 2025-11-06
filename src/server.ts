@@ -19,6 +19,7 @@ import analyticsRoute from "./routes/AnalyticsRoute";
 import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
+import salesPipelineRoute from "./routes/SalesPipelineRoute";
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use("/analytics", analyticsRoute);
 app.use("/vapi", vapiRoute.getRouter());
 app.use("/internal/vapi", internalVapiRoute.getRouter());
 app.use("/admin", adminRoute);
+app.use("/api", salesPipelineRoute);
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);

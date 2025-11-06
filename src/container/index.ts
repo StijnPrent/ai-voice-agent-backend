@@ -42,6 +42,9 @@ import { VapiRoute } from "../routes/VapiRoute";
 import { AdminService } from "../business/services/AdminService";
 import { IAdminRepository } from "../data/interfaces/IAdminRepository";
 import { AdminRepository } from "../data/repositories/AdminRepository";
+import { SalesPipelineService } from "../business/services/SalesPipelineService";
+import { ISalesPipelineRepository } from "../data/interfaces/ISalesPipelineRepository";
+import { SalesPipelineRepository } from "../data/repositories/SalesPipelineRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -72,6 +75,7 @@ container.register(UsageService, { useClass: UsageService });
 container.register(CallLogService, { useClass: CallLogService });
 container.register(AnalyticsService, { useClass: AnalyticsService });
 container.register(AdminService, { useClass: AdminService });
+container.register(SalesPipelineService, { useClass: SalesPipelineService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -112,4 +116,7 @@ container.register<IVapiSessionRepository>("IVapiSessionRepository", {
 })
 container.register<IAdminRepository>("IAdminRepository", {
     useClass: AdminRepository,
+})
+container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
+    useClass: SalesPipelineRepository,
 })
