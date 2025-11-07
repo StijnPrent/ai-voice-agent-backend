@@ -622,6 +622,9 @@ export class VapiClient {
         `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
         'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
         'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
+        'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agenda’s voor beschikbaarheid en boekingen.',
+        'Als er meerdere afspraaktypes beschikbaar zijn, vraag de beller altijd om een keuze. Geef eventueel suggesties op basis van wat de beller zegt, maar gebruik uitsluitend afspraaktypes die in het systeem staan.',
+        'Vraagt iemand naar een medewerker die niet in het systeem staat? Leg uit dat die persoon daar niet werkt en bied aan om verder te helpen met de medewerkers die wél beschikbaar zijn.',
       );
     } else {
       instructions.push(

@@ -66,6 +66,31 @@ export class GoogleCalendarClient {
         event: calendar_v3.Schema$Event,
         calendarId?: string
     ) {
+        // Ensure the event title includes customer name and phone number
+        try {
+            const originalSummary = (event.summary ?? '').toString().trim();
+            const priv = event.extendedProperties?.private as Record<string, string> | undefined;
+            const customerName = priv?.customerName?.toString().trim();
+            const customerPhone = priv?.customerPhoneNumber?.toString().trim();
+
+            let suffix = '';
+            if (customerName) {
+                suffix += customerName;
+            }
+            if (customerPhone) {
+                suffix += (suffix ? ' ' : '') + `(${customerPhone})`;
+            }
+
+            if (suffix) {
+                if (!originalSummary) {
+                    event.summary = suffix;
+                } else if (!originalSummary.includes(suffix)) {
+                    event.summary = `${originalSummary} - ${suffix}`;
+                }
+            }
+        } catch (_) {
+            // Non-fatal: if anything goes wrong, continue with the provided summary
+        }
         const oauth2Client = this.getAuthenticatedClient(model, redirectUri);
         const calendar = google.calendar({
             version: "v3",
