@@ -205,6 +205,14 @@ export class SalesPipelineService {
         return this.repository.updateCompany(companyId, updates);
     }
 
+    public async deleteCompany(companyId: number): Promise<void> {
+        const company = await this.repository.findCompanySummaryById(companyId);
+        if (!company) {
+            throw new ResourceNotFoundError("Company not found.");
+        }
+        await this.repository.deleteCompany(companyId);
+    }
+
     public async addNote(
         companyId: number,
         payload: { content?: unknown }

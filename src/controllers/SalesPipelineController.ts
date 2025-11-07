@@ -111,6 +111,16 @@ export class SalesPipelineController {
         }
     }
 
+    public async deleteCompany(req: Request, res: Response): Promise<void> {
+        try {
+            const companyId = this.parseId(req.params.id, "company id");
+            await this.service.deleteCompany(companyId);
+            res.status(204).send();
+        } catch (error) {
+            this.handleError(res, error, "Error deleting company.");
+        }
+    }
+
     // Notes
     public async addNote(req: Request, res: Response): Promise<void> {
         try {

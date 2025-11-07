@@ -15,6 +15,7 @@ router.get("/companies", controller.listCompanies.bind(controller));
 router.post("/companies", controller.createCompany.bind(controller));
 router.get("/companies/:id", controller.getCompany.bind(controller));
 router.patch("/companies/:id", controller.updateCompany.bind(controller));
+router.delete("/companies/:id", controller.deleteCompany.bind(controller));
 
 // Company Notes
 router.post("/companies/:id/notes", controller.addNote.bind(controller));
