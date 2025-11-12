@@ -72,4 +72,21 @@ router.put(
     controller.updatePricing.bind(controller)
 );
 
+// Email template + send
+router.get(
+    "/mail/template",
+    authenticateAdminToken,
+    controller.getMailTemplate.bind(controller)
+);
+router.put(
+    "/mail/template",
+    authenticateAdminToken,
+    controller.updateMailTemplate.bind(controller)
+);
+router.post(
+    "/mail/send",
+    authenticateAdminToken,
+    controller.sendAdminMail.bind(controller)
+);
+
 export default router;

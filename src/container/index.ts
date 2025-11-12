@@ -45,6 +45,12 @@ import { AdminRepository } from "../data/repositories/AdminRepository";
 import { SalesPipelineService } from "../business/services/SalesPipelineService";
 import { ISalesPipelineRepository } from "../data/interfaces/ISalesPipelineRepository";
 import { SalesPipelineRepository } from "../data/repositories/SalesPipelineRepository";
+import { IMailClient } from "../clients/MailClient";
+import { DevConsoleMailClient } from "../clients/DevConsoleMailClient";
+import { SesMailClient } from "../clients/SesMailClient";
+import config from "../config/config";
+import { MailService } from "../business/services/MailService";
+import { MailTemplateService } from "../business/services/MailTemplateService";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -76,6 +82,8 @@ container.register(CallLogService, { useClass: CallLogService });
 container.register(AnalyticsService, { useClass: AnalyticsService });
 container.register(AdminService, { useClass: AdminService });
 container.register(SalesPipelineService, { useClass: SalesPipelineService });
+container.register(MailService, { useClass: MailService });
+container.register(MailTemplateService, { useClass: MailTemplateService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -120,3 +128,9 @@ container.register<IAdminRepository>("IAdminRepository", {
 container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
     useClass: SalesPipelineRepository,
 })
+
+// Mail Client selection
+const mailProvider = (process.env.MAIL_PROVIDER || (config as any).mailProvider || "dev").toLowerCase();
+container.register<IMailClient>("IMailClient", {
+    useClass: mailProvider === "ses" ? SesMailClient : DevConsoleMailClient,
+});

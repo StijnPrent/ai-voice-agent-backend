@@ -43,6 +43,15 @@ interface Config {
 
     // Server
     serverUrl: string;
+
+    // Public base URL override for assets (optional)
+    publicBaseUrl?: string;
+
+    // Mail
+    mailProvider?: string; // 'ses' | 'dev'
+    sesRegion?: string;
+    sesFrom?: string;
+
 }
 
 const config: Config = {
@@ -79,6 +88,12 @@ const config: Config = {
     masterKey: process.env.MASTER_KEY || "",
 
     serverUrl: process.env.SERVER_URL || "https://api.callingbird.nl",
+    publicBaseUrl: process.env.PUBLIC_BASE_URL,
+
+    mailProvider: process.env.MAIL_PROVIDER,
+    sesRegion: process.env.SES_REGION,
+    sesFrom: process.env.SES_FROM || "info@callingbird.nl",
+
 };
 
 // Validate critical values

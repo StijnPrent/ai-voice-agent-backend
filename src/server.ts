@@ -62,6 +62,8 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
+// Serve static assets (e.g., email footer images) from /public
+app.use(express.static("public"));
 app.use("/voice", voiceRoutes(voiceSessionManager));
 app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);

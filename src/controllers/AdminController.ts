@@ -1,10 +1,15 @@
 import { Request, Response } from "express";
 import { container } from "tsyringe";
 import { AdminService } from "../business/services/AdminService";
+import { MailService } from "../business/services/MailService";
 
 export class AdminController {
     private get service(): AdminService {
         return container.resolve(AdminService);
+    }
+
+    private get mail(): MailService {
+        return container.resolve(MailService);
     }
 
     private handleError(res: Response, error: unknown, message: string): void {
@@ -240,6 +245,59 @@ export class AdminController {
             res.json({ success: true, pricing });
         } catch (error) {
             this.handleError(res, error, "Failed to update pricing settings");
+        }
+    }
+
+    // Mail template: GET current
+    public async getMailTemplate(req: Request, res: Response): Promise<void> {
+        try {
+            const tpl = await this.mail.getTemplate();
+            res.json({
+                subject: tpl.subject,
+                body: tpl.body,
+                placeholders: ["email", "company", "contactName"],
+            });
+        } catch (error) {
+            this.handleError(res, error, "Failed to fetch mail template");
+        }
+    }
+
+    // Mail template: PUT update
+    public async updateMailTemplate(req: Request, res: Response): Promise<void> {
+        try {
+            const { subject, body } = req.body ?? {};
+            if (typeof subject !== "string" || typeof body !== "string") {
+                res.status(400).json({ success: false, error: "subject and body are required" });
+                return;
+            }
+            const updated = await this.mail.updateTemplate(subject, body);
+            res.json({ success: true, template: updated });
+        } catch (error) {
+            this.handleError(res, error, "Failed to update mail template");
+        }
+    }
+
+    // Send email, optionally with body/subject override from preview
+    public async sendAdminMail(req: Request, res: Response): Promise<void> {
+        try {
+            const { to, email, company, contactName, bodyOverride, subjectOverride } = req.body ?? {};
+            if (!to || typeof to !== "string") {
+                res.status(400).json({ success: false, error: "'to' is required" });
+                return;
+            }
+
+            const result = await this.mail.sendAdminEmail({
+                to: String(to),
+                email: email ? String(email) : null,
+                company: company ? String(company) : null,
+                contactName: contactName ? String(contactName) : null,
+                bodyOverride: bodyOverride ? String(bodyOverride) : null,
+                subjectOverride: subjectOverride ? String(subjectOverride) : null,
+            });
+
+            res.json({ success: true, id: result.id });
+        } catch (error) {
+            this.handleError(res, error, "Failed to send email");
         }
     }
 }
