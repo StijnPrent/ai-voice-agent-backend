@@ -31,6 +31,7 @@
   "dependencies": {
     "@azure/msal-node": "^3.7.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@modelcontextprotocol/sdk": "^1.22.0",
     "@types/bcrypt": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.10.0",
@@ -45,6 +46,7 @@
     "reflect-metadata": "^0.2.2",
     "tsyringe": "^4.10.0",
     "twilio": "^5.7.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
   }
 }
