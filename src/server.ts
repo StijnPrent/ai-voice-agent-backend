@@ -20,6 +20,7 @@ import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
 import salesPipelineRoute from "./routes/SalesPipelineRoute";
+import { mountLeadsMcpServer } from "./mcp/server";
 
 const app = express();
 
@@ -76,6 +77,7 @@ app.use("/vapi", vapiRoute.getRouter());
 app.use("/internal/vapi", internalVapiRoute.getRouter());
 app.use("/admin", adminRoute);
 app.use("/api", salesPipelineRoute);
+mountLeadsMcpServer(app);
 
 const server = createServer(app);
 const webSocketServer = container.resolve(WebSocketServer);
