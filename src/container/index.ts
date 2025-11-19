@@ -45,6 +45,7 @@ import { AdminRepository } from "../data/repositories/AdminRepository";
 import { SalesPipelineService } from "../business/services/SalesPipelineService";
 import { ISalesPipelineRepository } from "../data/interfaces/ISalesPipelineRepository";
 import { SalesPipelineRepository } from "../data/repositories/SalesPipelineRepository";
+import { LeadAgentService } from "../business/services/LeadAgentService";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -76,6 +77,7 @@ container.register(CallLogService, { useClass: CallLogService });
 container.register(AnalyticsService, { useClass: AnalyticsService });
 container.register(AdminService, { useClass: AdminService });
 container.register(SalesPipelineService, { useClass: SalesPipelineService });
+container.register(LeadAgentService, { useClass: LeadAgentService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {

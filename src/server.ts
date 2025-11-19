@@ -21,6 +21,7 @@ import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
 import salesPipelineRoute from "./routes/SalesPipelineRoute";
 import { mountLeadsMcpServer } from "./mcp/server";
+import leadAgentRoute from "./routes/LeadAgentRoute";
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.use("/vapi", vapiRoute.getRouter());
 app.use("/internal/vapi", internalVapiRoute.getRouter());
 app.use("/admin", adminRoute);
 app.use("/api", salesPipelineRoute);
+app.use("/agents", leadAgentRoute);
 mountLeadsMcpServer(app);
 
 const server = createServer(app);
@@ -88,7 +90,7 @@ server.on('upgrade', (request, socket, head) => {
     webSocketServer.handleUpgrade(request, socket, head);
 });
 
-const PORT = process.env.PORT || 3003;
+const PORT = process.env.PORT || 3002;
 
 //health check endpoint
 app.get('/health', (req, res) => {
