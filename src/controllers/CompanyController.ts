@@ -9,10 +9,17 @@ import { CompanyDetailsModel } from "../business/models/CompanyDetailsModel";
 import { CompanyContactModel } from "../business/models/CompanyContactModel";
 import { CompanyHourModel } from "../business/models/CompanyHourModel";
 import { CompanyCallerModel } from "../business/models/CompanyCallerModel";
+import { EarlyAccessService } from "../business/services/EarlyAccessService";
+import { EmailNotVerifiedError } from "../business/errors/EmailNotVerifiedError";
+import config from "../config/config";
 
 export class CompanyController {
     private get service(): CompanyService {
         return container.resolve(CompanyService);
+    }
+
+    private get earlyAccess(): EarlyAccessService {
+        return container.resolve(EarlyAccessService);
     }
 
     private handleError(res: Response, err: unknown, defaultMessage: string): void {
@@ -122,7 +129,108 @@ export class CompanyController {
             }
             res.json({ token });
         } catch (err) {
+            if (err instanceof EmailNotVerifiedError) {
+                res.status(403).json({ code: err.code, message: err.message });
+                return;
+            }
             this.handleError(res, err, "Error logging in");
+        }
+    }
+
+    public async resendVerificationEmail(req: Request, res: Response): Promise<void> {
+        try {
+            const { email } = req.body ?? {};
+            if (!email) {
+                res.status(400).json({ message: "Email is required." });
+                return;
+            }
+
+            await this.service.resendVerificationEmail(String(email));
+            res.json({ message: "If this email is registered we have sent a new verification link." });
+        } catch (err) {
+            this.handleError(res, err, "Failed to send verification email");
+        }
+    }
+
+    public async confirmVerification(req: Request, res: Response): Promise<void> {
+        try {
+            const { token } = req.body ?? {};
+            if (!token) {
+                res.status(400).json({ message: "Verification token is required." });
+                return;
+            }
+
+            await this.service.confirmEmailVerification(String(token));
+            res.json({ message: "Email verified successfully." });
+        } catch (err) {
+            res.status(400).json({ message: err instanceof Error ? err.message : "Unable to verify email." });
+        }
+    }
+
+    public async requestPasswordReset(req: Request, res: Response): Promise<void> {
+        try {
+            const { email } = req.body ?? {};
+            if (!email) {
+                res.status(400).json({ message: "Email is required." });
+                return;
+            }
+            await this.service.requestPasswordReset(String(email));
+            res.json({ message: "If this email is registered we have sent reset instructions." });
+        } catch (err) {
+            this.handleError(res, err, "Failed to request password reset");
+        }
+    }
+
+    public async resetPassword(req: Request, res: Response): Promise<void> {
+        try {
+            const { token, password } = req.body ?? {};
+            if (!token || !password) {
+                res.status(400).json({ message: "token and password are required." });
+                return;
+            }
+
+            await this.service.resetPasswordWithToken(String(token), String(password));
+            res.json({ message: "Password updated successfully." });
+        } catch (err) {
+            res.status(400).json({ message: err instanceof Error ? err.message : "Unable to reset password." });
+        }
+    }
+
+    public async submitEarlyAccess(req: Request, res: Response): Promise<void> {
+        try {
+            const { email, name, companyName } = req.body ?? {};
+            if (!email) {
+                res.status(400).json({ message: "Email is required." });
+                return;
+            }
+
+            await this.earlyAccess.submitRequest({
+                email: String(email),
+                name: name ? String(name) : null,
+                company: companyName ? String(companyName) : null,
+            });
+
+            res.json({ message: "Early access request stored successfully." });
+        } catch (err) {
+            this.handleError(res, err, "Failed to submit early access request");
+        }
+    }
+
+    public async unsubscribeEarlyAccess(req: Request, res: Response): Promise<void> {
+        try {
+            const emailParam = req.query.email;
+            const email = typeof emailParam === "string" ? emailParam.trim() : "";
+            if (!email) {
+                res.status(400).json({ message: "Email is required." });
+                return;
+            }
+
+            await this.earlyAccess.cancelRequestByEmail(email);
+            const base = (config.frontendUrl || "").replace(/\/+$/, "");
+            const target = base ? `${base}/unsubscribe` : "/unsubscribe";
+            res.redirect(302, target);
+        } catch (err) {
+            this.handleError(res, err, "Failed to unsubscribe from early access");
         }
     }
 

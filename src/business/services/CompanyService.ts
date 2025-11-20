@@ -12,12 +12,18 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { AssistantSyncService } from "./AssistantSyncService";
 import { InvalidAccessCodeError } from "../errors/InvalidAccessCodeError";
+import { TransactionalMailService } from "./TransactionalMailService";
+import { IAuthTokenRepository, AuthTokenType } from "../../data/interfaces/IAuthTokenRepository";
+import { EmailNotVerifiedError } from "../errors/EmailNotVerifiedError";
+import config from "../../config/config";
 
 @injectable()
 export class CompanyService {
     constructor(
         @inject("ICompanyRepository") private companyRepo: ICompanyRepository,
         @inject("IPasswordRepository") private passwordRepo: IPasswordRepository,
+        @inject("IAuthTokenRepository") private readonly authTokenRepository: IAuthTokenRepository,
+        private readonly transactionalMail: TransactionalMailService,
         @inject(AssistantSyncService) private readonly assistantSyncService: AssistantSyncService
     ) {}
 
@@ -63,6 +69,61 @@ export class CompanyService {
         return normalized;
     }
 
+    private buildFrontendLink(path: string): string {
+        const base = (config.frontendUrl || "").replace(/\/+$/, "");
+        const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+        return base ? `${base}${normalizedPath}` : normalizedPath;
+    }
+
+    private hashToken(token: string): string {
+        return crypto.createHash("sha256").update(token).digest("hex");
+    }
+
+    private async issueAuthToken(
+        companyId: bigint,
+        type: AuthTokenType,
+        expiresInMinutes: number,
+        metadata?: Record<string, any> | null
+    ): Promise<string> {
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = this.hashToken(rawToken);
+        const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+        await this.authTokenRepository.invalidateTokens(companyId, type);
+        await this.authTokenRepository.createToken({
+            companyId,
+            tokenHash,
+            type,
+            expiresAt,
+            metadata: metadata ?? null,
+        });
+        return rawToken;
+    }
+
+    private async sendVerificationEmail(company: CompanyModel, context?: { companyName?: string; contactName?: string }) {
+        const token = await this.issueAuthToken(company.id, "email-verification", 60 * 24, {
+            email: company.email,
+        });
+        const verificationUrl = this.buildFrontendLink(`/verify-email?token=${token}`);
+        await this.transactionalMail.sendEmailVerification({
+            to: company.email,
+            companyName: context?.companyName ?? company.name,
+            contactName: context?.contactName ?? company.name ?? company.email,
+            verificationUrl,
+        });
+    }
+
+    private async sendPasswordResetEmail(company: CompanyModel): Promise<void> {
+        const token = await this.issueAuthToken(company.id, "password-reset", 60, {
+            email: company.email,
+        });
+        const resetUrl = this.buildFrontendLink(`/reset-password?token=${token}`);
+        await this.transactionalMail.sendPasswordReset({
+            to: company.email,
+            resetUrl,
+            companyName: company.name,
+        });
+    }
+
     public async registerCompany(params: {
         companyName: string;
         contactName?: string;
@@ -86,6 +147,11 @@ export class CompanyService {
             });
         }
 
+        await this.sendVerificationEmail(company, {
+            companyName: params.companyName,
+            contactName: params.contactName,
+        });
+
         return company;
     }
 
@@ -107,6 +173,8 @@ export class CompanyService {
             sanitizedTwilio,
             new Date(),
             new Date(),
+            null,
+            true,
             null
         );
         await this.companyRepo.createCompany(company);
@@ -128,12 +196,70 @@ export class CompanyService {
         const valid = await bcrypt.compare(password, storedHash);
         if (!valid) return null;
 
+        if (!company.emailVerifiedAt) {
+            throw new EmailNotVerifiedError();
+        }
+
         const token = jwt.sign(
             { companyId: company.id.toString() },
             process.env.JWT_SECRET!,
             { expiresIn: "8h" }
         );
         return token;
+    }
+
+    public async resendVerificationEmail(email: string): Promise<void> {
+        const company = await this.companyRepo.findByEmail(email);
+        if (!company) {
+            return;
+        }
+        if (company.emailVerifiedAt) {
+            return;
+        }
+        await this.sendVerificationEmail(company, {
+            companyName: company.name,
+        });
+    }
+
+    public async confirmEmailVerification(token: string): Promise<void> {
+        if (!token?.trim()) {
+            throw new Error("Verificatietoken ontbreekt.");
+        }
+        const tokenHash = this.hashToken(token.trim());
+        const record = await this.authTokenRepository.findValidToken("email-verification", tokenHash);
+        if (!record) {
+            throw new Error("Deze verificatielink is verlopen of ongeldig.");
+        }
+
+        await this.companyRepo.markEmailVerified(record.companyId);
+        await this.authTokenRepository.markConsumed(record.id);
+    }
+
+    public async requestPasswordReset(email: string): Promise<void> {
+        const company = await this.companyRepo.findByEmail(email);
+        if (!company || !company.emailVerifiedAt) {
+            return;
+        }
+        await this.sendPasswordResetEmail(company);
+    }
+
+    public async resetPasswordWithToken(token: string, newPassword: string): Promise<void> {
+        if (!token?.trim()) {
+            throw new Error("Reset token ontbreekt.");
+        }
+        if (!newPassword || newPassword.length < 8) {
+            throw new Error("Het wachtwoord moet minimaal 8 tekens lang zijn.");
+        }
+
+        const tokenHash = this.hashToken(token.trim());
+        const record = await this.authTokenRepository.findValidToken("password-reset", tokenHash);
+        if (!record) {
+            throw new Error("Deze resetlink is verlopen of ongeldig.");
+        }
+
+        const hash = await bcrypt.hash(newPassword, 10);
+        await this.passwordRepo.createPassword(record.companyId, hash);
+        await this.authTokenRepository.markConsumed(record.id);
     }
 
     public async findById(companyId: bigint): Promise<CompanyModel> {

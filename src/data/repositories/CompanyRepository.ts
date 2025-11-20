@@ -20,8 +20,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
             INSERT INTO company
-                (id, email, twilio_number, assistant_enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, NOW(), NOW())
+                (id, email, twilio_number, assistant_enabled, email_verified_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NULL, NOW(), NOW())
         `;
         await this.execute<ResultSetHeader>(sql, [
             company.id,
@@ -33,7 +33,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.email_verified_at
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.twilio_number = ?
@@ -50,6 +50,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                   r.assistant_enabled === "1" ||
                   r.assistant_enabled === true;
 
+        const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
+
         return new CompanyModel(
             BigInt(r.id),
             r.name,
@@ -58,13 +60,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.created_at,
             r.updated_at,
             assistantId,
-            assistantEnabled
+            assistantEnabled,
+            emailVerifiedAt
         );
     }
 
     public async findByEmail(email: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.email_verified_at
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.email = ?
@@ -81,6 +84,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                   r.assistant_enabled === "1" ||
                   r.assistant_enabled === true;
 
+        const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
         return new CompanyModel(
             BigInt(r.id),
             r.name,
@@ -89,13 +93,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.created_at,
             r.updated_at,
             assistantId,
-            assistantEnabled
+            assistantEnabled,
+            emailVerifiedAt
         );
     }
 
     public async findById(companyId: bigint): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.email_verified_at
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.id = ?
@@ -112,6 +117,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                   r.assistant_enabled === "1" ||
                   r.assistant_enabled === true;
 
+        const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
         return new CompanyModel(
             BigInt(r.id),
             r.name,
@@ -120,7 +126,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             r.created_at,
             r.updated_at,
             assistantId,
-            assistantEnabled
+            assistantEnabled,
+            emailVerifiedAt
         );
     }
 
@@ -155,6 +162,15 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             enabled ? 1 : 0,
             companyId
         ]);
+    }
+
+    public async markEmailVerified(companyId: bigint): Promise<void> {
+        const sql = `
+            UPDATE company
+            SET email_verified_at = NOW(), updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [companyId]);
     }
 
     // ---------- Company Info ----------

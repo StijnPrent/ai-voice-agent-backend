@@ -14,6 +14,7 @@ export interface ICompanyRepository {
     setCalendarConnected(companyId: bigint, connected: boolean): Promise<void>;
     saveAssistantId(companyId: bigint, assistantId: string): Promise<void>;
     setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void>;
+    markEmailVerified(companyId: bigint): Promise<void>;
 
     // ---------- Company Info ----------
     addInfo(companyId: bigint, value: string): Promise<CompanyInfoModel>;

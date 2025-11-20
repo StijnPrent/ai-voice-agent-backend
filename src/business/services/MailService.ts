@@ -4,6 +4,7 @@ import { MailTemplateService } from "./MailTemplateService";
 import { promises as fs } from "fs";
 import path from "path";
 import config from "../../config/config";
+import { IMailLogRepository } from "../../data/interfaces/IMailLogRepository";
 
 export interface SendAdminEmailInput {
   to: string;
@@ -18,7 +19,8 @@ export interface SendAdminEmailInput {
 export class MailService {
   constructor(
     @inject("IMailClient") private readonly mailClient: IMailClient,
-    private readonly templateService: MailTemplateService
+    private readonly templateService: MailTemplateService,
+    @inject("IMailLogRepository") private readonly mailLogRepository: IMailLogRepository
   ) {}
 
   public async getTemplate() {
@@ -58,12 +60,44 @@ export class MailService {
     // Attach default PPT if present
     const attachments = await this.getDefaultAttachments();
 
-    return this.mailClient.send({
-      to,
-      subject,
-      htmlBody: finalHtml,
-      attachments,
-    });
+    try {
+      const response = await this.mailClient.send({
+        to,
+        subject,
+        htmlBody: finalHtml,
+        attachments,
+      });
+
+      await this.mailLogRepository.createLog({
+        type: "admin",
+        template: "admin-default",
+        to,
+        subject,
+        payload: {
+          company,
+          contactName,
+          email,
+        },
+        providerMessageId: response.id ?? null,
+        status: "sent",
+      });
+      return response;
+    } catch (error) {
+      await this.mailLogRepository.createLog({
+        type: "admin",
+        template: "admin-default",
+        to,
+        subject,
+        payload: {
+          company,
+          contactName,
+          email,
+        },
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown mail error",
+      });
+      throw error;
+    }
   }
 
   private async getDefaultAttachments() {

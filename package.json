@@ -29,7 +29,6 @@
                             "typescript-eslint":  "^8.45.0"
                         },
     "dependencies":  {
-                         "@aws-sdk/client-ses":  "^3.679.0",
                          "@azure/msal-node":  "^3.7.0",
                          "@microsoft/microsoft-graph-client":  "^3.0.7",
                          "@types/bcrypt":  "^5.0.2",
@@ -42,6 +41,7 @@
                          "googleapis":  "^150.0.1",
                          "isomorphic-fetch":  "^3.0.0",
                          "jsonwebtoken":  "^9.0.2",
+                         "resend":  "^6.5.2",
                          "mysql2":  "^3.14.1",
                          "reflect-metadata":  "^0.2.2",
                          "tsyringe":  "^4.10.0",

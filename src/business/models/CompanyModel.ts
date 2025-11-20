@@ -8,6 +8,7 @@ export class CompanyModel {
         private _updatedAt: Date,
         private _assistantId: string | null = null,
         private _assistantEnabled: boolean = true,
+        private _emailVerifiedAt: Date | null = null,
     ) {}
 
     public toJSON(): Record<string, any> {
@@ -20,6 +21,7 @@ export class CompanyModel {
             updatedAt: this.updatedAt.toISOString(),
             assistantId: this.assistantId,
             assistantEnabled: this.assistantEnabled,
+            emailVerifiedAt: this.emailVerifiedAt ? this.emailVerifiedAt.toISOString() : null,
         };
     }
 
@@ -53,5 +55,9 @@ export class CompanyModel {
 
     public get assistantEnabled(): boolean {
         return this._assistantEnabled;
+    }
+
+    public get emailVerifiedAt(): Date | null {
+        return this._emailVerifiedAt;
     }
 }
