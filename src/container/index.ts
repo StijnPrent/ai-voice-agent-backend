@@ -47,7 +47,7 @@ import { ISalesPipelineRepository } from "../data/interfaces/ISalesPipelineRepos
 import { SalesPipelineRepository } from "../data/repositories/SalesPipelineRepository";
 import { IMailClient } from "../clients/MailClient";
 import { DevConsoleMailClient } from "../clients/DevConsoleMailClient";
-import { SesMailClient } from "../clients/SesMailClient";
+import { ResendMailClient } from "../clients/ResendMailClient";
 import config from "../config/config";
 import { MailService } from "../business/services/MailService";
 import { MailTemplateService } from "../business/services/MailTemplateService";
@@ -55,6 +55,14 @@ import { PhorestService } from "../business/services/PhorestService";
 import { PhorestClient } from "../clients/PhorestClient";
 import { IPhorestRepository } from "../data/interfaces/IPhorestRepository";
 import { PhorestRepository } from "../data/repositories/PhorestRepository";
+import { IMailLogRepository } from "../data/interfaces/IMailLogRepository";
+import { MailLogRepository } from "../data/repositories/MailLogRepository";
+import { TransactionalMailService } from "../business/services/TransactionalMailService";
+import { IAuthTokenRepository } from "../data/interfaces/IAuthTokenRepository";
+import { AuthTokenRepository } from "../data/repositories/AuthTokenRepository";
+import { IEarlyAccessRepository } from "../data/interfaces/IEarlyAccessRepository";
+import { EarlyAccessRepository } from "../data/repositories/EarlyAccessRepository";
+import { EarlyAccessService } from "../business/services/EarlyAccessService";
 import { LeadAgentService } from "../business/services/LeadAgentService";
 
 // Register all clients in the container
@@ -90,7 +98,9 @@ container.register(AdminService, { useClass: AdminService });
 container.register(SalesPipelineService, { useClass: SalesPipelineService });
 container.register(MailService, { useClass: MailService });
 container.register(MailTemplateService, { useClass: MailTemplateService });
+container.register(TransactionalMailService, { useClass: TransactionalMailService });
 container.register(PhorestService, { useClass: PhorestService });
+container.register(EarlyAccessService, { useClass: EarlyAccessService });
 container.register(LeadAgentService, { useClass: LeadAgentService });
 
 // Register data repositories
@@ -139,9 +149,18 @@ container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
 container.register<IPhorestRepository>("IPhorestRepository", {
     useClass: PhorestRepository,
 })
+container.register<IMailLogRepository>("IMailLogRepository", {
+    useClass: MailLogRepository,
+})
+container.register<IAuthTokenRepository>("IAuthTokenRepository", {
+    useClass: AuthTokenRepository,
+})
+container.register<IEarlyAccessRepository>("IEarlyAccessRepository", {
+    useClass: EarlyAccessRepository,
+})
 
 // Mail Client selection
-const mailProvider = (process.env.MAIL_PROVIDER || (config as any).mailProvider || "dev").toLowerCase();
+const mailProvider = (process.env.MAIL_PROVIDER || (config as any).mailProvider || "resend").toLowerCase();
 container.register<IMailClient>("IMailClient", {
-    useClass: mailProvider === "ses" ? SesMailClient : DevConsoleMailClient,
+    useClass: mailProvider === "dev" ? DevConsoleMailClient : ResendMailClient,
 });

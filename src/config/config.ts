@@ -51,6 +51,9 @@ interface Config {
     mailProvider?: string; // 'ses' | 'dev'
     sesRegion?: string;
     sesFrom?: string;
+    resendApiKey?: string;
+    resendFrom?: string;
+    resendReplyTo?: string;
 
     // Phorest
     phorestBaseUrl?: string;
@@ -95,6 +98,9 @@ const config: Config = {
     mailProvider: process.env.MAIL_PROVIDER,
     sesRegion: process.env.SES_REGION,
     sesFrom: process.env.SES_FROM || "info@callingbird.nl",
+    resendApiKey: process.env.RESEND_API_KEY,
+    resendFrom: process.env.RESEND_FROM || process.env.SES_FROM || "info@callingbird.nl",
+    resendReplyTo: process.env.RESEND_REPLY_TO,
 
     phorestBaseUrl: process.env.PHOREST_BASE_URL,
 };

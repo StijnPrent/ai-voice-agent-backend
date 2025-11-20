@@ -45,6 +45,7 @@
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.14.1",
     "reflect-metadata": "^0.2.2",
+    "resend": "^6.5.2",
     "tsyringe": "^4.10.0",
     "twilio": "^5.7.1",
     "ws": "^8.18.3",

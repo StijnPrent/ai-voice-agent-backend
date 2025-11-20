@@ -14,7 +14,7 @@ describe('VapiClient tool dispatcher', () => {
   let baseCallbacks: VapiRealtimeCallbacks;
 
   const createCompany = (hasGoogleIntegration = true) => {
-    const company = new CompanyModel(1n, 'Test Company', 'info@test.com', '+31123456789', new Date(), new Date(), 'assistant-1');
+    const company = new CompanyModel(1n, 'Test Company', 'info@test.com', '+31123456789', new Date(), new Date(), 'assistant-1', true, new Date());
     const replyStyle = new ReplyStyleModel(
       1,
       1,

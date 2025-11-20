@@ -4,6 +4,7 @@ export interface SendMailParams {
   htmlBody: string;
   textBody?: string;
   from?: string;
+  replyTo?: string | string[];
   attachments?: Array<{
     filename: string;
     content: Buffer;
