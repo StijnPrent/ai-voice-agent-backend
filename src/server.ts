@@ -38,6 +38,7 @@ const allowedOrigins = [
     "http://localhost:3001",
     "https://app.callingbird.nl",
     "https://admin.callingbird.nl",
+    "https://callingbird.nl",
     /\.callingbird\.nl$/, // any subdomain *.callingbird.nl
 ];
 
