@@ -63,6 +63,7 @@ import { AuthTokenRepository } from "../data/repositories/AuthTokenRepository";
 import { IEarlyAccessRepository } from "../data/interfaces/IEarlyAccessRepository";
 import { EarlyAccessRepository } from "../data/repositories/EarlyAccessRepository";
 import { EarlyAccessService } from "../business/services/EarlyAccessService";
+import { LeadAgentService } from "../business/services/LeadAgentService";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -100,6 +101,7 @@ container.register(MailTemplateService, { useClass: MailTemplateService });
 container.register(TransactionalMailService, { useClass: TransactionalMailService });
 container.register(PhorestService, { useClass: PhorestService });
 container.register(EarlyAccessService, { useClass: EarlyAccessService });
+container.register(LeadAgentService, { useClass: LeadAgentService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
