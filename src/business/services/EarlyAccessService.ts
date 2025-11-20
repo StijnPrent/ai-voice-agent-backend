@@ -35,4 +35,8 @@ export class EarlyAccessService {
     }
     return this.repository.deleteByEmail(email.trim());
   }
+
+  public async listRequests() {
+    return this.repository.listRequests();
+  }
 }
