@@ -167,6 +167,23 @@ export class CompanyController {
         }
     }
 
+    public async confirmVerificationAndRedirect(req: Request, res: Response): Promise<void> {
+        const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+        const base = (config.frontendUrl || "").replace(/\/+$/, "");
+        const targetBase = base ? `${base}/verify-email` : "/verify-email";
+        if (!token) {
+            res.redirect(302, `${targetBase}?status=error&reason=missing_token`);
+            return;
+        }
+        try {
+            await this.service.confirmEmailVerification(token);
+            res.redirect(302, `${targetBase}?status=success`);
+        } catch (err) {
+            const reason = err instanceof Error ? err.message : "unknown_error";
+            res.redirect(302, `${targetBase}?status=error&reason=${encodeURIComponent(reason)}`);
+        }
+    }
+
     public async requestPasswordReset(req: Request, res: Response): Promise<void> {
         try {
             const { email } = req.body ?? {};
@@ -178,6 +195,21 @@ export class CompanyController {
             res.json({ message: "If this email is registered we have sent reset instructions." });
         } catch (err) {
             this.handleError(res, err, "Failed to request password reset");
+        }
+    }
+
+    public async triggerVerificationEmail(req: Request, res: Response): Promise<void> {
+        try {
+            const companyIdRaw = req.body?.companyId ?? req.query?.companyId;
+            if (!companyIdRaw) {
+                res.status(400).json({ message: "companyId is required." });
+                return;
+            }
+            const companyId = BigInt(companyIdRaw);
+            await this.service.sendVerificationForCompany(companyId);
+            res.json({ message: "Verification email sent." });
+        } catch (err) {
+            this.handleError(res, err, "Failed to send verification email");
         }
     }
 

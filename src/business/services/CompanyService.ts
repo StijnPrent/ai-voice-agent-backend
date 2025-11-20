@@ -75,6 +75,12 @@ export class CompanyService {
         return base ? `${base}${normalizedPath}` : normalizedPath;
     }
 
+    private buildBackendLink(path: string): string {
+        const base = (config.serverUrl || "").replace(/\/+$/, "");
+        const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+        return base ? `${base}${normalizedPath}` : normalizedPath;
+    }
+
     private hashToken(token: string): string {
         return crypto.createHash("sha256").update(token).digest("hex");
     }
@@ -103,7 +109,7 @@ export class CompanyService {
         const token = await this.issueAuthToken(company.id, "email-verification", 60 * 24, {
             email: company.email,
         });
-        const verificationUrl = this.buildFrontendLink(`/verify-email?token=${token}`);
+        const verificationUrl = this.buildBackendLink(`/email/verification/confirm?token=${encodeURIComponent(token)}`);
         await this.transactionalMail.sendEmailVerification({
             to: company.email,
             companyName: context?.companyName ?? company.name,
@@ -215,6 +221,16 @@ export class CompanyService {
         }
         if (company.emailVerifiedAt) {
             return;
+        }
+        await this.sendVerificationEmail(company, {
+            companyName: company.name,
+        });
+    }
+
+    public async sendVerificationForCompany(companyId: bigint): Promise<void> {
+        const company = await this.companyRepo.findById(companyId);
+        if (!company) {
+            throw new Error("Company not found");
         }
         await this.sendVerificationEmail(company, {
             companyName: company.name,
