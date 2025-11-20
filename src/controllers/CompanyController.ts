@@ -226,9 +226,7 @@ export class CompanyController {
             }
 
             await this.earlyAccess.cancelRequestByEmail(email);
-            const base = (config.frontendUrl || "").replace(/\/+$/, "");
-            const target = base ? `${base}/unsubscribe` : "/unsubscribe";
-            res.redirect(302, target);
+            res.redirect(302, "https://callingbird.nl/unsubscribe");
         } catch (err) {
             this.handleError(res, err, "Failed to unsubscribe from early access");
         }

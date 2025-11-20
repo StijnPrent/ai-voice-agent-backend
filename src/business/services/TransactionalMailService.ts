@@ -21,11 +21,14 @@ interface RenderedTemplate {
 export class TransactionalMailService {
   private readonly templateDir = path.resolve(process.cwd(), "public", "mail-templates");
   private readonly cache = new Map<TemplateKey, { subject: string; body: string }>();
+  private readonly systemFrom: string;
 
   constructor(
     @inject("IMailClient") private readonly mailClient: IMailClient,
     @inject("IMailLogRepository") private readonly mailLogRepository: IMailLogRepository
-  ) {}
+  ) {
+    this.systemFrom = process.env.NOREPLY_FROM || "noreply@callingbird.nl";
+  }
 
   public async sendEmailVerification(params: {
     to: string;
@@ -42,6 +45,7 @@ export class TransactionalMailService {
       htmlBody: rendered.html,
       textBody: rendered.text,
       payload: params,
+      from: this.systemFrom,
     });
   }
 
@@ -59,6 +63,7 @@ export class TransactionalMailService {
       htmlBody: rendered.html,
       textBody: rendered.text,
       payload: params,
+      from: this.systemFrom,
     });
   }
 
@@ -67,7 +72,12 @@ export class TransactionalMailService {
     name?: string | null;
     company?: string | null;
   }): Promise<void> {
-    const rendered = await this.renderTemplate("early-access", params, this.defaultEarlyAccessTemplate());
+    const unsubscribeUrl = this.buildUnsubscribeUrl(params.to);
+    const rendered = await this.renderTemplate(
+      "early-access",
+      { ...params, unsubscribeUrl },
+      this.defaultEarlyAccessTemplate()
+    );
     await this.dispatchMail({
       type: "early-access",
       template: "early-access",
@@ -87,6 +97,7 @@ export class TransactionalMailService {
     type: string;
     template: TemplateKey;
     payload?: Record<string, any>;
+    from?: string;
   }): Promise<void> {
     try {
       const response = await this.mailClient.send({
@@ -94,6 +105,7 @@ export class TransactionalMailService {
         subject: input.subject,
         htmlBody: input.htmlBody,
         textBody: input.textBody,
+        from: input.from,
       });
 
       await this.mailLogRepository.createLog({
@@ -117,6 +129,12 @@ export class TransactionalMailService {
       });
       throw error;
     }
+  }
+
+  private buildUnsubscribeUrl(email: string): string {
+    const base = (config.serverUrl || "").replace(/\/+$/, "");
+    const encoded = encodeURIComponent(email);
+    return `${base}/email/early-access/unsubscribe?email=${encoded}`;
   }
 
   private async renderTemplate(
@@ -229,6 +247,7 @@ export class TransactionalMailService {
             <p>We hebben je early-access aanvraag ontvangen voor {{company}}.</p>
             <p>Een van onze teamleden neemt binnen 1 werkdag contact met je op om de volgende stappen te bespreken.</p>
             <p>Kun je niet wachten? Reageer gerust op deze e-mail.</p>
+            <p style="font-size:12px;color:#475569;">Wil je geen updates meer? <a href="{{unsubscribeUrl}}" style="color:#1d4ed8;text-decoration:underline;">Afmelden</a></p>
             <p>Groeten,<br/>Team CallingBird</p>
           </body>
         </html>
