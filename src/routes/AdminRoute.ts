@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { AdminController } from "../controllers/AdminController";
 import { authenticateAdminToken } from "../middleware/adminAuth";
+import { CompanyController } from "../controllers/CompanyController";
 
 const router = Router();
 const controller = new AdminController();
+const companyController = new CompanyController();
 
 // Authentication
 router.post("/auth/login", controller.login.bind(controller));
@@ -87,6 +89,12 @@ router.post(
     "/mail/send",
     authenticateAdminToken,
     controller.sendAdminMail.bind(controller)
+);
+
+router.get(
+    "/early-access",
+    authenticateAdminToken,
+    companyController.listEarlyAccessRequests.bind(companyController)
 );
 
 export default router;

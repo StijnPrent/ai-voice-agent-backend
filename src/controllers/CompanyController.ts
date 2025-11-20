@@ -248,6 +248,15 @@ export class CompanyController {
         }
     }
 
+    public async listEarlyAccessRequests(_req: Request, res: Response): Promise<void> {
+        try {
+            const requests = await this.earlyAccess.listRequests();
+            res.json(requests);
+        } catch (err) {
+            this.handleError(res, err, "Failed to fetch early access requests");
+        }
+    }
+
     public async unsubscribeEarlyAccess(req: Request, res: Response): Promise<void> {
         try {
             const emailParam = req.query.email;
