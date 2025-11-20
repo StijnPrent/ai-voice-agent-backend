@@ -16,8 +16,6 @@
     "dotenv": "^16.5.0",
     "eslint": "^9.29.0",
     "eslint-plugin-prettier": "^5.5.4",
-    "express": "^5.1.0",
-    "install": "^0.13.0",
     "jest": "^30.0.4",
     "nodemon": "^3.1.10",
     "npm": "^11.4.2",
@@ -29,6 +27,7 @@
     "typescript-eslint": "^8.45.0"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.679.0",
     "@azure/msal-node": "^3.7.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@modelcontextprotocol/sdk": "^1.22.0",
@@ -39,6 +38,7 @@
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
+    "express": "^5.1.0",
     "form-data": "^4.0.3",
     "googleapis": "^150.0.1",
     "isomorphic-fetch": "^3.0.0",

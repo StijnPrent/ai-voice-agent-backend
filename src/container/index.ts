@@ -45,6 +45,16 @@ import { AdminRepository } from "../data/repositories/AdminRepository";
 import { SalesPipelineService } from "../business/services/SalesPipelineService";
 import { ISalesPipelineRepository } from "../data/interfaces/ISalesPipelineRepository";
 import { SalesPipelineRepository } from "../data/repositories/SalesPipelineRepository";
+import { IMailClient } from "../clients/MailClient";
+import { DevConsoleMailClient } from "../clients/DevConsoleMailClient";
+import { SesMailClient } from "../clients/SesMailClient";
+import config from "../config/config";
+import { MailService } from "../business/services/MailService";
+import { MailTemplateService } from "../business/services/MailTemplateService";
+import { PhorestService } from "../business/services/PhorestService";
+import { PhorestClient } from "../clients/PhorestClient";
+import { IPhorestRepository } from "../data/interfaces/IPhorestRepository";
+import { PhorestRepository } from "../data/repositories/PhorestRepository";
 import { LeadAgentService } from "../business/services/LeadAgentService";
 
 // Register all clients in the container
@@ -54,6 +64,7 @@ container.register("GoogleCalendarClient", {
     useFactory: () =>
         new GoogleCalendarClient()
 });
+container.register(PhorestClient, { useClass: PhorestClient });
 container.register("OutlookCalendarClient", {
     useFactory: () =>
         new OutlookCalendarClient()
@@ -77,6 +88,9 @@ container.register(CallLogService, { useClass: CallLogService });
 container.register(AnalyticsService, { useClass: AnalyticsService });
 container.register(AdminService, { useClass: AdminService });
 container.register(SalesPipelineService, { useClass: SalesPipelineService });
+container.register(MailService, { useClass: MailService });
+container.register(MailTemplateService, { useClass: MailTemplateService });
+container.register(PhorestService, { useClass: PhorestService });
 container.register(LeadAgentService, { useClass: LeadAgentService });
 
 // Register data repositories
@@ -122,3 +136,12 @@ container.register<IAdminRepository>("IAdminRepository", {
 container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
     useClass: SalesPipelineRepository,
 })
+container.register<IPhorestRepository>("IPhorestRepository", {
+    useClass: PhorestRepository,
+})
+
+// Mail Client selection
+const mailProvider = (process.env.MAIL_PROVIDER || (config as any).mailProvider || "dev").toLowerCase();
+container.register<IMailClient>("IMailClient", {
+    useClass: mailProvider === "ses" ? SesMailClient : DevConsoleMailClient,
+});

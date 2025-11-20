@@ -2,7 +2,6 @@ import { Response } from "express";
 import { container } from "tsyringe";
 import { SchedulingService } from "../business/services/SchedulingService";
 import { AuthenticatedRequest } from "../middleware/auth";
-import {AppointmentTypeModel} from "../business/models/AppointmentTypeModel";
 import {StaffMemberModel} from "../business/models/StaffMemberModel";
 import { AssistantSyncError } from "../business/errors/AssistantSyncError";
 
@@ -40,21 +39,22 @@ export class SchedulingController {
 
     public async addAppointmentType(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { name, duration, price, category, description } = req.body;
+            const { name, duration, price, description } = req.body;
+            const { categoryId, newCategoryName } = this.extractCategoryPayload(req.body);
             const companyId = req.companyId;
             if (!companyId) {
                 res.status(400).json({ message: "Company ID is missing from token." });
                 return;
             }
-            const id = await this.service.addAppointmentType(companyId, name, duration, price, category, description);
-            res.status(201).json({
-                id,
+            const created = await this.service.addAppointmentType(companyId, {
                 name,
-                duration,
+                durationMinutes: duration,
                 price: price ?? null,
-                category: category ?? null,
                 description: description ?? null,
+                categoryId,
+                newCategoryName,
             });
+            res.status(201).json(created.toJSON());
         } catch (err) {
             this.handleError(res, err, "Error adding appointment type");
         }
@@ -62,27 +62,19 @@ export class SchedulingController {
 
     public async updateAppointmentType(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { id, name, duration, price, category, description } = req.body;
+            const { id, name, duration, price, description } = req.body;
+            const { categoryId, newCategoryName } = this.extractCategoryPayload(req.body);
             const companyId = req.companyId!;
-            await this.service.updateAppointmentType(
-                new AppointmentTypeModel(
-                    id,
-                    companyId,
-                    name,
-                    duration,
-                    price,
-                    category,
-                    description
-                )
-            );
-            res.json({
+            const updated = await this.service.updateAppointmentType(companyId, {
                 id,
                 name,
-                duration,
+                durationMinutes: duration,
                 price: price ?? null,
-                category: category ?? null,
                 description: description ?? null,
+                categoryId,
+                newCategoryName,
             });
+            res.json(updated?.toJSON() ?? null);
         } catch (err) {
             this.handleError(res, err, "Error updating appointment type");
         }
@@ -121,7 +113,7 @@ export class SchedulingController {
 
     public async addStaffMember(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { name, specialties, role, availability, googleCalendarId, googleCalendarSummary } = req.body;
+            const { name, specialties, role, availability, googleCalendarId, googleCalendarSummary, phorestStaffId } = req.body;
             const companyId = req.companyId;
             if (!companyId) {
                 res.status(400).json({ message: "Company ID is missing from token." });
@@ -135,7 +127,8 @@ export class SchedulingController {
                 role,
                 Array.isArray(availability) ? availability : [],
                 googleCalendarId,
-                googleCalendarSummary
+                googleCalendarSummary,
+                phorestStaffId ?? null
             );
 
             res.status(201).json({
@@ -146,15 +139,89 @@ export class SchedulingController {
                 availability,
                 googleCalendarId: googleCalendarId ?? null,
                 googleCalendarSummary: googleCalendarSummary ?? null,
+                phorestStaffId: phorestStaffId ?? null,
             });
         } catch (err) {
             this.handleError(res, err, "Error adding staff member");
         }
     }
 
+    // ---------- Appointment Categories ----------
+    public async getAppointmentCategories(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+            const categories = await this.service.getAppointmentCategories(companyId);
+            res.json(categories.map(category => category.toJSON()));
+        } catch (err) {
+            this.handleError(res, err, "Error fetching appointment categories");
+        }
+    }
+
+    public async addAppointmentCategory(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+            const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+            if (!name) {
+                res.status(400).json({ message: "Category name is required" });
+                return;
+            }
+            const category = await this.service.addAppointmentCategory(companyId, name);
+            res.status(201).json(category.toJSON());
+        } catch (err) {
+            this.handleError(res, err, "Error adding appointment category");
+        }
+    }
+
+    public async updateAppointmentCategory(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+            const { id } = req.params;
+            const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+            if (!id || !name) {
+                res.status(400).json({ message: "Category id and name are required" });
+                return;
+            }
+            await this.service.updateAppointmentCategory(companyId, Number(id), name);
+            res.json({ id: Number(id), name });
+        } catch (err) {
+            this.handleError(res, err, "Error updating appointment category");
+        }
+    }
+
+    public async deleteAppointmentCategory(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+            const { id } = req.params;
+            if (!id) {
+                res.status(400).json({ message: "Category id is required" });
+                return;
+            }
+            await this.service.deleteAppointmentCategory(companyId, Number(id));
+            res.status(204).send();
+        } catch (err) {
+            this.handleError(res, err, "Error deleting appointment category");
+        }
+    }
+
     public async updateStaffMember(req: AuthenticatedRequest, res: Response): Promise<void> {
         try {
-            const { id, name, specialties, role, availability, googleCalendarId, googleCalendarSummary } = req.body;
+            const { id, name, specialties, role, availability, googleCalendarId, googleCalendarSummary, phorestStaffId } = req.body;
             const companyId = req.companyId!;
 
             await this.service.updateStaffMember(
@@ -166,7 +233,8 @@ export class SchedulingController {
                     role,
                     Array.isArray(availability) ? availability : [],
                     googleCalendarId ?? null,
-                    googleCalendarSummary ?? null
+                    googleCalendarSummary ?? null,
+                    phorestStaffId ?? null
                 )
             );
             res.json({
@@ -177,6 +245,7 @@ export class SchedulingController {
                 availability,
                 googleCalendarId: googleCalendarId ?? null,
                 googleCalendarSummary: googleCalendarSummary ?? null,
+                phorestStaffId: phorestStaffId ?? null,
             });
         } catch (err) {
             this.handleError(res, err, "Error updating staff member");
@@ -196,5 +265,31 @@ export class SchedulingController {
         } catch (err) {
             this.handleError(res, err, "Error deleting staff member");
         }
+    }
+
+    private extractCategoryPayload(body: any): { categoryId?: number | null; newCategoryName?: string } {
+        const categoryKeyPresent = Object.prototype.hasOwnProperty.call(body ?? {}, "categoryId");
+        let categoryId: number | null | undefined = undefined;
+        if (categoryKeyPresent) {
+            if (body.categoryId === null || body.categoryId === "" || body.categoryId === undefined) {
+                categoryId = null;
+            } else {
+                const parsed = Number(body.categoryId);
+                categoryId = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+            }
+        }
+
+        const rawNewCategory =
+            typeof body?.newCategoryName === "string"
+                ? body.newCategoryName
+                : typeof body?.newCategory === "string"
+                ? body.newCategory
+                : undefined;
+        const newCategoryName = rawNewCategory?.trim();
+
+        return {
+            categoryId: categoryKeyPresent ? categoryId ?? null : undefined,
+            newCategoryName: newCategoryName && newCategoryName.length > 0 ? newCategoryName : undefined,
+        };
     }
 }

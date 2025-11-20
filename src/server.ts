@@ -20,6 +20,7 @@ import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
 import salesPipelineRoute from "./routes/SalesPipelineRoute";
+import phorestRoute from "./routes/PhorestRoute";
 import { mountLeadsMcpServer } from "./mcp/server";
 import leadAgentRoute from "./routes/LeadAgentRoute";
 
@@ -64,12 +65,15 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
+// Serve static assets (e.g., email footer images) from /public
+app.use(express.static("public"));
 app.use("/voice", voiceRoutes(voiceSessionManager));
 app.use('/company', companyRoutes);
 app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute);
 app.use("/outlook", outlookRoute);
 app.use("/integrations", integrationRoute);
+app.use("/phorest", phorestRoute);
 app.use("/updates", updateRoute);
 app.use("/scheduling", schedulingRoute);
 app.use("/calls", callRoute);

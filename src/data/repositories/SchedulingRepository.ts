@@ -3,6 +3,7 @@ import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { BaseRepository } from "./BaseRepository";
 
 import { AppointmentTypeModel } from "../../business/models/AppointmentTypeModel";
+import { AppointmentCategoryModel } from "../../business/models/AppointmentCategoryModel";
 import { StaffMemberModel } from "../../business/models/StaffMemberModel";
 import { SpecialtyModel } from "../../business/models/SpecialtyModel";
 import { StaffAvailabilityModel } from "../../business/models/StaffAvailabilityModel";
@@ -14,7 +15,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
     public async addAppointmentType(model: AppointmentTypeModel): Promise<number> {
         const sql = `
             INSERT INTO appointment_types
-            (company_id, service_name, duration, price, category, description, created_at, updated_at)
+            (company_id, service_name, duration, price, category_id, description, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
         const res = await this.execute<ResultSetHeader>(sql, [
@@ -22,7 +23,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
             model.name,
             model.duration,
             model.price ?? null,
-            model.category ?? null,
+            model.categoryId,
             model.description ?? null
         ]);
         return res.insertId;
@@ -31,14 +32,14 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
     public async updateAppointmentType(model: AppointmentTypeModel): Promise<void> {
         const sql = `
             UPDATE appointment_types
-            SET service_name = ?, duration = ?, price = ?, category = ?, description = ?, updated_at = NOW()
+            SET service_name = ?, duration = ?, price = ?, category_id = ?, description = ?, updated_at = NOW()
             WHERE id = ? AND company_id = ?
         `;
         await this.execute<ResultSetHeader>(sql, [
             model.name,
             model.duration,
             model.price ?? null,
-            model.category ?? null,
+            model.categoryId,
             model.description ?? null,
             model.id,
             model.companyId
@@ -52,23 +53,150 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
 
     public async fetchAppointmentTypes(companyId: bigint): Promise<AppointmentTypeModel[]> {
         const sql = `
-            SELECT id, company_id, service_name, duration, price, category, description, created_at, updated_at
-            FROM appointment_types
-            WHERE company_id = ?
-            ORDER BY service_name
+            SELECT
+                at.id,
+                at.company_id,
+                at.service_name,
+                at.duration,
+                at.price,
+                at.description,
+                at.created_at,
+                at.updated_at,
+                ac.id           AS category_id,
+                ac.company_id   AS category_company_id,
+                ac.name         AS category_name,
+                ac.created_at   AS category_created_at,
+                ac.updated_at   AS category_updated_at
+            FROM appointment_types at
+            LEFT JOIN appointment_categories ac ON ac.id = at.category_id
+            WHERE at.company_id = ?
+            ORDER BY at.service_name ASC
         `;
         const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
-        return rows.map(r => new AppointmentTypeModel(
-            r.id,
-            BigInt(r.company_id),
-            r.service_name,
-            r.duration,
-            r.price,
-            r.category,
-            r.description,
-            r.created_at,
-            r_updated_at(r) // helper voor compat (kan ontbreken)
+        return rows.map(row => this.mapAppointmentTypeRow(row));
+    }
+
+    /* ----------------------------- Appointment Categories ----------------------------- */
+
+    public async addAppointmentCategory(model: AppointmentCategoryModel): Promise<number> {
+        const sql = `
+            INSERT INTO appointment_categories (company_id, name, created_at, updated_at)
+            VALUES (?, ?, NOW(), NOW())
+        `;
+        const res = await this.execute<ResultSetHeader>(sql, [
+            model.companyId,
+            model.name,
+        ]);
+        return res.insertId;
+    }
+
+    public async updateAppointmentCategory(model: AppointmentCategoryModel): Promise<void> {
+        const sql = `
+            UPDATE appointment_categories
+            SET name = ?, updated_at = NOW()
+            WHERE id = ? AND company_id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [
+            model.name,
+            model.id,
+            model.companyId,
+        ]);
+    }
+
+    public async deleteAppointmentCategory(companyId: bigint, categoryId: number): Promise<void> {
+        const connection = await this.pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const unlinkSql = `
+                UPDATE appointment_types
+                SET category_id = NULL
+                WHERE category_id = ? AND company_id = ?
+            `;
+            await connection.query(unlinkSql, [categoryId, companyId]);
+
+            const deleteCategorySql = `
+                DELETE FROM appointment_categories
+                WHERE id = ? AND company_id = ?
+            `;
+            await connection.query(deleteCategorySql, [categoryId, companyId]);
+
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    public async fetchAppointmentCategories(companyId: bigint): Promise<AppointmentCategoryModel[]> {
+        const sql = `
+            SELECT id, company_id, name, created_at, updated_at
+            FROM appointment_categories
+            WHERE company_id = ?
+            ORDER BY name ASC
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
+        return rows.map(row => new AppointmentCategoryModel(
+            row.id,
+            BigInt(row.company_id),
+            row.name,
+            row.created_at,
+            r_updated_at(row)
         ));
+    }
+
+    public async fetchAppointmentType(companyId: bigint, id: number): Promise<AppointmentTypeModel | null> {
+        const sql = `
+            SELECT
+                at.id,
+                at.company_id,
+                at.service_name,
+                at.duration,
+                at.price,
+                at.description,
+                at.created_at,
+                at.updated_at,
+                ac.id           AS category_id,
+                ac.company_id   AS category_company_id,
+                ac.name         AS category_name,
+                ac.created_at   AS category_created_at,
+                ac.updated_at   AS category_updated_at
+            FROM appointment_types at
+            LEFT JOIN appointment_categories ac ON ac.id = at.category_id
+            WHERE at.company_id = ? AND at.id = ?
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, id]);
+        if (!rows.length) {
+            return null;
+        }
+        return this.mapAppointmentTypeRow(rows[0]);
+    }
+
+    private mapAppointmentTypeRow(row: RowDataPacket): AppointmentTypeModel {
+        const category =
+            row.category_id != null
+                ? new AppointmentCategoryModel(
+                      row.category_id,
+                      BigInt(row.category_company_id ?? row.company_id),
+                      row.category_name,
+                      row.category_created_at ?? undefined,
+                      row.category_updated_at ?? undefined
+                  )
+                : null;
+
+        return new AppointmentTypeModel(
+            row.id,
+            BigInt(row.company_id),
+            row.service_name,
+            row.duration,
+            row.price,
+            row.description,
+            category,
+            row.created_at,
+            r_updated_at(row)
+        );
     }
 
     /* --------------------------------- Staff ---------------------------------- */
@@ -82,15 +210,16 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
 
         const sql = `
             INSERT INTO staff_members
-                (company_id, name, role_title, google_calendar_id, google_calendar_summary, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+                (company_id, name, role_title, google_calendar_id, google_calendar_summary, phorest_staff_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
         const res = await this.execute<ResultSetHeader>(sql, [
             model.companyId,
             model.name,
             model.role,
             model.googleCalendarId ?? null,
-            model.googleCalendarSummary ?? null
+            model.googleCalendarSummary ?? null,
+            model.phorestStaffId ?? null
         ]);
         const staffId = res.insertId;
 
@@ -114,13 +243,15 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
             "role_title = ?",
             "google_calendar_id = ?",
             "google_calendar_summary = ?",
+            "phorest_staff_id = ?",
             "updated_at = NOW()"
         ];
         const params: any[] = [
             model.name,
             model.role,
             model.googleCalendarId ?? null,
-            model.googleCalendarSummary ?? null
+            model.googleCalendarSummary ?? null,
+            model.phorestStaffId ?? null
         ];
 
         const sql = `
@@ -144,6 +275,15 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         await this.execute<ResultSetHeader>(sql, [staffId, companyId]);
     }
 
+    public async updateStaffPhorestId(companyId: bigint, staffId: number, phorestStaffId: string | null): Promise<void> {
+        const sql = `
+            UPDATE staff_members
+            SET phorest_staff_id = ?, updated_at = NOW()
+            WHERE id = ? AND company_id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [phorestStaffId ?? null, staffId, companyId]);
+    }
+
     /**
      * Haalt ALLE medewerkers op:
      * - specialties (tags)
@@ -155,7 +295,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         const baseSql = `
             SELECT
                 sm.id AS staff_id, sm.company_id, sm.name, sm.role_title,
-                sm.google_calendar_id, sm.google_calendar_summary,
+                sm.google_calendar_id, sm.google_calendar_summary, sm.phorest_staff_id,
                 sm.created_at, sm.updated_at,
                 s.id AS spec_id, s.name AS spec_name
             FROM staff_members sm
@@ -182,6 +322,9 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
                         : null,
                     typeof r.google_calendar_summary === "string" && r.google_calendar_summary.trim().length > 0
                         ? r.google_calendar_summary.trim()
+                        : null,
+                    typeof r.phorest_staff_id === "string" && r.phorest_staff_id.trim().length > 0
+                        ? r.phorest_staff_id.trim()
                         : null,
                     r.created_at,
                     r.updated_at

@@ -18,6 +18,8 @@ import { CompanyService } from '../business/services/CompanyService';
 import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvailabilityWindow } from '../business/services/GoogleService';
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
+import { PhorestService } from '../business/services/PhorestService';
+import type { CalendarProvider } from '../business/services/IntegrationService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -86,6 +88,7 @@ type CompanySnapshot = {
 export type VapiAssistantConfig = {
   company: CompanyModel;
   hasGoogleIntegration: boolean;
+  calendarProvider: CalendarProvider | null;
   replyStyle: ReplyStyleModel;
   companyContext: CompanyContext;
   schedulingContext: SchedulingContext;
@@ -251,6 +254,7 @@ export class VapiClient {
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
+    @inject(PhorestService) private readonly phorestService: PhorestService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService,
     @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
   ) {
@@ -309,6 +313,7 @@ export class VapiClient {
     callSid: string,
     company: CompanyModel,
     hasGoogleIntegration: boolean,
+    calendarProvider: CalendarProvider | null,
     replyStyle: ReplyStyleModel,
     context: CompanyContext,
     schedulingContext: SchedulingContext,
@@ -317,6 +322,7 @@ export class VapiClient {
     const config: VapiAssistantConfig = {
       company,
       hasGoogleIntegration,
+      calendarProvider,
       replyStyle,
       companyContext: context,
       schedulingContext,
@@ -598,6 +604,9 @@ export class VapiClient {
         'Company info, reply style, context, and scheduling context must be set before generating a system prompt.',
       );
     }
+    const calendarProvider = this.getEffectiveCalendarProvider(effectiveConfig);
+    const calendarDescription = this.getCalendarProviderDescription(calendarProvider);
+    const calendarProviderName = this.getCalendarProviderName(calendarProvider);
 
     const instructions: string[] = [
       `Je bent een behulpzame Nederlandse spraakassistent voor het bedrijf '${effectiveConfig.company.name}'. ${effectiveConfig.replyStyle.description}`,
@@ -618,8 +627,8 @@ export class VapiClient {
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot de Google Agenda van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
-        `BELANGRIJK: Voor afspraken gebruik je de Google Agenda tools, NIET de transfer_call tool.`,
+        `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
+        `BELANGRIJK: Voor afspraken gebruik je de agenda-tools (${calendarProviderName}), NIET de transfer_call tool.`,
         'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
         'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
         'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agenda’s voor beschikbaarheid en boekingen.',
@@ -797,9 +806,14 @@ export class VapiClient {
   }
 
   /** ===== Tools (clean JSON Schema via `parameters`) ===== */
-  public getTools(hasGoogleIntegration?: boolean) {
+  public getTools(hasGoogleIntegration?: boolean, calendarProvider?: CalendarProvider | null) {
     const enabled = Boolean(hasGoogleIntegration);
-    console.log(`[VapiClient] 🔧 Building tools - Google integration enabled: ${enabled}`);
+    const provider: CalendarProvider | null = calendarProvider ?? (enabled ? 'google' : null);
+    const providerName = this.getCalendarProviderName(provider);
+    const agendaLabel = provider ? `${providerName} agenda` : 'agenda';
+    console.log(
+      `[VapiClient] tools builder - calendar integration enabled: ${enabled} (${providerName})`,
+    );
 
     const tools: any[] = [
       {
@@ -828,10 +842,6 @@ export class VapiClient {
         },
       },
     ];
-
-    if (!enabled) {
-      return tools;
-    }
 
     const createCalendarParameters = {
       type: 'object',
@@ -878,7 +888,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.scheduleGoogleCalendarEvent,
           description:
-            'Maak een nieuw event in Google Agenda. Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
+            'Maak een nieuw event in . Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
           parameters: createCalendarParameters,
         },
         server: {
@@ -890,7 +900,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.checkGoogleCalendarAvailability,
           description:
-            'Controleer beschikbare tijdsloten in Google Agenda voor een opgegeven datum.',
+            'Controleer beschikbare tijdsloten in  voor een opgegeven datum.',
           parameters: checkAvailabilityParameters,
         },
         server: {
@@ -2789,6 +2799,38 @@ export class VapiClient {
     return null;
   }
 
+  private getEffectiveCalendarProvider(config: VapiAssistantConfig): CalendarProvider | null {
+    if (config.calendarProvider) {
+      return config.calendarProvider;
+    }
+    return config.hasGoogleIntegration ? 'google' : null;
+  }
+
+  private isPhorestProvider(config: VapiAssistantConfig): boolean {
+    return this.getEffectiveCalendarProvider(config) === 'phorest';
+  }
+
+  private getCalendarProviderName(provider: CalendarProvider | null): string {
+    switch (provider) {
+      case 'phorest':
+        return 'Phorest';
+      case 'outlook':
+        return 'Outlook';
+      case 'google':
+        return 'Google';
+      default:
+        return 'agenda';
+    }
+  }
+
+  private getCalendarProviderDescription(provider: CalendarProvider | null): string {
+    const name = this.getCalendarProviderName(provider);
+    if (!provider || name === 'agenda') {
+      return 'de agenda';
+    }
+    return `de ${name} agenda`;
+  }
+
   private getBusinessHoursForDate(
     config: VapiAssistantConfig,
     date: string,
@@ -2919,7 +2961,10 @@ export class VapiClient {
 
     console.log(`[VapiClient] 🏗️ Building assistant payload for company: ${config.company.name}, Google integration: ${config.hasGoogleIntegration}`);
     const tools = this.getTools(config.hasGoogleIntegration);
-    console.log(`[VapiClient] 🛠️ Generated ${tools.length} tools:`, tools.map(t => t.function?.name || 'unknown'));
+    console.log(
+      `[VapiClient] tools ready (${tools.length}):`,
+      tools.map((tool) => tool.function?.name || 'unknown'),
+    );
 
     const modelMessages = this.buildModelMessages(instructions, companyContext, config);
 
@@ -3118,6 +3163,7 @@ export class VapiClient {
 }
 
 export type { VapiRealtimeSession };
+
 
 
 

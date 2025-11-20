@@ -1,6 +1,7 @@
 import { injectable, inject } from "tsyringe";
 import { ISchedulingRepository } from "../../data/interfaces/ISchedulingRepository";
 import { AppointmentTypeModel } from "../models/AppointmentTypeModel";
+import { AppointmentCategoryModel } from "../models/AppointmentCategoryModel";
 import { StaffMemberModel } from "../models/StaffMemberModel";
 import { SpecialtyModel } from "../models/SpecialtyModel";
 import { StaffAvailabilityModel } from "../models/StaffAvailabilityModel";
@@ -18,21 +19,96 @@ export class SchedulingService {
         return this.schedulingRepo.fetchAppointmentTypes(companyId);
     }
 
-    public async addAppointmentType(companyId: bigint, serviceName: string, durationMinutes: number, price: number | null, category: string | null, description: string | null): Promise<number> {
-        const appointmentType = new AppointmentTypeModel(0, companyId, serviceName, durationMinutes, price, category, description);
+    public async addAppointmentType(companyId: bigint, input: AppointmentTypeInput): Promise<AppointmentTypeModel> {
+        const categoryId = await this.resolveCategoryId(companyId, {
+            categoryId: input.categoryId,
+            newCategoryName: input.newCategoryName,
+        });
+        const appointmentType = new AppointmentTypeModel(
+            0,
+            companyId,
+            input.name,
+            input.durationMinutes,
+            input.price ?? null,
+            input.description ?? null,
+            null,
+            undefined,
+            undefined,
+            categoryId ?? null,
+        );
         const id = await this.schedulingRepo.addAppointmentType(appointmentType);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
-        return id;
+        const created = await this.schedulingRepo.fetchAppointmentType(companyId, id);
+        return created ?? new AppointmentTypeModel(
+            id,
+            companyId,
+            input.name,
+            input.durationMinutes,
+            input.price ?? null,
+            input.description ?? null,
+        );
     }
 
-    public async updateAppointmentType(appointmentType: AppointmentTypeModel): Promise<void> {
+    public async updateAppointmentType(companyId: bigint, input: AppointmentTypeUpdateInput): Promise<AppointmentTypeModel | null> {
+        const existing = await this.schedulingRepo.fetchAppointmentType(companyId, input.id);
+        if (!existing) {
+            throw new Error("Appointment type not found");
+        }
+
+        const categoryId = await this.resolveCategoryId(companyId, {
+            categoryId: input.categoryId,
+            newCategoryName: input.newCategoryName,
+            fallbackCategoryId: existing.categoryId,
+        });
+
+        const categoryModel = existing.category && existing.category.id === categoryId ? existing.category : null;
+        const appointmentType = new AppointmentTypeModel(
+            input.id,
+            companyId,
+            input.name,
+            input.durationMinutes,
+            input.price ?? null,
+            input.description ?? null,
+            categoryModel,
+            existing.createdAt,
+            existing.updatedAt,
+            categoryId ?? null,
+        );
         await this.schedulingRepo.updateAppointmentType(appointmentType);
-        await this.assistantSyncService.syncCompanyAssistant(appointmentType.companyId);
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        return this.schedulingRepo.fetchAppointmentType(companyId, input.id);
     }
 
     public async deleteAppointmentType(companyId: bigint, appointmentTypeId: number): Promise<void> {
         await this.schedulingRepo.deleteAppointmentType(companyId, appointmentTypeId);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
+    }
+
+    // Appointment Categories
+    public async getAppointmentCategories(companyId: bigint): Promise<AppointmentCategoryModel[]> {
+        return this.schedulingRepo.fetchAppointmentCategories(companyId);
+    }
+
+    public async addAppointmentCategory(companyId: bigint, name: string): Promise<AppointmentCategoryModel> {
+        const normalized = name.trim();
+        if (!normalized) {
+            throw new Error("Category name is required.");
+        }
+        const category = new AppointmentCategoryModel(0, companyId, normalized);
+        const id = await this.schedulingRepo.addAppointmentCategory(category);
+        return new AppointmentCategoryModel(id, companyId, normalized);
+    }
+
+    public async updateAppointmentCategory(companyId: bigint, categoryId: number, name: string): Promise<void> {
+        const normalized = name.trim();
+        if (!normalized) {
+            throw new Error("Category name is required.");
+        }
+        await this.schedulingRepo.updateAppointmentCategory(new AppointmentCategoryModel(categoryId, companyId, normalized));
+    }
+
+    public async deleteAppointmentCategory(companyId: bigint, categoryId: number): Promise<void> {
+        await this.schedulingRepo.deleteAppointmentCategory(companyId, categoryId);
     }
 
     // Staff Members
@@ -55,10 +131,12 @@ export class SchedulingService {
         role: string,
         availability: StaffAvailabilityModel[],
         googleCalendarId?: string | null,
-        googleCalendarSummary?: string | null
+        googleCalendarSummary?: string | null,
+        phorestStaffId?: string | null
     ): Promise<number> {
         const calendarId = this.normalizeCalendarField(googleCalendarId);
         const calendarSummary = this.normalizeCalendarField(googleCalendarSummary);
+        const phorestId = this.normalizeCalendarField(phorestStaffId);
         const staffMember = new StaffMemberModel(
             0,
             companyId,
@@ -67,7 +145,8 @@ export class SchedulingService {
             role,
             availability,
             calendarId,
-            calendarSummary
+            calendarSummary,
+            phorestId
         );
         const id = await this.schedulingRepo.addStaffMember(staffMember);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
@@ -83,7 +162,8 @@ export class SchedulingService {
             staffMember.role,
             staffMember.availability,
             this.normalizeCalendarField(staffMember.googleCalendarId),
-            this.normalizeCalendarField(staffMember.googleCalendarSummary)
+            this.normalizeCalendarField(staffMember.googleCalendarSummary),
+            this.normalizeCalendarField(staffMember.phorestStaffId)
         );
         await this.schedulingRepo.updateStaffMember(normalized);
         await this.assistantSyncService.syncCompanyAssistant(staffMember.companyId);
@@ -103,4 +183,49 @@ export class SchedulingService {
             staffMembers,
         };
     }
+
+    public async assignPhorestStaffId(companyId: bigint, staffMemberId: number, phorestStaffId: string | null): Promise<void> {
+        await this.schedulingRepo.updateStaffPhorestId(companyId, staffMemberId, this.normalizeCalendarField(phorestStaffId));
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+    }
+
+    private async resolveCategoryId(
+        companyId: bigint,
+        options: { categoryId?: number | null; newCategoryName?: string | null; fallbackCategoryId?: number | null }
+    ): Promise<number | null> {
+        const { categoryId, newCategoryName, fallbackCategoryId } = options;
+
+        if (typeof newCategoryName === "string") {
+            const trimmed = newCategoryName.trim();
+            if (trimmed.length > 0) {
+                const created = await this.addAppointmentCategory(companyId, trimmed);
+                return created.id;
+            }
+        }
+
+        if (categoryId === undefined) {
+            return fallbackCategoryId ?? null;
+        }
+
+        if (typeof categoryId === "number" && categoryId > 0) {
+            return categoryId;
+        }
+
+        if (categoryId === null) {
+            return null;
+        }
+
+        return fallbackCategoryId ?? null;
+    }
 }
+
+type AppointmentTypeInput = {
+    name: string;
+    durationMinutes: number;
+    price?: number | null;
+    description?: string | null;
+    categoryId?: number | null;
+    newCategoryName?: string | null;
+};
+
+type AppointmentTypeUpdateInput = AppointmentTypeInput & { id: number };

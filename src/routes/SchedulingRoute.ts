@@ -11,6 +11,12 @@ router.post("/appointment-types", authenticateToken, controller.addAppointmentTy
 router.put("/appointment-types", authenticateToken, controller.updateAppointmentType.bind(controller));
 router.delete("/appointment-types/:id", authenticateToken, controller.deleteAppointmentType.bind(controller));
 
+// Appointment Categories
+router.get("/appointment-categories", authenticateToken, controller.getAppointmentCategories.bind(controller));
+router.post("/appointment-categories", authenticateToken, controller.addAppointmentCategory.bind(controller));
+router.put("/appointment-categories/:id", authenticateToken, controller.updateAppointmentCategory.bind(controller));
+router.delete("/appointment-categories/:id", authenticateToken, controller.deleteAppointmentCategory.bind(controller));
+
 // Staff Members
 router.get("/staff-members", authenticateToken, controller.getStaffMembers.bind(controller));
 router.post("/staff-members", authenticateToken, controller.addStaffMember.bind(controller));

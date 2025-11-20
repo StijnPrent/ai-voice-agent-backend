@@ -85,15 +85,18 @@ export class AssistantSyncService {
             this.companyRepository.fetchCompanyCallers(companyId),
         ]);
 
-        const [appointmentTypes, staffMembers, hasGoogleIntegration] = await Promise.all([
+        const [appointmentTypes, staffMembers, calendarStatus] = await Promise.all([
             this.schedulingRepository.fetchAppointmentTypes(companyId),
             this.schedulingRepository.fetchStaffMembers(companyId),
-            this.integrationService.hasCalendarConnected(companyId),
+            this.integrationService.getCalendarIntegrationStatus(companyId),
         ]);
+        const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
+        const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
 
         return {
             company,
             hasGoogleIntegration,
+            calendarProvider,
             replyStyle,
             companyContext: {
                 details,

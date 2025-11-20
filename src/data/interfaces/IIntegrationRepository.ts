@@ -1,5 +1,11 @@
 import { IntegrationModel } from "../../business/models/IntegrationModel";
 
+export type CalendarIntegrationStatus = {
+    googleConnected: boolean;
+    outlookConnected: boolean;
+    phorestConnected: boolean;
+};
+
 export interface IIntegrationRepository {
     /**
      * Fetch all supported integrations, along with each company's connection status.
@@ -7,4 +13,6 @@ export interface IIntegrationRepository {
     getAllWithStatus(companyId: bigint): Promise<IntegrationModel[]>;
 
     hasCalendarConnected(companyId: bigint): Promise<boolean>;
+
+    getCalendarIntegrationStatus(companyId: bigint): Promise<CalendarIntegrationStatus>;
 }
