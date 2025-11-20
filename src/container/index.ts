@@ -55,6 +55,7 @@ import { PhorestService } from "../business/services/PhorestService";
 import { PhorestClient } from "../clients/PhorestClient";
 import { IPhorestRepository } from "../data/interfaces/IPhorestRepository";
 import { PhorestRepository } from "../data/repositories/PhorestRepository";
+import { LeadAgentService } from "../business/services/LeadAgentService";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -90,6 +91,7 @@ container.register(SalesPipelineService, { useClass: SalesPipelineService });
 container.register(MailService, { useClass: MailService });
 container.register(MailTemplateService, { useClass: MailTemplateService });
 container.register(PhorestService, { useClass: PhorestService });
+container.register(LeadAgentService, { useClass: LeadAgentService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
