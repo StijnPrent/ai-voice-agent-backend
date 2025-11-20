@@ -20,6 +20,7 @@ import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
 import salesPipelineRoute from "./routes/SalesPipelineRoute";
+import phorestRoute from "./routes/PhorestRoute";
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute);
 app.use("/outlook", outlookRoute);
 app.use("/integrations", integrationRoute);
+app.use("/phorest", phorestRoute);
 app.use("/updates", updateRoute);
 app.use("/scheduling", schedulingRoute);
 app.use("/calls", callRoute);

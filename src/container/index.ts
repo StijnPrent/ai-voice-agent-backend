@@ -51,6 +51,10 @@ import { SesMailClient } from "../clients/SesMailClient";
 import config from "../config/config";
 import { MailService } from "../business/services/MailService";
 import { MailTemplateService } from "../business/services/MailTemplateService";
+import { PhorestService } from "../business/services/PhorestService";
+import { PhorestClient } from "../clients/PhorestClient";
+import { IPhorestRepository } from "../data/interfaces/IPhorestRepository";
+import { PhorestRepository } from "../data/repositories/PhorestRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -59,6 +63,7 @@ container.register("GoogleCalendarClient", {
     useFactory: () =>
         new GoogleCalendarClient()
 });
+container.register(PhorestClient, { useClass: PhorestClient });
 container.register("OutlookCalendarClient", {
     useFactory: () =>
         new OutlookCalendarClient()
@@ -84,6 +89,7 @@ container.register(AdminService, { useClass: AdminService });
 container.register(SalesPipelineService, { useClass: SalesPipelineService });
 container.register(MailService, { useClass: MailService });
 container.register(MailTemplateService, { useClass: MailTemplateService });
+container.register(PhorestService, { useClass: PhorestService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -127,6 +133,9 @@ container.register<IAdminRepository>("IAdminRepository", {
 })
 container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
     useClass: SalesPipelineRepository,
+})
+container.register<IPhorestRepository>("IPhorestRepository", {
+    useClass: PhorestRepository,
 })
 
 // Mail Client selection

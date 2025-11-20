@@ -205,7 +205,9 @@ export class VoiceService {
             ) || null;
             const replyStyle = await this.voiceRepository.fetchReplyStyle(company.id);
             const schedulingContext = await this.schedulingService.getSchedulingContext(company.id);
-            const hasGoogleIntegration = await this.integrationService.hasCalendarConnected(company.id);
+            const calendarStatus = await this.integrationService.getCalendarIntegrationStatus(company.id);
+            const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
+            const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
 
             if (!company.assistantEnabled) {
                 console.warn(
@@ -242,6 +244,7 @@ export class VoiceService {
                 callSid,
                 company,
                 hasGoogleIntegration,
+                calendarProvider,
                 replyStyle,
                 companyContext,
                 schedulingContext,

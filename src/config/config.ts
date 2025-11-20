@@ -52,6 +52,8 @@ interface Config {
     sesRegion?: string;
     sesFrom?: string;
 
+    // Phorest
+    phorestBaseUrl?: string;
 }
 
 const config: Config = {
@@ -94,6 +96,7 @@ const config: Config = {
     sesRegion: process.env.SES_REGION,
     sesFrom: process.env.SES_FROM || "info@callingbird.nl",
 
+    phorestBaseUrl: process.env.PHOREST_BASE_URL,
 };
 
 // Validate critical values
