@@ -5,6 +5,8 @@ import { PipelinePhaseModel } from "../../business/models/PipelinePhaseModel";
 import { PipelineCompanySummaryModel } from "../../business/models/PipelineCompanySummaryModel";
 import { PipelineCompanyDetailModel } from "../../business/models/PipelineCompanyDetailModel";
 import { PipelineCompanyNoteModel } from "../../business/models/PipelineCompanyNoteModel";
+import { PipelineNotInterestedReasonModel } from "../../business/models/PipelineNotInterestedReasonModel";
+import { PipelineNotInterestedReasonSummaryModel } from "../../business/models/PipelineNotInterestedReasonSummaryModel";
 
 type PhaseRow = RowDataPacket & {
     id: number;
@@ -25,6 +27,9 @@ type CompanyRow = RowDataPacket & {
     website: string | null;
     phase_id: number | null;
     notes_count: number;
+    not_interested: number;
+    reason_id: number | null;
+    reason: string | null;
 };
 
 type NoteRow = RowDataPacket & {
@@ -33,6 +38,18 @@ type NoteRow = RowDataPacket & {
     content: string;
     created_at: Date;
     updated_at: Date;
+};
+
+type ReasonRow = RowDataPacket & {
+    id: number;
+    reason: string;
+    created_at: Date;
+};
+
+type ReasonSummaryRow = RowDataPacket & {
+    reason_id: number | null;
+    reason: string | null;
+    total: number;
 };
 
 export class SalesPipelineRepository
@@ -62,7 +79,12 @@ export class SalesPipelineRepository
             row.phase_id === null || typeof row.phase_id === "undefined"
                 ? null
                 : Number(row.phase_id),
-            Number(row.notes_count ?? 0)
+            Number(row.notes_count ?? 0),
+            Boolean(row.not_interested),
+            row.reason_id === null || typeof row.reason_id === "undefined"
+                ? null
+                : Number(row.reason_id),
+            row.reason ?? null
         );
     }
 
@@ -73,6 +95,26 @@ export class SalesPipelineRepository
             row.content,
             new Date(row.created_at),
             new Date(row.updated_at)
+        );
+    }
+
+    private mapReason(row: ReasonRow): PipelineNotInterestedReasonModel {
+        return new PipelineNotInterestedReasonModel(
+            Number(row.id),
+            row.reason,
+            new Date(row.created_at)
+        );
+    }
+
+    private mapReasonSummary(
+        row: ReasonSummaryRow
+    ): PipelineNotInterestedReasonSummaryModel {
+        return new PipelineNotInterestedReasonSummaryModel(
+            row.reason_id === null || typeof row.reason_id === "undefined"
+                ? null
+                : Number(row.reason_id),
+            row.reason ?? null,
+            Number(row.total ?? 0)
         );
     }
 
@@ -199,12 +241,46 @@ export class SalesPipelineRepository
                 c.city,
                 c.website,
                 c.phase_id,
+                c.not_interested,
+                c.reason_id,
+                r.reason,
                 (
                     SELECT COUNT(*)
                     FROM pipeline_note n
                     WHERE n.company_id = c.id
                 ) AS notes_count
             FROM pipeline_company c
+            LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
+            WHERE c.not_interested = 0
+            ORDER BY c.updated_at DESC, c.id DESC
+        `;
+        const rows = await this.execute<CompanyRow[]>(sql, []);
+        return rows.map((row) => this.mapCompanySummary(row));
+    }
+
+    public async listNotInterestedCompanies(): Promise<PipelineCompanySummaryModel[]> {
+        const sql = `
+            SELECT
+                c.id,
+                c.name,
+                c.owner,
+                c.phone,
+                c.email,
+                c.address,
+                c.city,
+                c.website,
+                c.phase_id,
+                c.not_interested,
+                c.reason_id,
+                r.reason,
+                (
+                    SELECT COUNT(*)
+                    FROM pipeline_note n
+                    WHERE n.company_id = c.id
+                ) AS notes_count
+            FROM pipeline_company c
+            LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
+            WHERE c.not_interested = 1
             ORDER BY c.updated_at DESC, c.id DESC
         `;
         const rows = await this.execute<CompanyRow[]>(sql, []);
@@ -258,10 +334,14 @@ export class SalesPipelineRepository
                 c.city,
                 c.website,
                 c.phase_id,
+                c.not_interested,
+                c.reason_id,
+                r.reason,
                 (
                     SELECT COUNT(*) FROM pipeline_note n WHERE n.company_id = c.id
                 ) AS notes_count
             FROM pipeline_company c
+            LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
             WHERE c.id = ?
             LIMIT 1
         `;
@@ -279,6 +359,28 @@ export class SalesPipelineRepository
 
         const notes = await this.listCompanyNotes(companyId);
         return new PipelineCompanyDetailModel(summary, notes);
+    }
+
+    public async markCompanyNotInterested(
+        companyId: number,
+        reasonId: number
+    ): Promise<PipelineCompanySummaryModel> {
+        const sql = `
+            UPDATE pipeline_company
+            SET
+                not_interested = 1,
+                reason_id = ?,
+                phase_id = NULL,
+                updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [reasonId, companyId]);
+
+        const updated = await this.findCompanySummaryById(companyId);
+        if (!updated) {
+            throw new Error("Company not found.");
+        }
+        return updated;
     }
 
     public async updateCompany(
@@ -425,6 +527,88 @@ export class SalesPipelineRepository
         await this.execute<ResultSetHeader>(
             `DELETE FROM pipeline_note WHERE id = ?`,
             [noteId]
+        );
+    }
+
+    public async listNotInterestedReasonSummary(): Promise<
+        PipelineNotInterestedReasonSummaryModel[]
+    > {
+        const sql = `
+            SELECT
+                c.reason_id,
+                r.reason,
+                COUNT(*) AS total
+            FROM pipeline_company c
+            LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
+            WHERE c.not_interested = 1
+            GROUP BY c.reason_id, r.reason
+            ORDER BY total DESC, r.reason ASC
+        `;
+        const rows = await this.execute<ReasonSummaryRow[]>(sql, []);
+        return rows.map((row) => this.mapReasonSummary(row));
+    }
+
+    public async listReasons(): Promise<PipelineNotInterestedReasonModel[]> {
+        const sql = `
+            SELECT id, reason, created_at
+            FROM pipeline_not_interested_reason
+            ORDER BY created_at DESC, id DESC
+        `;
+        const rows = await this.execute<ReasonRow[]>(sql, []);
+        return rows.map((row) => this.mapReason(row));
+    }
+
+    public async findReasonById(
+        reasonId: number
+    ): Promise<PipelineNotInterestedReasonModel | null> {
+        const sql = `
+            SELECT id, reason, created_at
+            FROM pipeline_not_interested_reason
+            WHERE id = ?
+            LIMIT 1
+        `;
+        const rows = await this.execute<ReasonRow[]>(sql, [reasonId]);
+        return rows.length ? this.mapReason(rows[0]) : null;
+    }
+
+    public async createReason(reason: string): Promise<PipelineNotInterestedReasonModel> {
+        const sql = `
+            INSERT INTO pipeline_not_interested_reason (reason, created_at)
+            VALUES (?, NOW())
+        `;
+        const result = await this.execute<ResultSetHeader>(sql, [reason]);
+        const created = await this.findReasonById(Number(result.insertId));
+        if (!created) {
+            throw new Error("Failed to retrieve created reason.");
+        }
+        return created;
+    }
+
+    public async updateReason(
+        reasonId: number,
+        reason: string
+    ): Promise<PipelineNotInterestedReasonModel> {
+        const sql = `
+            UPDATE pipeline_not_interested_reason
+            SET reason = ?
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [reason, reasonId]);
+        const updated = await this.findReasonById(reasonId);
+        if (!updated) {
+            throw new Error("Reason not found.");
+        }
+        return updated;
+    }
+
+    public async deleteReason(reasonId: number): Promise<void> {
+        await this.execute<ResultSetHeader>(
+            `UPDATE pipeline_company SET reason_id = NULL WHERE reason_id = ?`,
+            [reasonId]
+        );
+        await this.execute<ResultSetHeader>(
+            `DELETE FROM pipeline_not_interested_reason WHERE id = ?`,
+            [reasonId]
         );
     }
 }

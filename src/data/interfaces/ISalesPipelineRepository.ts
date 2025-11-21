@@ -2,6 +2,8 @@ import { PipelinePhaseModel } from "../../business/models/PipelinePhaseModel";
 import { PipelineCompanySummaryModel } from "../../business/models/PipelineCompanySummaryModel";
 import { PipelineCompanyDetailModel } from "../../business/models/PipelineCompanyDetailModel";
 import { PipelineCompanyNoteModel } from "../../business/models/PipelineCompanyNoteModel";
+import { PipelineNotInterestedReasonModel } from "../../business/models/PipelineNotInterestedReasonModel";
+import { PipelineNotInterestedReasonSummaryModel } from "../../business/models/PipelineNotInterestedReasonSummaryModel";
 
 export interface ISalesPipelineRepository {
     // Phases
@@ -26,6 +28,7 @@ export interface ISalesPipelineRepository {
 
     // Companies
     listCompanies(): Promise<PipelineCompanySummaryModel[]>;
+    listNotInterestedCompanies(): Promise<PipelineCompanySummaryModel[]>;
     createCompany(company: {
         name: string;
         owner?: string | null;
@@ -38,6 +41,10 @@ export interface ISalesPipelineRepository {
     }): Promise<PipelineCompanySummaryModel>;
     findCompanySummaryById(companyId: number): Promise<PipelineCompanySummaryModel | null>;
     findCompanyDetailById(companyId: number): Promise<PipelineCompanyDetailModel | null>;
+    markCompanyNotInterested(
+        companyId: number,
+        reasonId: number
+    ): Promise<PipelineCompanySummaryModel>;
     updateCompany(
         companyId: number,
         updates: {
@@ -52,6 +59,7 @@ export interface ISalesPipelineRepository {
         }
     ): Promise<PipelineCompanySummaryModel>;
     deleteCompany(companyId: number): Promise<void>;
+    listNotInterestedReasonSummary(): Promise<PipelineNotInterestedReasonSummaryModel[]>;
 
     // Notes
     listCompanyNotes(companyId: number): Promise<PipelineCompanyNoteModel[]>;
@@ -59,4 +67,14 @@ export interface ISalesPipelineRepository {
     createNote(companyId: number, content: string): Promise<PipelineCompanyNoteModel>;
     updateNote(noteId: number, content: string): Promise<PipelineCompanyNoteModel>;
     deleteNote(noteId: number): Promise<void>;
+
+    // Not interested reasons
+    listReasons(): Promise<PipelineNotInterestedReasonModel[]>;
+    findReasonById(reasonId: number): Promise<PipelineNotInterestedReasonModel | null>;
+    createReason(reason: string): Promise<PipelineNotInterestedReasonModel>;
+    updateReason(
+        reasonId: number,
+        reason: string
+    ): Promise<PipelineNotInterestedReasonModel>;
+    deleteReason(reasonId: number): Promise<void>;
 }
