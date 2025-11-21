@@ -82,6 +82,15 @@ export class SalesPipelineController {
         }
     }
 
+    public async listNotInterestedCompanies(_req: Request, res: Response): Promise<void> {
+        try {
+            const companies = await this.service.listNotInterestedCompanies();
+            res.json(companies.map((company) => company.toJSON()));
+        } catch (error) {
+            this.handleError(res, error, "Error fetching not interested companies.");
+        }
+    }
+
     public async createCompany(req: Request, res: Response): Promise<void> {
         try {
             const company = await this.service.createCompany(req.body ?? {});
@@ -98,6 +107,19 @@ export class SalesPipelineController {
             res.json(detail.toJSON());
         } catch (error) {
             this.handleError(res, error, "Error fetching company.");
+        }
+    }
+
+    public async markNotInterested(req: Request, res: Response): Promise<void> {
+        try {
+            const companyId = this.parseId(req.params.id, "company id");
+            const company = await this.service.markCompanyNotInterested(
+                companyId,
+                req.body ?? {}
+            );
+            res.json(company.toJSON());
+        } catch (error) {
+            this.handleError(res, error, "Error updating company status.");
         }
     }
 
@@ -118,6 +140,53 @@ export class SalesPipelineController {
             res.status(204).send();
         } catch (error) {
             this.handleError(res, error, "Error deleting company.");
+        }
+    }
+
+    public async getNotInterestedReasonSummary(_req: Request, res: Response): Promise<void> {
+        try {
+            const summary = await this.service.getNotInterestedReasonSummary();
+            res.json(summary.map((item) => item.toJSON()));
+        } catch (error) {
+            this.handleError(res, error, "Error fetching not interested summary.");
+        }
+    }
+
+    public async listReasons(_req: Request, res: Response): Promise<void> {
+        try {
+            const reasons = await this.service.listReasons();
+            res.json(reasons.map((reason) => reason.toJSON()));
+        } catch (error) {
+            this.handleError(res, error, "Error fetching reasons.");
+        }
+    }
+
+    public async createReason(req: Request, res: Response): Promise<void> {
+        try {
+            const reason = await this.service.createReason(req.body ?? {});
+            res.status(201).json(reason.toJSON());
+        } catch (error) {
+            this.handleError(res, error, "Error creating reason.");
+        }
+    }
+
+    public async updateReason(req: Request, res: Response): Promise<void> {
+        try {
+            const reasonId = this.parseId(req.params.id, "reason id");
+            const reason = await this.service.updateReason(reasonId, req.body ?? {});
+            res.json(reason.toJSON());
+        } catch (error) {
+            this.handleError(res, error, "Error updating reason.");
+        }
+    }
+
+    public async deleteReason(req: Request, res: Response): Promise<void> {
+        try {
+            const reasonId = this.parseId(req.params.id, "reason id");
+            await this.service.deleteReason(reasonId);
+            res.status(204).send();
+        } catch (error) {
+            this.handleError(res, error, "Error deleting reason.");
         }
     }
 

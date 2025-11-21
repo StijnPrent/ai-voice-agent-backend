@@ -9,7 +9,10 @@ export class PipelineCompanySummaryModel {
         private readonly _city: string | null,
         private readonly _website: string | null,
         private readonly _phaseId: number | null,
-        private readonly _notesCount: number
+        private readonly _notesCount: number,
+        private readonly _notInterested: boolean,
+        private readonly _reasonId: number | null,
+        private readonly _reason: string | null
     ) {}
 
     public toJSON(): Record<string, any> {
@@ -24,6 +27,9 @@ export class PipelineCompanySummaryModel {
             website: this.website,
             phaseId: this.phaseId,
             notesCount: this.notesCount,
+            notInterested: this.notInterested,
+            reasonId: this.reasonId,
+            reason: this.reason,
         };
     }
 
@@ -65,5 +71,17 @@ export class PipelineCompanySummaryModel {
 
     get notesCount(): number {
         return this._notesCount;
+    }
+
+    get notInterested(): boolean {
+        return this._notInterested;
+    }
+
+    get reasonId(): number | null {
+        return this._reasonId;
+    }
+
+    get reason(): string | null {
+        return this._reason;
     }
 }

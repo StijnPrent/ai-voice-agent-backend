@@ -4,6 +4,8 @@ import { PipelinePhaseModel } from "../models/PipelinePhaseModel";
 import { PipelineCompanySummaryModel } from "../models/PipelineCompanySummaryModel";
 import { PipelineCompanyDetailModel } from "../models/PipelineCompanyDetailModel";
 import { PipelineCompanyNoteModel } from "../models/PipelineCompanyNoteModel";
+import { PipelineNotInterestedReasonModel } from "../models/PipelineNotInterestedReasonModel";
+import { PipelineNotInterestedReasonSummaryModel } from "../models/PipelineNotInterestedReasonSummaryModel";
 import { ResourceNotFoundError } from "../errors/ResourceNotFoundError";
 import { ValidationError } from "../errors/ValidationError";
 
@@ -88,6 +90,10 @@ export class SalesPipelineService {
         return this.repository.listCompanies();
     }
 
+    public async listNotInterestedCompanies(): Promise<PipelineCompanySummaryModel[]> {
+        return this.repository.listNotInterestedCompanies();
+    }
+
     public async createCompany(payload: {
         name?: unknown;
         owner?: unknown;
@@ -134,6 +140,23 @@ export class SalesPipelineService {
             throw new ResourceNotFoundError("Company not found.");
         }
         return detail;
+    }
+
+    public async markCompanyNotInterested(
+        companyId: number,
+        payload: { reasonId?: unknown }
+    ): Promise<PipelineCompanySummaryModel> {
+        const reasonId = this.ensureInteger(payload.reasonId, "reasonId");
+        const company = await this.repository.findCompanySummaryById(companyId);
+        if (!company) {
+            throw new ResourceNotFoundError("Company not found.");
+        }
+        const reason = await this.repository.findReasonById(reasonId);
+        if (!reason) {
+            throw new ValidationError("Reason not found.");
+        }
+
+        return this.repository.markCompanyNotInterested(companyId, reasonId);
     }
 
     public async updateCompany(
@@ -211,6 +234,43 @@ export class SalesPipelineService {
             throw new ResourceNotFoundError("Company not found.");
         }
         await this.repository.deleteCompany(companyId);
+    }
+
+    public async getNotInterestedReasonSummary(): Promise<
+        PipelineNotInterestedReasonSummaryModel[]
+    > {
+        return this.repository.listNotInterestedReasonSummary();
+    }
+
+    public async listReasons(): Promise<PipelineNotInterestedReasonModel[]> {
+        return this.repository.listReasons();
+    }
+
+    public async createReason(
+        payload: { reason?: unknown }
+    ): Promise<PipelineNotInterestedReasonModel> {
+        const reason = this.ensureNonEmptyString(payload.reason, "reason");
+        return this.repository.createReason(reason);
+    }
+
+    public async updateReason(
+        reasonId: number,
+        payload: { reason?: unknown }
+    ): Promise<PipelineNotInterestedReasonModel> {
+        const reason = this.ensureNonEmptyString(payload.reason, "reason");
+        const existing = await this.repository.findReasonById(reasonId);
+        if (!existing) {
+            throw new ResourceNotFoundError("Reason not found.");
+        }
+        return this.repository.updateReason(reasonId, reason);
+    }
+
+    public async deleteReason(reasonId: number): Promise<void> {
+        const existing = await this.repository.findReasonById(reasonId);
+        if (!existing) {
+            throw new ResourceNotFoundError("Reason not found.");
+        }
+        await this.repository.deleteReason(reasonId);
     }
 
     public async addNote(
