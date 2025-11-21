@@ -265,6 +265,35 @@ export class SalesPipelineRepository
         return rows.map((row) => this.mapCompanySummary(row));
     }
 
+    public async listCompaniesAll(): Promise<PipelineCompanySummaryModel[]> {
+        const sql = `
+            SELECT
+                c.id,
+                c.name,
+                c.owner,
+                c.phone,
+                c.email,
+                c.address,
+                c.city,
+                c.website,
+                c.phase_id,
+                c.not_interested,
+                c.reason_id,
+                r.reason,
+                c.updated_at,
+                (
+                    SELECT COUNT(*)
+                    FROM pipeline_note n
+                    WHERE n.company_id = c.id
+                ) AS notes_count
+            FROM pipeline_company c
+            LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
+            ORDER BY c.updated_at DESC, c.id DESC
+        `;
+        const rows = await this.execute<CompanyRow[]>(sql, []);
+        return rows.map((row) => this.mapCompanySummary(row));
+    }
+
     public async listNotInterestedCompanies(): Promise<PipelineCompanySummaryModel[]> {
         const sql = `
             SELECT

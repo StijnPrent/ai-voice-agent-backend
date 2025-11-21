@@ -79,7 +79,7 @@ export function registerLeadTools(server: McpServer): void {
         async () => {
             try {
                 const repository = resolveRepository();
-                const companies = await repository.listCompanies();
+                const companies = await repository.listCompaniesAll();
                 const leads = companies.map((company) => mapCompanyToLead(company));
                 return buildToolResult({ leads });
             } catch (error) {

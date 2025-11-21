@@ -28,6 +28,7 @@ export interface ISalesPipelineRepository {
 
     // Companies
     listCompanies(): Promise<PipelineCompanySummaryModel[]>;
+    listCompaniesAll(): Promise<PipelineCompanySummaryModel[]>
     listNotInterestedCompanies(): Promise<PipelineCompanySummaryModel[]>;
     createCompany(company: {
         name: string;
