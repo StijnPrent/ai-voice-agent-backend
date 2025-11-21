@@ -12,7 +12,8 @@ export class PipelineCompanySummaryModel {
         private readonly _notesCount: number,
         private readonly _notInterested: boolean,
         private readonly _reasonId: number | null,
-        private readonly _reason: string | null
+        private readonly _reason: string | null,
+        private readonly _updatedAt: Date
     ) {}
 
     public toJSON(): Record<string, any> {
@@ -30,6 +31,7 @@ export class PipelineCompanySummaryModel {
             notInterested: this.notInterested,
             reasonId: this.reasonId,
             reason: this.reason,
+            updatedAt: this.updatedAt.toISOString(),
         };
     }
 
@@ -83,5 +85,9 @@ export class PipelineCompanySummaryModel {
 
     get reason(): string | null {
         return this._reason;
+    }
+
+    get updatedAt(): Date {
+        return this._updatedAt;
     }
 }
