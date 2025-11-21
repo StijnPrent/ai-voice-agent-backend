@@ -90,8 +90,7 @@ export class SalesPipelineRepository
             row.reason_id === null || typeof row.reason_id === "undefined"
                 ? null
                 : Number(row.reason_id),
-            row.reason ?? null,
-            safeUpdatedAt
+            row.reason ?? null
         );
     }
 
