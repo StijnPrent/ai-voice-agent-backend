@@ -30,6 +30,7 @@ type CompanyRow = RowDataPacket & {
     not_interested: number;
     reason_id: number | null;
     reason: string | null;
+    updated_at: Date | string | null;
 };
 
 type NoteRow = RowDataPacket & {
@@ -67,6 +68,11 @@ export class SalesPipelineRepository
     }
 
     private mapCompanySummary(row: CompanyRow): PipelineCompanySummaryModel {
+        const parsedUpdatedAt = new Date(row.updated_at ?? "");
+        const safeUpdatedAt = Number.isNaN(parsedUpdatedAt.getTime())
+            ? new Date()
+            : parsedUpdatedAt;
+
         return new PipelineCompanySummaryModel(
             Number(row.id),
             row.name,
@@ -84,7 +90,8 @@ export class SalesPipelineRepository
             row.reason_id === null || typeof row.reason_id === "undefined"
                 ? null
                 : Number(row.reason_id),
-            row.reason ?? null
+            row.reason ?? null,
+            safeUpdatedAt
         );
     }
 
@@ -244,6 +251,7 @@ export class SalesPipelineRepository
                 c.not_interested,
                 c.reason_id,
                 r.reason,
+                c.updated_at,
                 (
                     SELECT COUNT(*)
                     FROM pipeline_note n
@@ -273,6 +281,7 @@ export class SalesPipelineRepository
                 c.not_interested,
                 c.reason_id,
                 r.reason,
+                c.updated_at,
                 (
                     SELECT COUNT(*)
                     FROM pipeline_note n
@@ -337,6 +346,7 @@ export class SalesPipelineRepository
                 c.not_interested,
                 c.reason_id,
                 r.reason,
+                c.updated_at,
                 (
                     SELECT COUNT(*) FROM pipeline_note n WHERE n.company_id = c.id
                 ) AS notes_count
