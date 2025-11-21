@@ -146,14 +146,16 @@ export class SalesPipelineService {
         companyId: number,
         payload: { reasonId?: unknown }
     ): Promise<PipelineCompanySummaryModel> {
-        const reasonId = this.ensureInteger(payload.reasonId, "reasonId");
+        const reasonId = this.ensureOptionalInteger(payload.reasonId, "reasonId");
         const company = await this.repository.findCompanySummaryById(companyId);
         if (!company) {
             throw new ResourceNotFoundError("Company not found.");
         }
-        const reason = await this.repository.findReasonById(reasonId);
-        if (!reason) {
-            throw new ValidationError("Reason not found.");
+        if (typeof reasonId === "number") {
+            const reason = await this.repository.findReasonById(reasonId);
+            if (!reason) {
+                throw new ValidationError("Reason not found.");
+            }
         }
 
         return this.repository.markCompanyNotInterested(companyId, reasonId);

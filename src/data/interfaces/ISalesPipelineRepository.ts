@@ -44,7 +44,7 @@ export interface ISalesPipelineRepository {
     findCompanyDetailById(companyId: number): Promise<PipelineCompanyDetailModel | null>;
     markCompanyNotInterested(
         companyId: number,
-        reasonId: number
+        reasonId: number | null
     ): Promise<PipelineCompanySummaryModel>;
     updateCompany(
         companyId: number,
