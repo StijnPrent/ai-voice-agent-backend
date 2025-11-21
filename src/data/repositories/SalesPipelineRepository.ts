@@ -578,7 +578,7 @@ export class SalesPipelineRepository
                 COUNT(*) AS total
             FROM pipeline_company c
             LEFT JOIN pipeline_not_interested_reason r ON r.id = c.reason_id
-            WHERE c.not_interested = 1
+            WHERE c.not_interested = 1 AND c.reason_id IS NOT NULL
             GROUP BY c.reason_id, r.reason
             ORDER BY total DESC, r.reason ASC
         `;
@@ -590,7 +590,7 @@ export class SalesPipelineRepository
         const sql = `
             SELECT id, reason, created_at
             FROM pipeline_not_interested_reason
-            ORDER BY created_at DESC, id DESC
+            ORDER BY created_at ASC
         `;
         const rows = await this.execute<ReasonRow[]>(sql, []);
         return rows.map((row) => this.mapReason(row));
