@@ -51,10 +51,6 @@ import { ResendMailClient } from "../clients/ResendMailClient";
 import config from "../config/config";
 import { MailService } from "../business/services/MailService";
 import { MailTemplateService } from "../business/services/MailTemplateService";
-import { PhorestService } from "../business/services/PhorestService";
-import { PhorestClient } from "../clients/PhorestClient";
-import { IPhorestRepository } from "../data/interfaces/IPhorestRepository";
-import { PhorestRepository } from "../data/repositories/PhorestRepository";
 import { IMailLogRepository } from "../data/interfaces/IMailLogRepository";
 import { MailLogRepository } from "../data/repositories/MailLogRepository";
 import { TransactionalMailService } from "../business/services/TransactionalMailService";
@@ -64,6 +60,13 @@ import { IEarlyAccessRepository } from "../data/interfaces/IEarlyAccessRepositor
 import { EarlyAccessRepository } from "../data/repositories/EarlyAccessRepository";
 import { EarlyAccessService } from "../business/services/EarlyAccessService";
 import { LeadAgentService } from "../business/services/LeadAgentService";
+import { ShopifyService } from "../business/services/ShopifyService";
+import { WooCommerceService } from "../business/services/WooCommerceService";
+import { IShopifyRepository } from "../data/interfaces/IShopifyRepository";
+import { ShopifyRepository } from "../data/repositories/ShopifyRepository";
+import { IWooCommerceRepository } from "../data/interfaces/IWooCommerceRepository";
+import { WooCommerceRepository } from "../data/repositories/WooCommerceRepository";
+import { CommerceController } from "../controllers/CommerceController";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -72,7 +75,6 @@ container.register("GoogleCalendarClient", {
     useFactory: () =>
         new GoogleCalendarClient()
 });
-container.register(PhorestClient, { useClass: PhorestClient });
 container.register("OutlookCalendarClient", {
     useFactory: () =>
         new OutlookCalendarClient()
@@ -99,9 +101,11 @@ container.register(SalesPipelineService, { useClass: SalesPipelineService });
 container.register(MailService, { useClass: MailService });
 container.register(MailTemplateService, { useClass: MailTemplateService });
 container.register(TransactionalMailService, { useClass: TransactionalMailService });
-container.register(PhorestService, { useClass: PhorestService });
 container.register(EarlyAccessService, { useClass: EarlyAccessService });
 container.register(LeadAgentService, { useClass: LeadAgentService });
+container.register(ShopifyService, { useClass: ShopifyService });
+container.register(WooCommerceService, { useClass: WooCommerceService });
+container.register(CommerceController, { useClass: CommerceController });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -146,9 +150,6 @@ container.register<IAdminRepository>("IAdminRepository", {
 container.register<ISalesPipelineRepository>("ISalesPipelineRepository", {
     useClass: SalesPipelineRepository,
 })
-container.register<IPhorestRepository>("IPhorestRepository", {
-    useClass: PhorestRepository,
-})
 container.register<IMailLogRepository>("IMailLogRepository", {
     useClass: MailLogRepository,
 })
@@ -157,6 +158,12 @@ container.register<IAuthTokenRepository>("IAuthTokenRepository", {
 })
 container.register<IEarlyAccessRepository>("IEarlyAccessRepository", {
     useClass: EarlyAccessRepository,
+})
+container.register<IShopifyRepository>("IShopifyRepository", {
+    useClass: ShopifyRepository,
+})
+container.register<IWooCommerceRepository>("IWooCommerceRepository", {
+    useClass: WooCommerceRepository,
 })
 
 // Mail Client selection

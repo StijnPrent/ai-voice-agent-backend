@@ -1,8 +1,9 @@
 import { CalendarIntegrationStatus, IIntegrationRepository } from "../../data/interfaces/IIntegrationRepository";
-import {inject, injectable} from "tsyringe";
-import {IntegrationModel} from "../models/IntegrationModel";
+import { inject, injectable } from "tsyringe";
+import { IntegrationModel } from "../models/IntegrationModel";
+import config from "../../config/config";
 
-export type CalendarProvider = "google" | "outlook" | "phorest";
+export type CalendarProvider = "google" | "outlook";
 
 @injectable()
 export class IntegrationService {
@@ -12,7 +13,31 @@ export class IntegrationService {
     ) {}
 
     async getAllWithStatus(companyId: bigint): Promise<IntegrationModel[]> {
-        return this.integrationRepository.getAllWithStatus(companyId);
+        const baseUrl = (config.serverUrl || "").replace(/\/$/, "");
+        const connectMap: Record<string, { url: string; method: string }> = {
+            google: { url: `${baseUrl}/google/oauth2/url`, method: "GET" },
+            outlook: { url: `${baseUrl}/outlook/oauth2/url`, method: "GET" },
+            shopify: { url: `${baseUrl}/shopify/start`, method: "POST" },
+            woocommerce: { url: `${baseUrl}/woocommerce/connect`, method: "POST" },
+        };
+
+        const list = await this.integrationRepository.getAllWithStatus(companyId);
+        return list.map((integration) => {
+            const key = integration.name.toLowerCase();
+            const mapping = connectMap[key];
+            return new IntegrationModel(
+                integration.integrationId,
+                integration.name,
+                integration.description,
+                integration.category,
+                integration.logo,
+                integration.status,
+                integration.lastSync,
+                integration.updatedAt,
+                mapping?.url ?? null,
+                mapping?.method ?? null
+            );
+        });
     }
 
     public async hasCalendarConnected(companyId: bigint): Promise<boolean> {
@@ -25,13 +50,10 @@ export class IntegrationService {
     }
 
     public isCalendarConnected(status: CalendarIntegrationStatus): boolean {
-        return status.googleConnected || status.outlookConnected || status.phorestConnected;
+        return status.googleConnected || status.outlookConnected;
     }
 
     public pickCalendarProvider(status: CalendarIntegrationStatus): CalendarProvider | null {
-        if (status.phorestConnected) {
-            return "phorest";
-        }
         if (status.googleConnected) {
             return "google";
         }

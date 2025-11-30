@@ -55,8 +55,16 @@ interface Config {
     resendFrom?: string;
     resendReplyTo?: string;
 
-    // Phorest
-    phorestBaseUrl?: string;
+    // Shopify
+    shopifyClientId?: string;
+    shopifyClientSecret?: string;
+    shopifyRedirectUri?: string;
+    shopifyScopes?: string;
+    shopifyApiVersion?: string;
+
+    // WooCommerce
+    wooDefaultVersion?: string;
+
 }
 
 const config: Config = {
@@ -102,7 +110,13 @@ const config: Config = {
     resendFrom: process.env.RESEND_FROM || process.env.SES_FROM || "info@callingbird.nl",
     resendReplyTo: process.env.RESEND_REPLY_TO,
 
-    phorestBaseUrl: process.env.PHOREST_BASE_URL,
+    shopifyClientId: process.env.SHOPIFY_CLIENT_ID,
+    shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET,
+    shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI,
+    shopifyScopes: process.env.SHOPIFY_SCOPES,
+    shopifyApiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
+
+    wooDefaultVersion: process.env.WOOCOMMERCE_API_VERSION || "wc/v3",
 };
 
 // Validate critical values

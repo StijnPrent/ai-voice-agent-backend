@@ -18,8 +18,9 @@ import { CompanyService } from '../business/services/CompanyService';
 import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvailabilityWindow } from '../business/services/GoogleService';
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
-import { PhorestService } from '../business/services/PhorestService';
 import type { CalendarProvider } from '../business/services/IntegrationService';
+import { ShopifyService } from '../business/services/ShopifyService';
+import { WooCommerceService } from '../business/services/WooCommerceService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -158,6 +159,8 @@ const TOOL_NAMES = {
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
   checkGoogleCalendarAvailability: 'check_google_calendar_availability',
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
+  getProductDetailsByName: 'get_product_details_by_name',
+  getOrderStatus: 'get_order_status',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -171,6 +174,8 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.scheduleGoogleCalendarEvent,
   TOOL_NAMES.checkGoogleCalendarAvailability,
   TOOL_NAMES.cancelGoogleCalendarEvent,
+  TOOL_NAMES.getProductDetailsByName,
+  TOOL_NAMES.getOrderStatus,
 ]);
 
 class VapiRealtimeSession {
@@ -254,9 +259,10 @@ export class VapiClient {
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
-    @inject(PhorestService) private readonly phorestService: PhorestService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService,
     @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
+    @inject(ShopifyService) private readonly shopifyService: ShopifyService,
+    @inject(WooCommerceService) private readonly wooService: WooCommerceService,
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
@@ -914,6 +920,61 @@ export class VapiClient {
           description:
             "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06…' gelijk is aan '+316…').",
           parameters: cancelCalendarParameters,
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+    );
+
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.getProductDetailsByName,
+          description:
+            'Zoek productdetails op voor een gekoppelde webshop (Shopify of WooCommerce) met een herkenbare productnaam. Kies de juiste winkel via storeId.',
+          parameters: {
+            type: 'object',
+            properties: {
+              storeId: {
+                type: 'string',
+                enum: ['shopify', 'woocommerce'],
+                description: 'De gekoppelde winkel: "shopify" of "woocommerce".',
+              },
+              productName: {
+                type: 'string',
+                description: 'De productnaam zoals de beller die noemt (fuzzy matching).',
+              },
+            },
+            required: ['storeId', 'productName'],
+          },
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.getOrderStatus,
+          description:
+            'Haal de orderstatus op van een gekoppelde webshop (Shopify of WooCommerce) aan de hand van het orderId dat de beller geeft.',
+          parameters: {
+            type: 'object',
+            properties: {
+              storeId: {
+                type: 'string',
+                enum: ['shopify', 'woocommerce'],
+                description: 'De gekoppelde winkel: "shopify" of "woocommerce".',
+              },
+              orderId: {
+                type: 'string',
+                description: 'Ordernummer dat door de beller is genoemd.',
+              },
+            },
+            required: ['storeId', 'orderId'],
+          },
         },
         server: {
           url: `${this.toolBaseUrl}/vapi/tools`,
@@ -2106,6 +2167,68 @@ export class VapiClient {
           calendarIdsQueried: calendarIdsToQuery,
         });
       },
+      [TOOL_NAMES.getProductDetailsByName]: async () => {
+        console.log(`[VapiClient] 🛒 === GET PRODUCT DETAILS BY NAME ===`);
+        const storeId = this.normalizeStoreId(args['storeId']);
+        const productName = this.normalizeStringArg(args['productName']);
+
+        if (!storeId) {
+          throw new Error('storeId is verplicht (shopify of woocommerce).');
+        }
+        if (!productName) {
+          throw new Error('productName is verplicht.');
+        }
+
+        console.log(`[VapiClient] Product lookup`, { storeId, productName, companyId: companyId.toString() });
+
+        const service = this.resolveCommerceService(storeId);
+        try {
+          const result = await service.getProductByName(companyId, productName);
+          return sendSuccess({
+            storeId,
+            product: {
+              id: result.id,
+              name: (result as any).title ?? (result as any).name ?? null,
+              raw: (result as any).raw ?? result,
+            },
+          });
+        } catch (error) {
+          console.error(`[VapiClient] 🛒 product lookup failed`, { storeId, productName, error });
+          throw error;
+        }
+      },
+      [TOOL_NAMES.getOrderStatus]: async () => {
+        console.log(`[VapiClient] 🧾 === GET ORDER STATUS ===`);
+        const storeId = this.normalizeStoreId(args['storeId']);
+        const orderIdRaw = args['orderId'];
+        const orderId =
+          typeof orderIdRaw === 'string' ? orderIdRaw.trim() : typeof orderIdRaw === 'number' ? orderIdRaw.toString() : '';
+
+        if (!storeId) {
+          throw new Error('storeId is verplicht (shopify of woocommerce).');
+        }
+        if (!orderId) {
+          throw new Error('orderId is verplicht.');
+        }
+
+        console.log(`[VapiClient] Order status lookup`, { storeId, orderId, companyId: companyId.toString() });
+
+        const service = this.resolveCommerceService(storeId);
+        try {
+          const result = await service.getOrderStatus(companyId, orderId);
+          return sendSuccess({
+            storeId,
+            order: {
+              id: result.id,
+              status: (result as any).status ?? null,
+              raw: (result as any).raw ?? result,
+            },
+          });
+        } catch (error) {
+          console.error(`[VapiClient] 🧾 order status lookup failed`, { storeId, orderId, error });
+          throw error;
+        }
+      },
     };
 
     const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
@@ -2799,6 +2922,17 @@ export class VapiClient {
     return null;
   }
 
+  private normalizeStoreId(value: unknown): 'shopify' | 'woocommerce' | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'shopify' || normalized === 'woocommerce') return normalized;
+    return null;
+  }
+
+  private resolveCommerceService(storeId: 'shopify' | 'woocommerce') {
+    return storeId === 'shopify' ? this.shopifyService : this.wooService;
+  }
+
   private getEffectiveCalendarProvider(config: VapiAssistantConfig): CalendarProvider | null {
     if (config.calendarProvider) {
       return config.calendarProvider;
@@ -2806,14 +2940,8 @@ export class VapiClient {
     return config.hasGoogleIntegration ? 'google' : null;
   }
 
-  private isPhorestProvider(config: VapiAssistantConfig): boolean {
-    return this.getEffectiveCalendarProvider(config) === 'phorest';
-  }
-
   private getCalendarProviderName(provider: CalendarProvider | null): string {
     switch (provider) {
-      case 'phorest':
-        return 'Phorest';
       case 'outlook':
         return 'Outlook';
       case 'google':
