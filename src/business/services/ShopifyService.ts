@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import axios from "axios";
 import crypto from "crypto";
 import { inject, injectable } from "tsyringe";
@@ -55,9 +56,9 @@ export class ShopifyService {
         await this.repo.upsertIntegration({
             companyId,
             shopDomain: normalizedShop,
-            encryptedAccessToken: accessTokenEnc.encryptedHex,
-            accessTokenIv: accessTokenEnc.ivHex,
-            accessTokenTag: accessTokenEnc.authTagHex,
+            encryptedAccessToken: accessTokenEnc.data,
+            accessTokenIv: accessTokenEnc.iv,
+            accessTokenTag: accessTokenEnc.tag,
             scopes,
         });
     }
@@ -155,25 +156,30 @@ export class ShopifyService {
             throw new Error("Product name is required.");
         }
         let bestScore = -1;
-        let bestItems: T[] = [];
+        let secondBest = -1;
+        let bestItem: T | null = null;
 
         for (const item of items) {
             const name = getName(item);
             const score = normalizeSimilarityScore(normalizedQuery, name);
             if (score > bestScore) {
+                secondBest = bestScore;
                 bestScore = score;
-                bestItems = [item];
-            } else if (score === bestScore) {
-                bestItems.push(item);
+                bestItem = item;
+                continue;
+            }
+            if (score > secondBest) {
+                secondBest = score;
             }
         }
 
-        if (bestScore < 0.2) {
+        if (bestScore < 0.2 || !bestItem) {
             throw new Error("No sufficiently close product match found.");
         }
-        if (bestItems.length > 1) {
+        // If another product is within a small band of the best score, treat as ambiguous.
+        if (secondBest >= bestScore - 0.15) {
             throw new Error("Multiple products match that name; please be more specific.");
         }
-        return bestItems[0];
+        return bestItem;
     }
 }

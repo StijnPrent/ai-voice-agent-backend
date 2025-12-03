@@ -26,6 +26,7 @@ import leadAgentRoute from "./routes/LeadAgentRoute";
 import shopifyRoute from "./routes/ShopifyRoute";
 import wooCommerceRoute from "./routes/WooCommerceRoute";
 import commerceRoute from "./routes/CommerceRoute";
+import billingRoute from "./routes/BillingRoute";
 
 const app = express();
 
@@ -90,6 +91,7 @@ app.use("/agents", leadAgentRoute);
 app.use("/shopify", shopifyRoute);
 app.use("/woocommerce", wooCommerceRoute);
 app.use("/commerce", commerceRoute);
+app.use("/billing", billingRoute);
 mountLeadsMcpServer(app);
 
 const server = createServer(app);

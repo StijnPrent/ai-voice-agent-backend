@@ -67,6 +67,9 @@ import { ShopifyRepository } from "../data/repositories/ShopifyRepository";
 import { IWooCommerceRepository } from "../data/interfaces/IWooCommerceRepository";
 import { WooCommerceRepository } from "../data/repositories/WooCommerceRepository";
 import { CommerceController } from "../controllers/CommerceController";
+import { BillingService } from "../business/services/BillingService";
+import { IBillingRepository } from "../data/interfaces/IBillingRepository";
+import { BillingRepository } from "../data/repositories/BillingRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -106,6 +109,7 @@ container.register(LeadAgentService, { useClass: LeadAgentService });
 container.register(ShopifyService, { useClass: ShopifyService });
 container.register(WooCommerceService, { useClass: WooCommerceService });
 container.register(CommerceController, { useClass: CommerceController });
+container.register(BillingService, { useClass: BillingService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -164,6 +168,9 @@ container.register<IShopifyRepository>("IShopifyRepository", {
 })
 container.register<IWooCommerceRepository>("IWooCommerceRepository", {
     useClass: WooCommerceRepository,
+})
+container.register<IBillingRepository>("IBillingRepository", {
+    useClass: BillingRepository,
 })
 
 // Mail Client selection

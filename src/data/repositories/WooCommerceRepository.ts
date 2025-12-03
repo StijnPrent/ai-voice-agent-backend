@@ -76,7 +76,8 @@ export class WooCommerceRepository extends BaseRepository implements IWooCommerc
             WHERE company_id = ?
             LIMIT 1
         `;
-        const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
+        // Pass as string to avoid BigInt driver quirks
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId.toString()]);
         if (!rows.length) return null;
         const row = rows[0];
         return new WooCommerceIntegrationModel(

@@ -208,6 +208,25 @@ export class VoiceService {
             const calendarStatus = await this.integrationService.getCalendarIntegrationStatus(company.id);
             const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
             const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
+            console.log("[VoiceService] fetching commerce connections for", company.id.toString());
+            const commerce = await this.integrationService.getCommerceConnections(company.id);
+            let commerceStores: Array<"shopify" | "woocommerce"> = [];
+            if (commerce.shopify) commerceStores.push("shopify");
+            if (commerce.woocommerce) commerceStores.push("woocommerce");
+
+            if (commerceStores.length === 0) {
+                const integrations = await this.integrationService.getAllWithStatus(company.id);
+                console.log("[VoiceService] fallback integration scan for commerce", integrations.map(i => ({ name: i.name, status: i.status })));
+                commerceStores = integrations
+                    .filter((i) => i.status === "connected")
+                    .map((i) => {
+                        const name = i.name.toLowerCase();
+                        if (name.includes("shopify")) return "shopify";
+                        if (name.includes("woo")) return "woocommerce";
+                        return null;
+                    })
+                    .filter((v): v is "shopify" | "woocommerce" => Boolean(v));
+            }
 
             if (!company.assistantEnabled) {
                 console.warn(
@@ -248,7 +267,8 @@ export class VoiceService {
                 replyStyle,
                 companyContext,
                 schedulingContext,
-                this.voiceSettings
+                this.voiceSettings,
+                commerceStores
             );
 
             if (this.ws?.readyState === WebSocket.OPEN) {

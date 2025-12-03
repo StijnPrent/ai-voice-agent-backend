@@ -65,6 +65,10 @@ interface Config {
     // WooCommerce
     wooDefaultVersion?: string;
 
+    // Billing / Mollie
+    mollieApiKey?: string;
+    mollieWebhookUrl?: string;
+    mollieRedirectUrl?: string;
 }
 
 const config: Config = {
@@ -117,6 +121,10 @@ const config: Config = {
     shopifyApiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
 
     wooDefaultVersion: process.env.WOOCOMMERCE_API_VERSION || "wc/v3",
+
+    mollieApiKey: process.env.MOLLIE_API_KEY,
+    mollieWebhookUrl: process.env.MOLLIE_WEBHOOK_URL,
+    mollieRedirectUrl: process.env.MOLLIE_REDIRECT_URL,
 };
 
 // Validate critical values

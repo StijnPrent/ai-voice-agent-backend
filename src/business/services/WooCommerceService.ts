@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { inject, injectable } from "tsyringe";
 import { encrypt } from "../../utils/crypto";
 import config from "../../config/config";
@@ -25,12 +26,12 @@ export class WooCommerceService {
         await this.repo.upsertIntegration({
             companyId,
             storeUrl: normalizedUrl,
-            encryptedConsumerKey: keyEnc.encryptedHex,
-            consumerKeyIv: keyEnc.ivHex,
-            consumerKeyTag: keyEnc.authTagHex,
-            encryptedConsumerSecret: secretEnc.encryptedHex,
-            consumerSecretIv: secretEnc.ivHex,
-            consumerSecretTag: secretEnc.authTagHex,
+            encryptedConsumerKey: keyEnc.data,
+            consumerKeyIv: keyEnc.iv,
+            consumerKeyTag: keyEnc.tag,
+            encryptedConsumerSecret: secretEnc.data,
+            consumerSecretIv: secretEnc.iv,
+            consumerSecretTag: secretEnc.tag,
             apiVersion: version,
         });
     }
