@@ -109,6 +109,7 @@ export class AssistantSyncService {
                 appointmentTypes,
                 staffMembers,
             },
+            productCatalog: [],
             voiceSettings,
         };
     }

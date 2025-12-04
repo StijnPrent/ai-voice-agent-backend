@@ -64,6 +64,17 @@ import { IEarlyAccessRepository } from "../data/interfaces/IEarlyAccessRepositor
 import { EarlyAccessRepository } from "../data/repositories/EarlyAccessRepository";
 import { EarlyAccessService } from "../business/services/EarlyAccessService";
 import { LeadAgentService } from "../business/services/LeadAgentService";
+import { ProductKnowledgeService } from "../business/services/ProductKnowledgeService";
+import { IProductKnowledgeRepository } from "../data/interfaces/IProductKnowledgeRepository";
+import { ProductKnowledgeRepository } from "../data/repositories/ProductKnowledgeRepository";
+import { AssistantContextBuilder } from "../business/services/AssistantContextBuilder";
+import { WhatsappClient } from "../clients/WhatsappClient";
+import { WhatsappIntegrationService } from "../business/services/WhatsappIntegrationService";
+import { WhatsappChatService } from "../business/services/WhatsappChatService";
+import { IWhatsappIntegrationRepository } from "../data/interfaces/IWhatsappIntegrationRepository";
+import { WhatsappIntegrationRepository } from "../data/repositories/WhatsappIntegrationRepository";
+import { IWhatsappConversationRepository } from "../data/interfaces/IWhatsappConversationRepository";
+import { WhatsappConversationRepository } from "../data/repositories/WhatsappConversationRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -77,6 +88,7 @@ container.register("OutlookCalendarClient", {
     useFactory: () =>
         new OutlookCalendarClient()
 });
+container.register(WhatsappClient, { useClass: WhatsappClient });
 
 // Register business services
 container.registerSingleton(VoiceSessionManager, VoiceSessionManager);
@@ -102,6 +114,10 @@ container.register(TransactionalMailService, { useClass: TransactionalMailServic
 container.register(PhorestService, { useClass: PhorestService });
 container.register(EarlyAccessService, { useClass: EarlyAccessService });
 container.register(LeadAgentService, { useClass: LeadAgentService });
+container.register(ProductKnowledgeService, { useClass: ProductKnowledgeService });
+container.register(AssistantContextBuilder, { useClass: AssistantContextBuilder });
+container.register(WhatsappIntegrationService, { useClass: WhatsappIntegrationService });
+container.register(WhatsappChatService, { useClass: WhatsappChatService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -157,6 +173,15 @@ container.register<IAuthTokenRepository>("IAuthTokenRepository", {
 })
 container.register<IEarlyAccessRepository>("IEarlyAccessRepository", {
     useClass: EarlyAccessRepository,
+})
+container.register<IProductKnowledgeRepository>("IProductKnowledgeRepository", {
+    useClass: ProductKnowledgeRepository,
+})
+container.register<IWhatsappIntegrationRepository>("IWhatsappIntegrationRepository", {
+    useClass: WhatsappIntegrationRepository,
+})
+container.register<IWhatsappConversationRepository>("IWhatsappConversationRepository", {
+    useClass: WhatsappConversationRepository,
 })
 
 // Mail Client selection

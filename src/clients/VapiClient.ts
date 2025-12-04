@@ -20,6 +20,7 @@ import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/Vap
 import { getWorkerId } from '../config/workerIdentity';
 import { PhorestService } from '../business/services/PhorestService';
 import type { CalendarProvider } from '../business/services/IntegrationService';
+import { ProductKnowledgeService } from '../business/services/ProductKnowledgeService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -85,6 +86,17 @@ type CompanySnapshot = {
   callers?: { name: string; phoneNumber: string }[];
 };
 
+type ProductSnapshot = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  summary?: string | null;
+  synonyms?: string[];
+  status: string;
+  version?: number;
+  updatedAt?: string;
+};
+
 export type VapiAssistantConfig = {
   company: CompanyModel;
   hasGoogleIntegration: boolean;
@@ -92,6 +104,7 @@ export type VapiAssistantConfig = {
   replyStyle: ReplyStyleModel;
   companyContext: CompanyContext;
   schedulingContext: SchedulingContext;
+  productCatalog: ProductSnapshot[];
   voiceSettings: VoiceSettingModel;
 };
 
@@ -158,6 +171,7 @@ const TOOL_NAMES = {
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
   checkGoogleCalendarAvailability: 'check_google_calendar_availability',
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
+  fetchProductInfo: 'fetch_product_info',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -171,6 +185,7 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.scheduleGoogleCalendarEvent,
   TOOL_NAMES.checkGoogleCalendarAvailability,
   TOOL_NAMES.cancelGoogleCalendarEvent,
+  TOOL_NAMES.fetchProductInfo,
 ]);
 
 class VapiRealtimeSession {
@@ -255,6 +270,7 @@ export class VapiClient {
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
     @inject(PhorestService) private readonly phorestService: PhorestService,
+    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService,
     @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
   ) {
@@ -317,6 +333,7 @@ export class VapiClient {
     replyStyle: ReplyStyleModel,
     context: CompanyContext,
     schedulingContext: SchedulingContext,
+    productCatalog: ProductSnapshot[],
     voiceSettings: VoiceSettingModel,
   ) {
     const config: VapiAssistantConfig = {
@@ -326,6 +343,7 @@ export class VapiClient {
       replyStyle,
       companyContext: context,
       schedulingContext,
+      productCatalog,
       voiceSettings,
     };
 
@@ -625,6 +643,11 @@ export class VapiClient {
       'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
     ];
 
+    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog);
+    if (productInstruction) {
+      instructions.push(productInstruction);
+    }
+
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
         `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
@@ -646,6 +669,47 @@ export class VapiClient {
     );
 
     return instructions.join('\n\n');
+  }
+
+  /**
+   * Builds the full system + context message list for non-Vapi chat surfaces (e.g. WhatsApp).
+   * This mirrors the payload we send to Vapi so all channels share the same knowledge.
+   */
+  public buildContextMessages(config?: VapiAssistantConfig) {
+    const effectiveConfig = config ?? this.currentConfig;
+    if (!effectiveConfig) {
+      throw new Error('Company info must be set before generating context messages.');
+    }
+
+    const instructions = this.buildSystemPrompt(effectiveConfig);
+    const companyContext = this.buildCompanySnapshot(effectiveConfig);
+    return this.buildModelMessages(instructions, companyContext, effectiveConfig);
+  }
+
+  private buildProductInstruction(products: ProductSnapshot[]): string | null {
+    if (!products || products.length === 0) {
+      return null;
+    }
+
+    const limited = products.slice(0, 15);
+    const formatted = limited.map((product) => {
+      const synonymText =
+        product.synonyms && product.synonyms.length > 0
+          ? ` (synoniemen: ${product.synonyms.slice(0, 5).join(', ')})`
+          : '';
+      const skuText = product.sku ? `, sku: ${product.sku}` : '';
+      return `- [${product.id}] ${product.name}${skuText}${synonymText}`;
+    });
+
+    if (products.length > limited.length) {
+      formatted.push(`- ...en ${products.length - limited.length} extra producten`);
+    }
+
+    return [
+      'Productcatalogus (gebruik altijd de juiste productId):',
+      ...formatted,
+      `Gebruik altijd de tool '${TOOL_NAMES.fetchProductInfo}' om productinformatie op te halen voordat je een antwoord geeft. Als een product niet in de lijst staat of je geen data hebt, zeg eerlijk dat je het niet weet en stel voor om door te verbinden.`,
+    ].join('\n');
   }
 
   private buildCompanySnapshot(config: VapiAssistantConfig): CompanySnapshot {
@@ -919,6 +983,31 @@ export class VapiClient {
           url: `${this.toolBaseUrl}/vapi/tools`,
         },
       },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.fetchProductInfo,
+          description:
+            'Haal productinformatie, FAQ en policies op uit de kennisbank van het huidige bedrijf. Gebruik altijd de productId uit de productlijst.',
+          parameters: {
+            type: 'object',
+            properties: {
+              productId: {
+                type: 'string',
+                description: 'Verplicht: productId uit de productlijst (bijv. "12").',
+              },
+              questionContext: {
+                type: 'string',
+                description: 'Optioneel: de vraag van de beller zodat alleen relevante info wordt gebruikt.',
+              },
+            },
+            required: ['productId'],
+          },
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
     );
 
     return tools;
@@ -960,6 +1049,19 @@ export class VapiClient {
       },
       googleCalendarEnabled: config.hasGoogleIntegration,
     };
+
+    if (config.productCatalog && config.productCatalog.length > 0) {
+      contextPayload.products = config.productCatalog
+        .slice(0, 25)
+        .map((product) => ({
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          summary: product.summary,
+          synonyms: product.synonyms?.slice(0, 8),
+          status: product.status,
+        }));
+    }
 
     if (Object.keys(scheduling).length > 0) {
       contextPayload.scheduling = scheduling;
@@ -2106,6 +2208,36 @@ export class VapiClient {
           calendarIdsQueried: calendarIdsToQuery,
         });
       },
+      [TOOL_NAMES.fetchProductInfo]: async () => {
+        const productIdRaw = this.normalizeStringArg(args['productId']);
+        if (!productIdRaw) {
+          throw new Error('productId is verplicht om productinformatie op te halen.');
+        }
+
+        const productId = Number(productIdRaw);
+        if (Number.isNaN(productId)) {
+          return sendError('Ongeldig productId ontvangen.', { productId: productIdRaw });
+        }
+
+        const product = await this.productKnowledgeService.getProduct(companyId, productId);
+        if (!product) {
+          return sendError('Dit product is niet gevonden in de kennisbank.', { productId });
+        }
+
+        const payload = {
+          productId: product.id.toString(),
+          name: product.name,
+          sku: product.sku,
+          summary: product.summary ?? product.content.summary ?? null,
+          synonyms: product.synonyms,
+          status: product.status,
+          version: product.version,
+          updatedAt: product.updatedAt.toISOString(),
+          content: product.content,
+        };
+
+        return sendSuccess(payload);
+      },
     };
 
     const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
@@ -3028,6 +3160,21 @@ export class VapiClient {
 
     if (tools && tools.length > 0) {
       metadata.tools = tools;
+    }
+
+    if (config.productCatalog && config.productCatalog.length > 0) {
+      metadata.productCatalog = config.productCatalog
+        .slice(0, 25)
+        .map((product) => ({
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          status: product.status,
+          version: product.version,
+          updatedAt: product.updatedAt,
+          synonyms: product.synonyms?.slice(0, 8),
+          summary: product.summary,
+        }));
     }
 
     if (config.voiceSettings) {
