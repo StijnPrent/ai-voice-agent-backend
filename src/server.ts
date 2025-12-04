@@ -17,6 +17,7 @@ import updateRoute from "./routes/UpdateRoute";
 import schedulingRoute from "./routes/SchedulingRoute";
 import callRoute from "./routes/CallRoute";
 import analyticsRoute from "./routes/AnalyticsRoute";
+import productKnowledgeRoute from "./routes/ProductKnowledgeRoute";
 import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
@@ -27,6 +28,7 @@ import shopifyRoute from "./routes/ShopifyRoute";
 import wooCommerceRoute from "./routes/WooCommerceRoute";
 import commerceRoute from "./routes/CommerceRoute";
 import billingRoute from "./routes/BillingRoute";
+import whatsappRoute from "./routes/WhatsappRoute";
 
 const app = express();
 
@@ -83,6 +85,7 @@ app.use("/updates", updateRoute);
 app.use("/scheduling", schedulingRoute);
 app.use("/calls", callRoute);
 app.use("/analytics", analyticsRoute);
+app.use("/products", productKnowledgeRoute);
 app.use("/vapi", vapiRoute.getRouter());
 app.use("/internal/vapi", internalVapiRoute.getRouter());
 app.use("/admin", adminRoute);
@@ -92,6 +95,7 @@ app.use("/shopify", shopifyRoute);
 app.use("/woocommerce", wooCommerceRoute);
 app.use("/commerce", commerceRoute);
 app.use("/billing", billingRoute);
+app.use("/whatsapp", whatsappRoute);
 mountLeadsMcpServer(app);
 
 const server = createServer(app);

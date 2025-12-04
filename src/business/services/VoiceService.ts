@@ -11,6 +11,7 @@ import { SchedulingService } from "./SchedulingService";
 import { UsageService } from "./UsageService";
 import { CallLogService } from "./CallLogService";
 import { TwilioClient } from "../../clients/TwilioClient";
+import { ProductKnowledgeService } from "./ProductKnowledgeService";
 
 const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
@@ -86,13 +87,14 @@ export class VoiceService {
     private stopping = false;
 
     constructor(
-        @inject(VapiClient) private readonly vapiClient: VapiClient,
-        @inject(CompanyService) private readonly companyService: CompanyService,
-        @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
-        @inject(IntegrationService) private readonly integrationService: IntegrationService,
-        @inject(SchedulingService) private readonly schedulingService: SchedulingService,
-        @inject(UsageService) private readonly usageService: UsageService,
-        @inject(CallLogService) private readonly callLogService: CallLogService,
+    @inject(VapiClient) private readonly vapiClient: VapiClient,
+    @inject(CompanyService) private readonly companyService: CompanyService,
+    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService,
+    @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
+    @inject(IntegrationService) private readonly integrationService: IntegrationService,
+    @inject(SchedulingService) private readonly schedulingService: SchedulingService,
+    @inject(UsageService) private readonly usageService: UsageService,
+    @inject(CallLogService) private readonly callLogService: CallLogService,
         @inject("TwilioClient") private readonly twilioClient: TwilioClient
     ) {}
 
@@ -227,6 +229,32 @@ export class VoiceService {
                     })
                     .filter((v): v is "shopify" | "woocommerce" => Boolean(v));
             }
+            let productCatalog: Array<{
+                id: string;
+                name: string;
+                sku?: string | null;
+                summary?: string | null;
+                synonyms?: string[];
+                status: string;
+                version?: number;
+                updatedAt?: string;
+            }> = [];
+
+            try {
+                const products = await this.productKnowledgeService.listCatalog(company.id, "published");
+                productCatalog = products.map((product) => ({
+                    id: product.id.toString(),
+                    name: product.name,
+                    sku: product.sku,
+                    summary: product.summary ?? product.content.summary ?? null,
+                    synonyms: product.synonyms,
+                    status: product.status,
+                    version: product.version,
+                    updatedAt: product.updatedAt.toISOString(),
+                }));
+            } catch (error) {
+                console.error(`[${callSid}] Failed to load product catalog`, error);
+            }
 
             if (!company.assistantEnabled) {
                 console.warn(
@@ -267,6 +295,7 @@ export class VoiceService {
                 replyStyle,
                 companyContext,
                 schedulingContext,
+                productCatalog,
                 this.voiceSettings,
                 commerceStores
             );
