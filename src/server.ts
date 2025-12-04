@@ -21,9 +21,12 @@ import { VapiRoute } from "./routes/VapiRoute";
 import InternalVapiRoute from "./routes/InternalVapiRoute";
 import adminRoute from "./routes/AdminRoute";
 import salesPipelineRoute from "./routes/SalesPipelineRoute";
-import phorestRoute from "./routes/PhorestRoute";
 import { mountLeadsMcpServer } from "./mcp/server";
 import leadAgentRoute from "./routes/LeadAgentRoute";
+import shopifyRoute from "./routes/ShopifyRoute";
+import wooCommerceRoute from "./routes/WooCommerceRoute";
+import commerceRoute from "./routes/CommerceRoute";
+import billingRoute from "./routes/BillingRoute";
 
 const app = express();
 
@@ -76,7 +79,6 @@ app.use('/voice-settings', voiceSettingsRoutes);
 app.use("/google", googleRoute);
 app.use("/outlook", outlookRoute);
 app.use("/integrations", integrationRoute);
-app.use("/phorest", phorestRoute);
 app.use("/updates", updateRoute);
 app.use("/scheduling", schedulingRoute);
 app.use("/calls", callRoute);
@@ -86,6 +88,10 @@ app.use("/internal/vapi", internalVapiRoute.getRouter());
 app.use("/admin", adminRoute);
 app.use("/api", salesPipelineRoute);
 app.use("/agents", leadAgentRoute);
+app.use("/shopify", shopifyRoute);
+app.use("/woocommerce", wooCommerceRoute);
+app.use("/commerce", commerceRoute);
+app.use("/billing", billingRoute);
 mountLeadsMcpServer(app);
 
 const server = createServer(app);

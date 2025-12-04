@@ -69,4 +69,17 @@ export class UsageRepository extends BaseRepository implements IUsageRepository 
         const totalSeconds = Number(rows[0].total_seconds ?? 0);
         return Number.isFinite(totalSeconds) ? totalSeconds : 0;
     }
+
+    public async getUsageBetween(companyId: bigint, start: Date, end: Date): Promise<number> {
+        const sql = `
+            SELECT COALESCE(SUM(duration_seconds), 0) AS total_seconds
+            FROM company_call_logs
+            WHERE company_id = ?
+              AND started_at >= ?
+              AND started_at < ?
+        `;
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, start, end]);
+        const totalSeconds = rows.length ? Number(rows[0].total_seconds ?? 0) : 0;
+        return Number.isFinite(totalSeconds) ? totalSeconds : 0;
+    }
 }

@@ -11,7 +11,6 @@ export class StaffMemberModel {
         private _availability: StaffAvailabilityModel[] = [],
         private _googleCalendarId: string | null = null,
         private _googleCalendarSummary: string | null = null,
-        private _phorestStaffId: string | null = null,
         private _createdAt?: Date,
         private _updatedAt?: Date
     ) {}
@@ -26,7 +25,6 @@ export class StaffMemberModel {
             availability: this.availability.map((a) => a.toJSON()),
             googleCalendarId: this.googleCalendarId,
             googleCalendarSummary: this.googleCalendarSummary,
-            phorestStaffId: this.phorestStaffId,
             createdAt: this.createdAt,
             updatedAt: this.updatedAt,
         };
@@ -62,14 +60,6 @@ export class StaffMemberModel {
 
     get googleCalendarSummary(): string | null {
         return this._googleCalendarSummary;
-    }
-
-    get phorestStaffId(): string | null {
-        return this._phorestStaffId;
-    }
-
-    set phorestStaffId(value: string | null) {
-        this._phorestStaffId = value;
     }
 
     get createdAt(): Date | undefined {
