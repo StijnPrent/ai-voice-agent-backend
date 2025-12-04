@@ -5,7 +5,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import config from "../../config/config";
 
-type TemplateKey = "email-verification" | "password-reset" | "early-access";
+type TemplateKey =
+  | "email-verification"
+  | "password-reset"
+  | "early-access"
+  | "invoice-issued"
+  | "invoice-paid"
+  | "trial-started";
 
 interface TemplateVars {
   [key: string]: string | null | undefined;
@@ -86,6 +92,99 @@ export class TransactionalMailService {
       htmlBody: rendered.html,
       textBody: rendered.text,
       payload: params,
+    });
+  }
+
+  public async sendInvoiceIssued(params: {
+    to: string;
+    companyName?: string | null;
+    invoiceNumber: string;
+    amount: number;
+    currency?: string;
+    usageMinutes?: number;
+    pricePerMinute?: number;
+    dueDate?: string;
+    paymentLink?: string | null;
+  }): Promise<void> {
+    const rendered = await this.renderTemplate(
+      "invoice-issued",
+      {
+        ...params,
+        amount: params.amount.toFixed(2),
+        currency: params.currency ?? "EUR",
+        usageMinutes:
+          typeof params.usageMinutes === "number"
+            ? params.usageMinutes.toString()
+            : params.usageMinutes,
+        pricePerMinute:
+          typeof params.pricePerMinute === "number"
+            ? params.pricePerMinute.toString()
+            : params.pricePerMinute,
+      },
+      this.defaultInvoiceIssuedTemplate()
+    );
+    await this.dispatchMail({
+      type: "invoice-issued",
+      template: "invoice-issued",
+      to: params.to,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      textBody: rendered.text,
+      payload: params,
+      from: this.systemFrom,
+    });
+  }
+
+  public async sendInvoicePaid(params: {
+    to?: string;
+    companyName?: string | null;
+    invoiceNumber: string;
+    amount: number;
+    currency?: string;
+  }): Promise<void> {
+    if (!params.to) {
+      return;
+    }
+    const rendered = await this.renderTemplate(
+      "invoice-paid",
+      {
+        ...params,
+        amount: params.amount.toFixed(2),
+        currency: params.currency ?? "EUR",
+      },
+      this.defaultInvoicePaidTemplate()
+    );
+    await this.dispatchMail({
+      type: "invoice-paid",
+      template: "invoice-paid",
+      to: params.to,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      textBody: rendered.text,
+      payload: params,
+      from: this.systemFrom,
+    });
+  }
+
+  public async sendTrialStarted(params: {
+    to: string;
+    companyName?: string | null;
+    trialEndsAt: string;
+  }): Promise<void> {
+    const rendered = await this.renderTemplate(
+      "trial-started",
+      params,
+      this.defaultTrialStartedTemplate()
+    );
+    await this.dispatchMail({
+      type: "trial-started",
+      template: "trial-started",
+      to: params.to,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      textBody: rendered.text,
+      payload: params,
+      from: this.systemFrom,
     });
   }
 
@@ -249,6 +348,61 @@ export class TransactionalMailService {
             <p>Kun je niet wachten? Reageer gerust op deze e-mail.</p>
             <p style="font-size:12px;color:#475569;">Wil je geen updates meer? <a href="{{unsubscribeUrl}}" style="color:#1d4ed8;text-decoration:underline;">Afmelden</a></p>
             <p>Groeten,<br/>Team CallingBird</p>
+          </body>
+        </html>
+      `,
+    };
+  }
+
+  private defaultInvoiceIssuedTemplate() {
+    return {
+      subject: "Je nieuwe CallingBird factuur {{invoiceNumber}}",
+      body: `
+        <html>
+          <body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;line-height:1.5">
+            <h2 style="margin:0 0 12px 0;color:#0f172a;">Factuur {{invoiceNumber}}</h2>
+            <p>Hallo {{companyName}},</p>
+            <p>Er staat een nieuwe factuur klaar voor je CallingBird-gebruik.</p>
+            <ul>
+              <li>Bedrag: {{currency}} {{amount}}</li>
+              <li>Verbruik: {{usageMinutes}} minuten</li>
+              <li>Tarief: {{pricePerMinute}} per minuut</li>
+              <li>Vervaldatum: {{dueDate}}</li>
+            </ul>
+            <p>We incasseren dit bedrag automatisch via SEPA. Als je de status wilt volgen of direct wilt betalen, gebruik dan deze link: <a href="{{paymentLink}}">Bekijk betaling</a>.</p>
+            <p>Heb je vragen? Reageer gerust op dit bericht.</p>
+          </body>
+        </html>
+      `,
+    };
+  }
+
+  private defaultInvoicePaidTemplate() {
+    return {
+      subject: "Betaling ontvangen voor factuur {{invoiceNumber}}",
+      body: `
+        <html>
+          <body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;line-height:1.5">
+            <h2 style="margin:0 0 12px 0;color:#0f172a;">Bedankt voor je betaling</h2>
+            <p>We hebben de betaling voor factuur {{invoiceNumber}} ontvangen.</p>
+            <p>Totaal: {{currency}} {{amount}}</p>
+            <p>Heb je vragen over deze betaling? Laat het ons weten.</p>
+          </body>
+        </html>
+      `,
+    };
+  }
+
+  private defaultTrialStartedTemplate() {
+    return {
+      subject: "Je 14-daagse proef bij CallingBird is gestart",
+      body: `
+        <html>
+          <body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;line-height:1.5">
+            <h2 style="margin:0 0 12px 0;color:#0f172a;">Welkom bij CallingBird</h2>
+            <p>We hebben je account aangemaakt en je SEPA-incasso ingesteld. Je proef loopt tot {{trialEndsAt}}.</p>
+            <p>Na de proefperiode zetten we je abonnement automatisch om naar betaald en schrijven we het gebruik maandelijks af.</p>
+            <p>Stel je account in en start direct via onze app.</p>
           </body>
         </html>
       `,

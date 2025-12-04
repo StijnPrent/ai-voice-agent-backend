@@ -37,10 +37,12 @@ describe('VapiClient tool dispatcher', () => {
       'test-call',
       company,
       hasGoogleIntegration,
+      hasGoogleIntegration ? 'google' : null,
       replyStyle,
       companyContext,
       schedulingContext,
       voiceSettings,
+      [],
     );
   };
 
@@ -51,7 +53,7 @@ describe('VapiClient tool dispatcher', () => {
       cancelEvent: jest.fn(),
     } as unknown as jest.Mocked<GoogleService>;
 
-    client = new VapiClient(googleService);
+    client = new VapiClient(googleService as any);
     session = { sendToolResponse: jest.fn() };
     baseCallbacks = { onAudio: jest.fn() };
     createCompany();
