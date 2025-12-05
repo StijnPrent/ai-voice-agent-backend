@@ -136,6 +136,7 @@ export class CompanyService {
         email: string;
         password: string;
         accessCode?: string;
+        useType?: string | null;
     }): Promise<CompanyModel> {
         await this.ensureValidAccessCode(params.accessCode);
 
@@ -143,7 +144,8 @@ export class CompanyService {
             params.companyName,
             params.email,
             "",
-            params.password
+            params.password,
+            params.useType ?? null
         );
 
         // Optionally seed initial details/contact information with provided data.
@@ -166,7 +168,8 @@ export class CompanyService {
         name: string,
         email: string,
         twilioNumber: string = "",
-        password: string
+        password: string,
+        useType: string | null = null
     ): Promise<CompanyModel> {
         const bytes = crypto.randomBytes(8);
         const sanitizedTwilio = (twilioNumber ?? "").replace(/\s+/g, "");
@@ -181,7 +184,8 @@ export class CompanyService {
             new Date(),
             null,
             true,
-            null
+            null,
+            useType ?? null
         );
         await this.companyRepo.createCompany(company);
 
@@ -190,7 +194,7 @@ export class CompanyService {
         return company;
     }
 
-    public async login(email: string, password: string): Promise<string | null> {
+    public async login(email: string, password: string): Promise<{ token: string; useType: string | null } | null> {
         const company = await this.companyRepo.findByEmail(email);
         if (!company) return null;
 
@@ -207,11 +211,11 @@ export class CompanyService {
         }
 
         const token = jwt.sign(
-            { companyId: company.id.toString() },
+            { companyId: company.id.toString(), useType: company.useType ?? null },
             process.env.JWT_SECRET!,
             { expiresIn: "8h" }
         );
-        return token;
+        return { token, useType: company.useType ?? null };
     }
 
     public async resendVerificationEmail(email: string): Promise<void> {

@@ -187,6 +187,7 @@ container.register<IWooCommerceRepository>("IWooCommerceRepository", {
 })
 container.register<IBillingRepository>("IBillingRepository", {
     useClass: BillingRepository,
+})
 container.register<IProductKnowledgeRepository>("IProductKnowledgeRepository", {
     useClass: ProductKnowledgeRepository,
 })

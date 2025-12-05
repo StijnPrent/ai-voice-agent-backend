@@ -10,6 +10,10 @@ import { AssistantSyncError } from "../errors/AssistantSyncError";
 
 @injectable()
 export class AssistantSyncService {
+    private readonly debounceMs = 800;
+    private readonly pendingTimers = new Map<string, NodeJS.Timeout>();
+    private readonly pendingPromises = new Map<string, Promise<void>>();
+
     constructor(
         @inject(delay(() => VapiClient)) private readonly vapiClient: VapiClient,
         @inject("ICompanyRepository") private readonly companyRepository: ICompanyRepository,
@@ -19,6 +23,35 @@ export class AssistantSyncService {
     ) {}
 
     public async syncCompanyAssistant(companyId: bigint): Promise<void> {
+        const key = companyId.toString();
+
+        // Coalesce rapid-fire calls per company into a single sync.
+        const existing = this.pendingPromises.get(key);
+        if (existing) {
+            return existing;
+        }
+
+        const promise = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(async () => {
+                this.pendingTimers.delete(key);
+                try {
+                    await this.performSync(companyId);
+                    this.pendingPromises.delete(key);
+                    resolve();
+                } catch (error) {
+                    this.pendingPromises.delete(key);
+                    reject(error);
+                }
+            }, this.debounceMs);
+
+            this.pendingTimers.set(key, timer);
+        });
+
+        this.pendingPromises.set(key, promise);
+        return promise;
+    }
+
+    private async performSync(companyId: bigint): Promise<void> {
         try {
             const config = await this.buildConfig(companyId);
             if (!config) {

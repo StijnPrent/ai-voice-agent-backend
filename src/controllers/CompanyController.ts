@@ -89,7 +89,7 @@ export class CompanyController {
     // ---------- Authentication ----------
     public async registerCompany(req: Request, res: Response): Promise<void> {
         try {
-            const { companyName, contactName, email, password, accessCode } = req.body ?? {};
+            const { companyName, contactName, email, password, accessCode, useType } = req.body ?? {};
 
             if (!companyName || !email || !password) {
                 res.status(400).json({ message: "companyName, email, and password are required." });
@@ -102,6 +102,7 @@ export class CompanyController {
                 email: String(email),
                 password: String(password),
                 accessCode: accessCode ? String(accessCode) : undefined,
+                useType: typeof useType === "string" ? useType : undefined,
             });
 
             res.status(200).json({ message: "Registration successful." });
@@ -122,12 +123,12 @@ export class CompanyController {
                 return;
             }
 
-            const token = await this.service.login(String(email), String(password));
-            if (!token) {
+            const result = await this.service.login(String(email), String(password));
+            if (!result) {
                 res.status(401).json({ message: "Invalid email or password." });
                 return;
             }
-            res.json({ token });
+            res.json({ token: result.token, useType: result.useType });
         } catch (err) {
             if (err instanceof EmailNotVerifiedError) {
                 res.status(403).json({ code: err.code, message: err.message });
