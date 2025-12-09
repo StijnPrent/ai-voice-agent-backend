@@ -22,7 +22,6 @@ export interface ISchedulingRepository {
     updateStaffMember(model: StaffMemberModel): Promise<void>;
     deleteStaffMember(companyId: bigint, staffId: number): Promise<void>;
     fetchStaffMembers(companyId: bigint): Promise<StaffMemberModel[]>;
-    updateStaffPhorestId(companyId: bigint, staffId: number, phorestStaffId: string | null): Promise<void>;
 
     /* ------------------------------ Specialties ------------------------------- */
     setStaffSpecialtiesFromModels(staffId: number, specialties: SpecialtyModel[]): Promise<void>;

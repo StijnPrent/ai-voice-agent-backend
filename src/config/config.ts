@@ -55,8 +55,20 @@ interface Config {
     resendFrom?: string;
     resendReplyTo?: string;
 
-    // Phorest
-    phorestBaseUrl?: string;
+    // Shopify
+    shopifyClientId?: string;
+    shopifyClientSecret?: string;
+    shopifyRedirectUri?: string;
+    shopifyScopes?: string;
+    shopifyApiVersion?: string;
+
+    // WooCommerce
+    wooDefaultVersion?: string;
+
+    // Billing / Mollie
+    mollieApiKey?: string;
+    mollieWebhookUrl?: string;
+    mollieRedirectUrl?: string;
 }
 
 const config: Config = {
@@ -102,7 +114,17 @@ const config: Config = {
     resendFrom: process.env.RESEND_FROM || process.env.SES_FROM || "info@callingbird.nl",
     resendReplyTo: process.env.RESEND_REPLY_TO,
 
-    phorestBaseUrl: process.env.PHOREST_BASE_URL,
+    shopifyClientId: process.env.SHOPIFY_CLIENT_ID,
+    shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET,
+    shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI,
+    shopifyScopes: process.env.SHOPIFY_SCOPES,
+    shopifyApiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
+
+    wooDefaultVersion: process.env.WOOCOMMERCE_API_VERSION || "wc/v3",
+
+    mollieApiKey: process.env.MOLLIE_API_KEY,
+    mollieWebhookUrl: process.env.MOLLIE_WEBHOOK_URL,
+    mollieRedirectUrl: process.env.MOLLIE_REDIRECT_URL,
 };
 
 // Validate critical values

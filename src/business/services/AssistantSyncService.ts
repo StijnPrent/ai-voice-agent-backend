@@ -85,18 +85,27 @@ export class AssistantSyncService {
             this.companyRepository.fetchCompanyCallers(companyId),
         ]);
 
-        const [appointmentTypes, staffMembers, calendarStatus] = await Promise.all([
+        const [appointmentTypes, staffMembers, calendarStatus, commerce] = await Promise.all([
             this.schedulingRepository.fetchAppointmentTypes(companyId),
             this.schedulingRepository.fetchStaffMembers(companyId),
             this.integrationService.getCalendarIntegrationStatus(companyId),
+            this.integrationService.getCommerceConnections(companyId),
         ]);
         const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
         const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
+        const commerceStores: Array<"shopify" | "woocommerce"> = [];
+        if (commerce.shopify) commerceStores.push("shopify");
+        if (commerce.woocommerce) commerceStores.push("woocommerce");
+        console.log(
+            `[AssistantSyncService] commerce connections for ${companyId.toString()}:`,
+            commerceStores.length ? commerceStores.join(",") : "none"
+        );
 
         return {
             company,
             hasGoogleIntegration,
             calendarProvider,
+            commerceStores,
             replyStyle,
             companyContext: {
                 details,
@@ -109,6 +118,7 @@ export class AssistantSyncService {
                 appointmentTypes,
                 staffMembers,
             },
+            productCatalog: [],
             voiceSettings,
         };
     }
