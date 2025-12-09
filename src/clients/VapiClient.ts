@@ -279,9 +279,9 @@ export class VapiClient {
     @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService,
     @inject(VapiSessionRegistry)
     private readonly sessionRegistry: VapiSessionRegistry = {
-      registerSession: async () => {},
+      registerSession: async () => { },
       findSession: async () => null,
-      clearSessionForCallId: async () => {},
+      clearSessionForCallId: async () => { },
     } as any,
     @inject(ShopifyService) private readonly shopifyService: ShopifyService = {} as any,
     @inject(WooCommerceService) private readonly wooService: WooCommerceService = {} as any,
@@ -655,12 +655,25 @@ export class VapiClient {
       'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
       'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
       'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
+      'Je bent een meertalige AI-telefonist.',
+      '- Detecteer automatisch in welke taal de beller spreekt.',
+      '- Als de beller Nederlands spreekt, antwoord dan volledig in het Nederlands.',
+      '- Als de beller Engels spreekt, antwoord dan volledig in het Engels.',
+      '- Schakel direct van taal wanneer de beller van taal verandert.',
+      '- Meng nooit meerdere talen in één antwoord.',
+
+      'Je tekstoutput moet altijd in dezelfde taal zijn als de beller.',
+
+      'Je TTS-stem is in één taal geconfigureerd, maar je mag in elke taal antwoorden; het systeem zal dit automatisch naar spraak omzetten.'
     ];
 
     const hasCommerce = (effectiveConfig.commerceStores?.length ?? 0) > 0;
     const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog);
     if (productInstruction) {
       instructions.push(productInstruction);
+      instructions.push(
+        'Gebruik productinformatie primair als handleiding/troubleshooting. Als het antwoord niet in de gids staat of onzeker is, geef dat eerlijk aan en bied direct aan om door te verbinden naar een medewerker.',
+      );
     }
 
     if (effectiveConfig.hasGoogleIntegration) {
@@ -728,9 +741,9 @@ export class VapiClient {
     }
 
     return [
-      'Productcatalogus (gebruik altijd de juiste productId):',
+      'Productcatalogus (interne kennisbank voor aftercare/handleidingen/troubleshooting; NIET de webshop-inventory. Gebruik alleen deze productId’s):',
       ...formatted,
-      `Gebruik altijd de tool '${TOOL_NAMES.fetchProductInfo}' om productinformatie op te halen voordat je een antwoord geeft. Als een product niet in de lijst staat of je geen data hebt, zeg eerlijk dat je het niet weet en stel voor om door te verbinden.`,
+      `Gebruik altijd de tool '${TOOL_NAMES.fetchProductInfo}' om kennisbank-informatie op te halen voordat je een antwoord geeft. Als een product niet in de lijst staat, of de gids het antwoord niet bevat, zeg eerlijk dat je het niet weet en stel voor om door te verbinden.`,
     ].join('\n');
   }
 
@@ -1014,7 +1027,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.fetchProductInfo,
           description:
-            'Haal productinformatie, FAQ en policies op uit de kennisbank van het huidige bedrijf. Gebruik altijd de productId uit de productlijst.',
+            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik alleen de productId uit de kennisbanklijst. Als je het antwoord niet vindt in de gids, geef dat eerlijk aan en stel voor om door te verbinden.',
           parameters: {
             type: 'object',
             properties: {
@@ -2353,6 +2366,7 @@ export class VapiClient {
           console.error(`[VapiClient] 🧾 order status lookup failed`, { storeId, orderId, error });
           throw error;
         }
+      },
       [TOOL_NAMES.fetchProductInfo]: async () => {
         const productIdRaw = this.normalizeStringArg(args['productId']);
         if (!productIdRaw) {
@@ -3258,7 +3272,7 @@ export class VapiClient {
 
     const payload: Record<string, unknown> = {
       name: this.getAssistantName(config),
-      transcriber: { provider: 'deepgram', language: 'nl' },
+      transcriber: { provider: 'deepgram', language: 'multi' },
       model: {
         provider: this.modelProvider,
         model: this.modelName,

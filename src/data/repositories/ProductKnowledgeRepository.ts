@@ -138,7 +138,7 @@ export class ProductKnowledgeRepository extends BaseRepository implements IProdu
             INSERT INTO company_products
                 (company_id, name, sku, summary, status, synonyms_json, content_json, version, source, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 1, ?, NOW(), NOW())
+                (?, ?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())
         `;
         const synonyms = JSON.stringify(payload.synonyms ?? []);
         const content = JSON.stringify(payload.content ?? {});
@@ -174,8 +174,8 @@ export class ProductKnowledgeRepository extends BaseRepository implements IProdu
                 sku = ?,
                 summary = ?,
                 status = ?,
-                synonyms_json = CAST(? AS JSON),
-                content_json = CAST(? AS JSON),
+                synonyms_json = ?,
+                content_json = ?,
                 version = version + 1,
                 source = ?,
                 updated_at = NOW()

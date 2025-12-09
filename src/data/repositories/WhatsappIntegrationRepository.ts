@@ -5,6 +5,7 @@ import {
     UpsertWhatsappIntegrationInput,
     WhatsappIntegrationRecord,
 } from "../interfaces/IWhatsappIntegrationRepository";
+import { encrypt, decrypt } from "../../utils/crypto";
 
 export class WhatsappIntegrationRepository
     extends BaseRepository
@@ -22,8 +23,12 @@ export class WhatsappIntegrationRepository
                 company_id BIGINT NOT NULL PRIMARY KEY,
                 business_account_id VARCHAR(64) NOT NULL,
                 phone_number_id VARCHAR(64) NOT NULL,
-                access_token TEXT NOT NULL,
-                verify_token VARCHAR(191) NULL,
+                encrypted_access_token LONGTEXT NOT NULL,
+                access_iv VARCHAR(48) NOT NULL,
+                access_tag VARCHAR(48) NOT NULL,
+                encrypted_verify_token LONGTEXT NULL,
+                verify_iv VARCHAR(48) NULL,
+                verify_tag VARCHAR(48) NULL,
                 status VARCHAR(32) NOT NULL DEFAULT 'active',
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -43,28 +48,42 @@ export class WhatsappIntegrationRepository
                 company_id,
                 business_account_id,
                 phone_number_id,
-                access_token,
-                verify_token,
+                encrypted_access_token,
+                access_iv,
+                access_tag,
+                encrypted_verify_token,
+                verify_iv,
+                verify_tag,
                 status,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
             ON DUPLICATE KEY UPDATE
                 business_account_id = VALUES(business_account_id),
                 phone_number_id     = VALUES(phone_number_id),
-                access_token        = VALUES(access_token),
-                verify_token        = VALUES(verify_token),
+                encrypted_access_token = VALUES(encrypted_access_token),
+                access_iv           = VALUES(access_iv),
+                access_tag          = VALUES(access_tag),
+                encrypted_verify_token = VALUES(encrypted_verify_token),
+                verify_iv           = VALUES(verify_iv),
+                verify_tag          = VALUES(verify_tag),
                 status              = VALUES(status),
                 updated_at          = NOW();
         `;
 
         const status = input.status ?? "active";
+        const access = encrypt(input.accessToken);
+        const verify = input.verifyToken ? encrypt(input.verifyToken) : null;
         await this.pool.query(sql, [
             input.companyId.toString(),
             input.businessAccountId,
             input.phoneNumberId,
-            input.accessToken,
-            input.verifyToken ?? null,
+            access.data,
+            access.iv,
+            access.tag,
+            verify?.data ?? null,
+            verify?.iv ?? null,
+            verify?.tag ?? null,
             status,
         ]);
     }
@@ -77,8 +96,12 @@ export class WhatsappIntegrationRepository
                 company_id        AS companyId,
                 business_account_id AS businessAccountId,
                 phone_number_id   AS phoneNumberId,
-                access_token      AS accessToken,
-                verify_token      AS verifyToken,
+                encrypted_access_token AS encryptedAccessToken,
+                access_iv         AS accessIv,
+                access_tag        AS accessTag,
+                encrypted_verify_token AS encryptedVerifyToken,
+                verify_iv         AS verifyIv,
+                verify_tag        AS verifyTag,
                 status            AS status,
                 created_at        AS createdAt,
                 updated_at        AS updatedAt
@@ -102,8 +125,12 @@ export class WhatsappIntegrationRepository
                 company_id        AS companyId,
                 business_account_id AS businessAccountId,
                 phone_number_id   AS phoneNumberId,
-                access_token      AS accessToken,
-                verify_token      AS verifyToken,
+                encrypted_access_token AS encryptedAccessToken,
+                access_iv         AS accessIv,
+                access_tag        AS accessTag,
+                encrypted_verify_token AS encryptedVerifyToken,
+                verify_iv         AS verifyIv,
+                verify_tag        AS verifyTag,
                 status            AS status,
                 created_at        AS createdAt,
                 updated_at        AS updatedAt
@@ -120,15 +147,30 @@ export class WhatsappIntegrationRepository
     }
 
     private mapRow(row: RowDataPacket): WhatsappIntegrationRecord {
+        const accessToken = this.safeDecrypt(String(row.encryptedAccessToken), String(row.accessIv), String(row.accessTag));
+        const verifyToken =
+            row.encryptedVerifyToken && row.verifyIv && row.verifyTag
+                ? this.safeDecrypt(String(row.encryptedVerifyToken), String(row.verifyIv), String(row.verifyTag))
+                : null;
+
         return {
             companyId: BigInt(row.companyId),
             businessAccountId: String(row.businessAccountId),
             phoneNumberId: String(row.phoneNumberId),
-            accessToken: String(row.accessToken),
-            verifyToken: row.verifyToken ? String(row.verifyToken) : null,
+            accessToken,
+            verifyToken,
             status: (row.status as "active" | "disabled") ?? "active",
             createdAt: row.createdAt instanceof Date ? row.createdAt : null,
             updatedAt: row.updatedAt instanceof Date ? row.updatedAt : null,
         };
+    }
+
+    private safeDecrypt(data: string, iv: string, tag: string): string {
+        try {
+            return decrypt(data, iv, tag);
+        } catch (error) {
+            console.error("[WhatsappIntegrationRepository] Failed to decrypt token", error);
+            return "";
+        }
     }
 }
