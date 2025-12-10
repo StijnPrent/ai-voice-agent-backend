@@ -11,6 +11,7 @@ import { SchedulingService } from "./SchedulingService";
 import { UsageService } from "./UsageService";
 import { CallLogService } from "./CallLogService";
 import { TwilioClient } from "../../clients/TwilioClient";
+import { ProductKnowledgeService } from "./ProductKnowledgeService";
 
 const SPEECH_ENERGY_THRESHOLD = 325;
 const SILENCE_ENERGY_THRESHOLD = 175;
@@ -86,13 +87,14 @@ export class VoiceService {
     private stopping = false;
 
     constructor(
-        @inject(VapiClient) private readonly vapiClient: VapiClient,
-        @inject(CompanyService) private readonly companyService: CompanyService,
-        @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
-        @inject(IntegrationService) private readonly integrationService: IntegrationService,
-        @inject(SchedulingService) private readonly schedulingService: SchedulingService,
-        @inject(UsageService) private readonly usageService: UsageService,
-        @inject(CallLogService) private readonly callLogService: CallLogService,
+    @inject(VapiClient) private readonly vapiClient: VapiClient,
+    @inject(CompanyService) private readonly companyService: CompanyService,
+    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService,
+    @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
+    @inject(IntegrationService) private readonly integrationService: IntegrationService,
+    @inject(SchedulingService) private readonly schedulingService: SchedulingService,
+    @inject(UsageService) private readonly usageService: UsageService,
+    @inject(CallLogService) private readonly callLogService: CallLogService,
         @inject("TwilioClient") private readonly twilioClient: TwilioClient
     ) {}
 
@@ -208,6 +210,51 @@ export class VoiceService {
             const calendarStatus = await this.integrationService.getCalendarIntegrationStatus(company.id);
             const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
             const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
+            console.log("[VoiceService] fetching commerce connections for", company.id.toString());
+            const commerce = await this.integrationService.getCommerceConnections(company.id);
+            let commerceStores: Array<"shopify" | "woocommerce"> = [];
+            if (commerce.shopify) commerceStores.push("shopify");
+            if (commerce.woocommerce) commerceStores.push("woocommerce");
+
+            if (commerceStores.length === 0) {
+                const integrations = await this.integrationService.getAllWithStatus(company.id);
+                console.log("[VoiceService] fallback integration scan for commerce", integrations.map(i => ({ name: i.name, status: i.status })));
+                commerceStores = integrations
+                    .filter((i) => i.status === "connected")
+                    .map((i) => {
+                        const name = i.name.toLowerCase();
+                        if (name.includes("shopify")) return "shopify";
+                        if (name.includes("woo")) return "woocommerce";
+                        return null;
+                    })
+                    .filter((v): v is "shopify" | "woocommerce" => Boolean(v));
+            }
+            let productCatalog: Array<{
+                id: string;
+                name: string;
+                sku?: string | null;
+                summary?: string | null;
+                synonyms?: string[];
+                status: string;
+                version?: number;
+                updatedAt?: string;
+            }> = [];
+
+            try {
+                const products = await this.productKnowledgeService.listCatalog(company.id, "published");
+                productCatalog = products.map((product) => ({
+                    id: product.id.toString(),
+                    name: product.name,
+                    sku: product.sku,
+                    summary: product.summary ?? product.content.summary ?? null,
+                    synonyms: product.synonyms,
+                    status: product.status,
+                    version: product.version,
+                    updatedAt: product.updatedAt.toISOString(),
+                }));
+            } catch (error) {
+                console.error(`[${callSid}] Failed to load product catalog`, error);
+            }
 
             if (!company.assistantEnabled) {
                 console.warn(
@@ -248,7 +295,9 @@ export class VoiceService {
                 replyStyle,
                 companyContext,
                 schedulingContext,
-                this.voiceSettings
+                productCatalog,
+                this.voiceSettings,
+                commerceStores
             );
 
             if (this.ws?.readyState === WebSocket.OPEN) {

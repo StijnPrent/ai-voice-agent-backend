@@ -316,7 +316,6 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
                     typeof r.google_calendar_summary === "string" && r.google_calendar_summary.trim().length > 0
                         ? r.google_calendar_summary.trim()
                         : null,
-                    null,
                     r.created_at,
                     r.updated_at
                 );

@@ -131,12 +131,10 @@ export class SchedulingService {
         role: string,
         availability: StaffAvailabilityModel[],
         googleCalendarId?: string | null,
-        googleCalendarSummary?: string | null,
-        phorestStaffId?: string | null
+        googleCalendarSummary?: string | null
     ): Promise<number> {
         const calendarId = this.normalizeCalendarField(googleCalendarId);
         const calendarSummary = this.normalizeCalendarField(googleCalendarSummary);
-        const phorestId = this.normalizeCalendarField(phorestStaffId);
         const staffMember = new StaffMemberModel(
             0,
             companyId,
@@ -145,8 +143,7 @@ export class SchedulingService {
             role,
             availability,
             calendarId,
-            calendarSummary,
-            phorestId
+            calendarSummary
         );
         const id = await this.schedulingRepo.addStaffMember(staffMember);
         await this.assistantSyncService.syncCompanyAssistant(companyId);
@@ -162,8 +159,7 @@ export class SchedulingService {
             staffMember.role,
             staffMember.availability,
             this.normalizeCalendarField(staffMember.googleCalendarId),
-            this.normalizeCalendarField(staffMember.googleCalendarSummary),
-            this.normalizeCalendarField(staffMember.phorestStaffId)
+            this.normalizeCalendarField(staffMember.googleCalendarSummary)
         );
         await this.schedulingRepo.updateStaffMember(normalized);
         await this.assistantSyncService.syncCompanyAssistant(staffMember.companyId);
@@ -182,11 +178,6 @@ export class SchedulingService {
             appointmentTypes,
             staffMembers,
         };
-    }
-
-    public async assignPhorestStaffId(companyId: bigint, staffMemberId: number, phorestStaffId: string | null): Promise<void> {
-        await this.schedulingRepo.updateStaffPhorestId(companyId, staffMemberId, this.normalizeCalendarField(phorestStaffId));
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
     }
 
     private async resolveCategoryId(

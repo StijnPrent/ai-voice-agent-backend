@@ -20,6 +20,11 @@ export interface IUsageRepository {
     ): Promise<void>;
 
     /**
+     * Fetch usage (in seconds) between two dates (inclusive start, exclusive end).
+     */
+    getUsageBetween(companyId: bigint, start: Date, end: Date): Promise<number>;
+
+    /**
      * Fetch the aggregated usage (in seconds) for a given month.
      */
     getUsageForMonth(companyId: bigint, year: number, month: number): Promise<number>;

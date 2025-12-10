@@ -7,6 +7,8 @@ export class IntegrationModel {
     private _status: 'connected' | 'disconnected' | 'error'
     private _lastSync: string | null
     private _updatedAt: string | null
+    private _connectUrl?: string | null
+    private _connectMethod?: string | null
     
     constructor(
         integrationId: number,
@@ -16,7 +18,9 @@ export class IntegrationModel {
         logo: string,
         status: 'connected' | 'disconnected' | 'error',
         lastSync: string | null = null,
-        updatedAt: string | null = null
+        updatedAt: string | null = null,
+        connectUrl?: string | null,
+        connectMethod?: string | null
     ) {
         this._integrationId = integrationId;
         this._name = name;
@@ -26,6 +30,8 @@ export class IntegrationModel {
         this._status = status;
         this._lastSync = lastSync;
         this._updatedAt = updatedAt;
+        this._connectUrl = connectUrl ?? null;
+        this._connectMethod = connectMethod ?? null;
     }
 
     public toJSON(): Record<string, any> {
@@ -37,7 +43,9 @@ export class IntegrationModel {
             logo: this._logo,
             status: this._status,
             lastSync: this._lastSync,
-            updatedAt: this._updatedAt
+            updatedAt: this._updatedAt,
+            connectUrl: this._connectUrl,
+            connectMethod: this._connectMethod,
         };
     }
 

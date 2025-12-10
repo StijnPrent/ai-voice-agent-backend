@@ -18,7 +18,6 @@ import { CompanyService } from '../business/services/CompanyService';
 import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvailabilityWindow } from '../business/services/GoogleService';
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
-import { PhorestService } from '../business/services/PhorestService';
 import type { CalendarProvider } from '../business/services/IntegrationService';
 
 type CompanyContext = {
@@ -85,15 +84,27 @@ type CompanySnapshot = {
   callers?: { name: string; phoneNumber: string }[];
 };
 
+type ProductSnapshot = {
+  id: string;
+  name: string;
+  sku?: string | null;
+  summary?: string | null;
+  synonyms?: string[];
+  status: string;
+  version?: number;
+  updatedAt?: string;
+};
+
 export type VapiAssistantConfig = {
   company: CompanyModel;
   hasGoogleIntegration: boolean;
   calendarProvider: CalendarProvider | null;
-  commerceStores?: string[] | null;
+  commerceStores?: Array<'shopify' | 'woocommerce'> | null;
   replyStyle: ReplyStyleModel;
   companyContext: CompanyContext;
   schedulingContext: SchedulingContext;
   voiceSettings: VoiceSettingModel;
+  productCatalog?: ProductSnapshot[];
 };
 
 export type VapiRealtimeCallbacks = {
@@ -159,6 +170,8 @@ const TOOL_NAMES = {
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
   checkGoogleCalendarAvailability: 'check_google_calendar_availability',
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
+  getProductDetailsByName: 'get_product_details_by_name',
+  getOrderStatus: 'get_order_status',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -172,6 +185,8 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.scheduleGoogleCalendarEvent,
   TOOL_NAMES.checkGoogleCalendarAvailability,
   TOOL_NAMES.cancelGoogleCalendarEvent,
+  TOOL_NAMES.getProductDetailsByName,
+  TOOL_NAMES.getOrderStatus,
 ]);
 
 class VapiRealtimeSession {
@@ -255,9 +270,13 @@ export class VapiClient {
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
-    @inject(PhorestService) private readonly phorestService: PhorestService,
-    @inject(delay(() => CompanyService)) private readonly companyService: CompanyService,
-    @inject(VapiSessionRegistry) private readonly sessionRegistry: VapiSessionRegistry,
+    @inject(delay(() => CompanyService)) private readonly companyService: CompanyService = {} as any,
+    @inject(VapiSessionRegistry)
+    private readonly sessionRegistry: VapiSessionRegistry = {
+      registerSession: async () => {},
+      findSession: async () => null,
+      clearSessionForCallId: async () => {},
+    } as any,
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
@@ -318,8 +337,24 @@ export class VapiClient {
     replyStyle: ReplyStyleModel,
     context: CompanyContext,
     schedulingContext: SchedulingContext,
-    voiceSettings: VoiceSettingModel,
+    productCatalogOrVoice: ProductSnapshot[] | VoiceSettingModel,
+    voiceSettingsOrCommerce?: VoiceSettingModel | Array<'shopify' | 'woocommerce'>,
+    commerceStoresArg: Array<'shopify' | 'woocommerce'> = [],
   ) {
+    const productCatalog: ProductSnapshot[] = Array.isArray(productCatalogOrVoice)
+      ? productCatalogOrVoice
+      : [];
+    const voiceSettings: VoiceSettingModel = Array.isArray(productCatalogOrVoice)
+      ? (voiceSettingsOrCommerce as VoiceSettingModel)
+      : (productCatalogOrVoice as VoiceSettingModel);
+    const commerceStores: Array<'shopify' | 'woocommerce'> = Array.isArray(voiceSettingsOrCommerce)
+      ? voiceSettingsOrCommerce
+      : commerceStoresArg;
+
+    if (!voiceSettings) {
+      throw new Error('[VapiClient] voiceSettings are required when setting company info.');
+    }
+
     const config: VapiAssistantConfig = {
       company,
       hasGoogleIntegration,
@@ -328,6 +363,8 @@ export class VapiClient {
       companyContext: context,
       schedulingContext,
       voiceSettings,
+      productCatalog,
+      commerceStores,
     };
 
     this.sessionConfigs.set(callSid, config);
@@ -624,6 +661,7 @@ export class VapiClient {
       'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
       'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
       'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
+      'Als er wordt gevraagd om doorverbonden te worden, gebruik altijd het bedrijfsnummer zonder naar een specifieke medewerker of afdeling te vragen.',
     ];
 
     if (effectiveConfig.hasGoogleIntegration) {
@@ -632,9 +670,9 @@ export class VapiClient {
         `BELANGRIJK: Voor afspraken gebruik je de agenda-tools (${calendarProviderName}), NIET de transfer_call tool.`,
         'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
         'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
-        'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agendaÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬â€œs voor beschikbaarheid en boekingen.',
+        'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agenda voor beschikbaarheid en boekingen.',
         'Als er meerdere afspraaktypes beschikbaar zijn, vraag de beller altijd om een keuze. Geef eventueel suggesties op basis van wat de beller zegt, maar gebruik uitsluitend afspraaktypes die in het systeem staan.',
-        'Vraagt iemand naar een medewerker die niet in het systeem staat? Leg uit dat die persoon daar niet werkt en bied aan om verder te helpen met de medewerkers die wÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒâ€šÃ‚Â®l beschikbaar zijn.',
+        'Vraagt iemand naar een medewerker die niet in het systeem staat? Leg uit dat die persoon daar niet werkt en bied aan om verder te helpen met de medewerkers die beschikbaar zijn.',
       );
     } else {
       instructions.push(
@@ -810,14 +848,14 @@ export class VapiClient {
   public getTools(
     hasGoogleIntegration?: boolean,
     calendarProvider?: CalendarProvider | null,
-    _commerceStores?: string[],
+    commerceStores: Array<'shopify' | 'woocommerce'> = [],
   ) {
     const enabled = Boolean(hasGoogleIntegration);
     const provider: CalendarProvider | null = calendarProvider ?? (enabled ? 'google' : null);
     const providerName = this.getCalendarProviderName(provider);
     const agendaLabel = provider ? `${providerName} agenda` : 'agenda';
     console.log(
-      `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âls builder - calendar integration enabled: ${enabled} (${providerName})`,
+      `[VapiClient] tools builder - calendar integration enabled: ${enabled} (${providerName})`,
     );
 
     const tools: any[] = [
@@ -847,6 +885,64 @@ export class VapiClient {
         },
       },
     ];
+
+    if (commerceStores.length > 0) {
+      const storeEnum = commerceStores;
+      tools.push(
+        {
+          type: 'function',
+          function: {
+            name: TOOL_NAMES.getProductDetailsByName,
+            description:
+              'Zoek productdetails op voor een gekoppelde webshop met een herkenbare productnaam. Kies storeId uit de beschikbare winkels.',
+            parameters: {
+              type: 'object',
+              properties: {
+                storeId: {
+                  type: 'string',
+                  enum: storeEnum,
+                  description: 'De gekoppelde winkel.',
+                },
+                productName: {
+                  type: 'string',
+                  description: 'De productnaam zoals de beller die noemt (fuzzy matching).',
+                },
+              },
+              required: ['storeId', 'productName'],
+            },
+          },
+          server: {
+            url: `${this.toolBaseUrl}/vapi/tools`,
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: TOOL_NAMES.getOrderStatus,
+            description:
+              'Haal de orderstatus op van een gekoppelde webshop aan de hand van het orderId dat de beller geeft.',
+            parameters: {
+              type: 'object',
+              properties: {
+                storeId: {
+                  type: 'string',
+                  enum: storeEnum,
+                  description: 'De gekoppelde winkel.',
+                },
+                orderId: {
+                  type: 'string',
+                  description: 'Ordernummer dat door de beller is genoemd.',
+                },
+              },
+              required: ['storeId', 'orderId'],
+            },
+          },
+          server: {
+            url: `${this.toolBaseUrl}/vapi/tools`,
+          },
+        },
+      );
+    }
 
     const createCalendarParameters = {
       type: 'object',
@@ -3168,6 +3264,7 @@ export class VapiClient {
 }
 
 export type { VapiRealtimeSession };
+
 
 
 
