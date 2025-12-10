@@ -19,6 +19,9 @@ import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvaila
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
 import type { CalendarProvider } from '../business/services/IntegrationService';
+import { ProductKnowledgeService } from '../business/services/ProductKnowledgeService';
+import { ShopifyService } from '../business/services/ShopifyService';
+import { WooCommerceService } from '../business/services/WooCommerceService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -172,6 +175,7 @@ const TOOL_NAMES = {
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
   getProductDetailsByName: 'get_product_details_by_name',
   getOrderStatus: 'get_order_status',
+  fetchProductInfo: 'fetch_product_info',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -187,6 +191,7 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.cancelGoogleCalendarEvent,
   TOOL_NAMES.getProductDetailsByName,
   TOOL_NAMES.getOrderStatus,
+  TOOL_NAMES.fetchProductInfo,
 ]);
 
 class VapiRealtimeSession {
@@ -271,12 +276,15 @@ export class VapiClient {
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService = {} as any,
+    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService = {} as any,
     @inject(VapiSessionRegistry)
     private readonly sessionRegistry: VapiSessionRegistry = {
       registerSession: async () => { },
       findSession: async () => null,
       clearSessionForCallId: async () => { },
     } as any,
+    @inject(ShopifyService) private readonly shopifyService: ShopifyService = {} as any,
+    @inject(WooCommerceService) private readonly wooService: WooCommerceService = {} as any,
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
@@ -675,7 +683,7 @@ export class VapiClient {
     ];
 
     const hasCommerce = (effectiveConfig.commerceStores?.length ?? 0) > 0;
-    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog);
+    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog ?? []);
     if (productInstruction) {
       instructions.push(productInstruction);
       instructions.push(
@@ -721,7 +729,7 @@ export class VapiClient {
     return this.buildModelMessages(instructions, companyContext, effectiveConfig);
   }
 
-  private buildProductInstruction(products: ProductSnapshot[]): string | null {
+  private buildProductInstruction(products?: ProductSnapshot[]): string | null {
     if (!products || products.length === 0) {
       return null;
     }
@@ -1854,12 +1862,16 @@ export class VapiClient {
 
   private async executeToolCall(
     call: NormalizedToolCall,
-    context: {
-      session?: VapiRealtimeSession | null;
-      callbacks?: VapiRealtimeCallbacks | null;
-      callSid?: string | null;
-      config?: VapiAssistantConfig | null;
-    },
+    contextOrSession?:
+      | {
+          session?: VapiRealtimeSession | null;
+          callbacks?: VapiRealtimeCallbacks | null;
+          callSid?: string | null;
+          config?: VapiAssistantConfig | null;
+        }
+      | VapiRealtimeSession
+      | null,
+    callbacksParam?: VapiRealtimeCallbacks | null,
   ): Promise<unknown> {
     console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âº === EXECUTING TOOL CALL ===`);
     console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl ID: ${call.id}`);
@@ -1881,11 +1893,30 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    const sessionRef = context.session ?? null;
-    const callbacks = context.callbacks ?? null;
+    let sessionRef: VapiRealtimeSession | null = null;
+    let callbacks: VapiRealtimeCallbacks | null = null;
+    let explicitCallSid: string | null | undefined;
+    let explicitConfig: VapiAssistantConfig | null | undefined;
+
+    if (contextOrSession && typeof (contextOrSession as any).session !== 'undefined') {
+      const ctx = contextOrSession as {
+        session?: VapiRealtimeSession | null;
+        callbacks?: VapiRealtimeCallbacks | null;
+        callSid?: string | null;
+        config?: VapiAssistantConfig | null;
+      };
+      sessionRef = ctx.session ?? null;
+      callbacks = ctx.callbacks ?? null;
+      explicitCallSid = ctx.callSid;
+      explicitConfig = ctx.config ?? null;
+    } else {
+      sessionRef = (contextOrSession as VapiRealtimeSession) ?? null;
+      callbacks = callbacksParam ?? null;
+    }
+
     const sessionContext = sessionRef ? this.sessionContexts.get(sessionRef) ?? null : null;
-    const callSidForConfig = context.callSid ?? sessionContext?.callSid ?? null;
-    const config = context.config ?? this.getConfigForCall(callSidForConfig);
+    const callSidForConfig = explicitCallSid ?? sessionContext?.callSid ?? null;
+    const config = explicitConfig ?? this.getConfigForCall(callSidForConfig);
 
     let finalPayload: unknown = null;
     let payloadWasSet = false;
@@ -2235,10 +2266,6 @@ export class VapiClient {
 
         return sendSuccess({
           event: created,
-          calendarId: selectedCalendarId ?? null,
-          staffMemberId: assignedStaff?.id ?? null,
-          staffMemberName: assignedStaff?.name ?? null,
-          calendarIdsQueried: candidateCalendarIds,
         });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
@@ -2269,13 +2296,22 @@ export class VapiClient {
         }
 
         console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âling GoogleService.cancelEvent...`);
-        await this.googleService.cancelEvent(
-          companyId,
-          start,
-          phoneNumber,
-          name ?? undefined,
-          { calendarIds: calendarIdsToQuery ?? undefined },
-        );
+        if (calendarIdsToQuery && calendarIdsToQuery.length > 0) {
+          await this.googleService.cancelEvent(
+            companyId,
+            start,
+            phoneNumber,
+            name ?? undefined,
+            { calendarIds: calendarIdsToQuery },
+          );
+        } else {
+          await this.googleService.cancelEvent(
+            companyId,
+            start,
+            phoneNumber,
+            name ?? undefined,
+          );
+        }
         console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt cancelled`);
 
         if (sessionRef) {
@@ -2488,13 +2524,20 @@ export class VapiClient {
 
     const startedAt = Date.now();
     const availabilityPromise = (async () => {
-      const availability = await this.googleService.getAvailableSlots(
-        companyId,
-        date,
-        openHour,
-        closeHour,
-        { calendarIds: uniqueOrderedIds ?? undefined },
-      );
+      const availability = uniqueOrderedIds && uniqueOrderedIds.length > 0
+        ? await this.googleService.getAvailableSlots(
+            companyId,
+            date,
+            openHour,
+            closeHour,
+            { calendarIds: uniqueOrderedIds },
+          )
+        : await this.googleService.getAvailableSlots(
+            companyId,
+            date,
+            openHour,
+            closeHour,
+          );
 
       const perCalendarRanges: Record<string, AvailableRange[]> = {};
       const calendarEntries = availability.calendars ?? [];
@@ -3075,6 +3118,19 @@ export class VapiClient {
       return trimmed.length > 0 ? trimmed : null;
     }
     return null;
+  }
+
+  private normalizeStoreId(value: unknown): 'shopify' | 'woocommerce' | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'shopify' || normalized === 'woocommerce') {
+      return normalized;
+    }
+    return null;
+  }
+
+  private resolveCommerceService(storeId: 'shopify' | 'woocommerce') {
+    return storeId === 'shopify' ? this.shopifyService : this.wooService;
   }
 
   private getEffectiveCalendarProvider(config: VapiAssistantConfig): CalendarProvider | null {
