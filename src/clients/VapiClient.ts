@@ -108,6 +108,7 @@ export type VapiAssistantConfig = {
   schedulingContext: SchedulingContext;
   voiceSettings: VoiceSettingModel;
   productCatalog?: ProductSnapshot[];
+  customInstructions?: string[];
 };
 
 export type VapiRealtimeCallbacks = {
@@ -168,6 +169,64 @@ const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) 
   }
 };
 
+const dutchUnits = [
+  'nul',
+  'een',
+  'twee',
+  'drie',
+  'vier',
+  'vijf',
+  'zes',
+  'zeven',
+  'acht',
+  'negen',
+  'tien',
+  'elf',
+  'twaalf',
+  'dertien',
+  'veertien',
+  'vijftien',
+  'zestien',
+  'zeventien',
+  'achttien',
+  'negentien',
+];
+
+const dutchTens = ['', '', 'twintig', 'dertig', 'veertig', 'vijftig', 'zestig', 'zeventig', 'tachtig', 'negentig'];
+
+const numberToDutchWords = (value: number): string => {
+  if (!Number.isFinite(value) || value < 0 || value > 999) {
+    return String(value);
+  }
+  const n = Math.floor(value);
+  if (n < 20) return dutchUnits[n];
+  if (n < 100) {
+    const tens = Math.floor(n / 10);
+    const rest = n % 10;
+    if (rest === 0) return dutchTens[tens];
+    // e.g. "vierenzestig"
+    return `${dutchUnits[rest]}en${dutchTens[tens]}`;
+  }
+  const hundreds = Math.floor(n / 100);
+  const remainder = n % 100;
+  const hundredPart = hundreds === 1 ? 'honderd' : `${dutchUnits[hundreds]}honderd`;
+  if (remainder === 0) return hundredPart;
+  if (remainder < 20) return `${hundredPart}${dutchUnits[remainder]}`;
+  const tens = Math.floor(remainder / 10);
+  const rest = remainder % 10;
+  if (rest === 0) return `${hundredPart}${dutchTens[tens]}`;
+  return `${hundredPart}${dutchUnits[rest]}en${dutchTens[tens]}`;
+};
+
+const replaceNumbersWithDutchWords = (text: string): string => {
+  if (!text) return text;
+  return text.replace(/\b\d{1,3}\b/g, (match) => {
+    const numeric = Number(match);
+    if (Number.isNaN(numeric)) return match;
+    return numberToDutchWords(numeric);
+  });
+};
+
 const TOOL_NAMES = {
   transferCall: 'transfer_call',
   scheduleGoogleCalendarEvent: 'schedule_google_calendar_event',
@@ -176,6 +235,7 @@ const TOOL_NAMES = {
   getProductDetailsByName: 'get_product_details_by_name',
   getOrderStatus: 'get_order_status',
   fetchProductInfo: 'fetch_product_info',
+  listStoreProducts: 'list_store_products',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -192,6 +252,7 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.getProductDetailsByName,
   TOOL_NAMES.getOrderStatus,
   TOOL_NAMES.fetchProductInfo,
+  TOOL_NAMES.listStoreProducts,
 ]);
 
 class VapiRealtimeSession {
@@ -691,6 +752,12 @@ export class VapiClient {
       );
     }
 
+    if (hasCommerce) {
+      instructions.push(
+        `Het bedrijf heeft een gekoppelde webshop. Gebruik de tools '${TOOL_NAMES.listStoreProducts}' om snel een korte lijst met producten (namen en prijzen) op te halen en '${TOOL_NAMES.getProductDetailsByName}' of '${TOOL_NAMES.getOrderStatus}' wanneer bellers naar specifieke producten of orders vragen. Spreek aantallen en prijzen uit in woorden (bijv. 64 → "vierenzestig").`,
+      );
+    }
+
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
         `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
@@ -710,6 +777,14 @@ export class VapiClient {
     instructions.push(
       'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer. Vraag niet naar een specifieke medewerker of afdeling; verbind direct door naar de hoofd lijn en kondig aan met iets als "Natuurlijk, ik verbind u door." voordat je de transfer start.',
     );
+
+    const custom = (effectiveConfig.customInstructions ?? []).map((i) => i?.trim()).filter(Boolean);
+    if (custom.length > 0) {
+      instructions.push(
+        'Volg ook deze door het bedrijf aangeleverde maatwerk-instructies. Ze hebben voorrang wanneer ze strijdig lijken met algemene aanwijzingen:\n' +
+          custom.map((text) => `- ${text}`).join('\n'),
+      );
+    }
 
     return instructions.join('\n\n');
   }
@@ -1003,6 +1078,34 @@ export class VapiClient {
                 },
               },
               required: ['storeId', 'orderId'],
+            },
+          },
+          server: {
+            url: `${this.toolBaseUrl}/vapi/tools`,
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: TOOL_NAMES.listStoreProducts,
+            description:
+              'Geef een korte lijst met beschikbare producten uit de gekoppelde webshop (namen en prijzen). Gebruik dit als een klant vraagt welke producten er zijn.',
+            parameters: {
+              type: 'object',
+              properties: {
+                storeId: {
+                  type: 'string',
+                  enum: storeEnum,
+                  description: 'De gekoppelde winkel.',
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Optioneel: maximaal aantal producten (1-20). Standaard 10.',
+                  minimum: 1,
+                  maximum: 20,
+                },
+              },
+              required: ['storeId'],
             },
           },
           server: {
@@ -2389,6 +2492,36 @@ export class VapiClient {
           console.error(`[VapiClient] 🧾 order status lookup failed`, { storeId, orderId, error });
           throw error;
         }
+      },
+      [TOOL_NAMES.listStoreProducts]: async () => {
+        const storeId = this.normalizeStoreId(args['storeId']);
+        const limitRaw = args['limit'];
+        const limitCandidate =
+          typeof limitRaw === 'number'
+            ? limitRaw
+            : typeof limitRaw === 'string'
+              ? Number(limitRaw.trim())
+              : undefined;
+        const limit = Number.isFinite(limitCandidate)
+          ? Math.min(20, Math.max(1, Number(limitCandidate)))
+          : 10;
+
+        if (!storeId) {
+          throw new Error('storeId is verplicht (shopify of woocommerce).');
+        }
+
+        const service = this.resolveCommerceService(storeId);
+        const products = await service.listProducts(companyId, limit);
+
+        const normalizedProducts = products.map((p) => ({
+          id: p.id,
+          name: replaceNumbersWithDutchWords(p.name ?? ''),
+          sku: p.sku ?? null,
+          price: p.price ? replaceNumbersWithDutchWords(String(p.price)) : null,
+          summary: p.summary ? replaceNumbersWithDutchWords(p.summary) : null,
+        }));
+
+        return sendSuccess({ storeId, products: normalizedProducts });
       },
       [TOOL_NAMES.fetchProductInfo]: async () => {
         const productIdRaw = this.normalizeStringArg(args['productId']);

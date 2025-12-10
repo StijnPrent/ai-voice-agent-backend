@@ -22,6 +22,7 @@ export class IntegrationService {
         };
 
         const list = await this.integrationRepository.getAllWithStatus(companyId);
+        const commerceConnections = await this.getCommerceConnections(companyId);
         const filtered = this.filterByUseType(list, useType);
 
         return filtered.map((integration) => {
@@ -29,13 +30,19 @@ export class IntegrationService {
             const mapping =
                 connectMap[key] ||
                 (key.includes("google") ? connectMap["google"] : undefined);
+            let status: "connected" | "disconnected" | "error" = integration.status;
+            if (key.includes("shopify")) {
+                status = commerceConnections.shopify ? "connected" : "disconnected";
+            } else if (key.includes("woo")) {
+                status = commerceConnections.woocommerce ? "connected" : "disconnected";
+            }
             return new IntegrationModel(
                 integration.integrationId,
                 integration.name,
                 integration.description,
                 integration.category,
                 integration.logo,
-                integration.status,
+                status,
                 integration.lastSync,
                 integration.updatedAt,
                 mapping?.url ?? null,

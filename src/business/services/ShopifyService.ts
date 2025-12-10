@@ -120,6 +120,39 @@ export class ShopifyService {
         }
     }
 
+    public async listProducts(
+        companyId: bigint,
+        limit: number = 10
+    ): Promise<Array<{ id: string; name: string; price?: string | null; sku?: string | null; summary?: string | null }>> {
+        const integration = await this.ensureIntegration(companyId);
+        const version = config.shopifyApiVersion || "2024-07";
+        const sanitizedLimit = Math.min(20, Math.max(1, Math.floor(limit)));
+        const url = `https://${integration.shopDomain}/admin/api/${version}/products.json`;
+
+        const response = await axios.get(url, {
+            headers: {
+                "X-Shopify-Access-Token": integration.accessToken,
+                "Content-Type": "application/json",
+            },
+            params: {
+                limit: sanitizedLimit,
+                fields: "id,title,body_html,variants",
+            },
+        });
+
+        const products: any[] = Array.isArray(response.data?.products) ? response.data.products : [];
+        return products.slice(0, sanitizedLimit).map((p) => {
+            const firstVariant = Array.isArray(p.variants) && p.variants.length ? p.variants[0] : null;
+            return {
+                id: String(p.id),
+                name: String(p.title ?? ""),
+                price: firstVariant?.price ? String(firstVariant.price) : null,
+                sku: firstVariant?.sku ?? null,
+                summary: typeof p.body_html === "string" ? p.body_html : null,
+            };
+        });
+    }
+
     private assertConfig() {
         if (!config.shopifyClientId || !config.shopifyClientSecret || !config.shopifyRedirectUri) {
             throw new Error("Shopify credentials are not configured (SHOPIFY_CLIENT_ID/SECRET/REDIRECT_URI).");

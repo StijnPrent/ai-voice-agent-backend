@@ -34,7 +34,7 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
             r.description,
             r.category,
             r.logo,
-            r.status,
+            (r.status ?? 'disconnected') as 'connected' | 'disconnected' | 'error',
             r.lastSync,
             r.integrationUpdatedAt
         ));
