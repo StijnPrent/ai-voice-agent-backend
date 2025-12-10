@@ -3315,7 +3315,6 @@ export class VapiClient {
       firstMessageMode: 'assistant-speaks-first',
       voicemailMessage: 'sorry er is helaas niemand anders beschikbaar op het moment',
       endCallMessage: 'Fijne dag!',
-      commerceStores: config.commerceStores ?? [],
     };
 
     const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
