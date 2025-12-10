@@ -19,7 +19,7 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
           WHEN gci.company_id IS NOT NULL THEN 'connected'
           ELSE 'disconnected'
         END                    AS status,
-        gci.updated_at     AS lastSync,
+        gci.updated_at         AS lastSync,
         i.updated_at           AS integrationUpdatedAt
       FROM integrations i
       LEFT JOIN google_calendar_integrations gci
@@ -28,16 +28,31 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
       ORDER BY i.name;
     `;
         const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
-        return rows.map(r => new IntegrationModel(
-            r.integrationId,
-            r.name,
-            r.description,
-            r.category,
-            r.logo,
-            r.status,
-            r.lastSync,
-            r.integrationUpdatedAt
-        ));
+
+        const commerce = await this.getCommerceConnections(companyId);
+
+        return rows.map(r => {
+            const name = (r.name ?? "").toString().toLowerCase();
+            let status = r.status as string;
+            let lastSync = r.lastSync;
+
+            if (name.includes("shopify")) {
+                status = commerce.shopify ? "connected" : "disconnected";
+            } else if (name.includes("woo")) {
+                status = commerce.woocommerce ? "connected" : "disconnected";
+            }
+
+            return new IntegrationModel(
+                r.integrationId,
+                r.name,
+                r.description,
+                r.category,
+                r.logo,
+                status,
+                lastSync,
+                r.integrationUpdatedAt
+            );
+        });
     }
 
     public async hasCalendarConnected(companyId: bigint): Promise<boolean> {

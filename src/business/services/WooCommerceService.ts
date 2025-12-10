@@ -40,6 +40,30 @@ export class WooCommerceService {
         await this.repo.deleteIntegration(companyId);
     }
 
+    public async listProducts(companyId: bigint, limit = 25): Promise<Array<{ id: string; name: string; raw: any }>> {
+        const integration = await this.ensureIntegration(companyId);
+        const version = integration.apiVersion || config.wooDefaultVersion || "wc/v3";
+        const url = `${integration.storeUrl}/wp-json/${version}/products`;
+
+        const response = await axios.get(url, {
+            params: {
+                per_page: Math.max(1, Math.min(limit, 50)),
+                page: 1,
+            },
+            auth: {
+                username: integration.consumerKey,
+                password: integration.consumerSecret,
+            },
+        });
+
+        const products: any[] = Array.isArray(response.data) ? response.data : [];
+        return products.map((p) => ({
+            id: String(p.id),
+            name: String(p.name ?? ""),
+            raw: p,
+        }));
+    }
+
     public async getProductByName(companyId: bigint, name: string): Promise<{ id: string; name: string; raw: any }> {
         const integration = await this.ensureIntegration(companyId);
         const version = integration.apiVersion || config.wooDefaultVersion || "wc/v3";

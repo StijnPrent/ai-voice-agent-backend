@@ -175,6 +175,7 @@ const TOOL_NAMES = {
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
   getProductDetailsByName: 'get_product_details_by_name',
   getOrderStatus: 'get_order_status',
+  listStoreProducts: 'list_store_products',
   fetchProductInfo: 'fetch_product_info',
 } as const;
 
@@ -191,6 +192,7 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.cancelGoogleCalendarEvent,
   TOOL_NAMES.getProductDetailsByName,
   TOOL_NAMES.getOrderStatus,
+  TOOL_NAMES.listStoreProducts,
   TOOL_NAMES.fetchProductInfo,
 ]);
 
@@ -661,6 +663,7 @@ export class VapiClient {
       `Zorg dat je de juiste datum van vandaag gebruikt. Vermijd numerieke datum- en tijdnotatie (zoals 'dd-mm-jj' of '10:00'); gebruik natuurlijke taal, bijvoorbeeld 'tien uur' of '14 augustus 2025'.`,
       'Als iemand al een dag of datum noemt (bijv. "morgen", "maandag" of een concrete datum), ga daar direct mee verder zonder extra bevestiging. Vraag alleen naar een dag als deze nog niet is genoemd.',
       'Interpreteer relatieve aanduidingen (zoals "vandaag", "morgen", "volgende week") zelf ten opzichte van de huidige datum in de tijdzone Europe/Amsterdam en ga door zonder de datum terug te bevestigen.',
+      'als je getallen terug krijgt van de toolcalls. zet ze da om altijd om in natuurlijke taal (bijv. "twee" in plaats van "2").',
       'Stel voorstellen voor afspraken menselijk voor door slechts relevante tijdsopties in natuurlijke taal te benoemen en niet alle tijdsloten op te sommen.',
       'Gebruik altijd de onderstaande bedrijfscontext. Als je informatie niet zeker weet of ontbreekt, communiceer dit dan duidelijk en bied alternatieve hulp aan.',
       'Als je een vraag niet kunt beantwoorden of een verzoek niet zelf kunt afhandelen, bied dan proactief aan om de beller door te verbinden met een medewerker.',
@@ -688,6 +691,13 @@ export class VapiClient {
       instructions.push(productInstruction);
       instructions.push(
         'Gebruik productinformatie primair als handleiding/troubleshooting. Als het antwoord niet in de gids staat of onzeker is, geef dat eerlijk aan en bied direct aan om door te verbinden naar een medewerker.',
+      );
+    }
+
+    if (hasCommerce) {
+      const storeList = (effectiveConfig.commerceStores ?? []).join(' of ');
+      instructions.push(
+        `E-commerce hulp (beschikbare winkel(s): ${storeList}):\n- Gebruik '${TOOL_NAMES.getProductDetailsByName}' als iemand naar productinfo of prijzen vraagt. Kies de juiste storeId uit de gekoppelde winkels; vraag ernaar als het onduidelijk is.\n- Gebruik '${TOOL_NAMES.getOrderStatus}' als iemand de status van een bestelling wil weten. Vraag altijd naar het ordernummer en welke winkel als dat niet genoemd wordt.\n- Gebruik '${TOOL_NAMES.listStoreProducts}' wanneer iemand vraagt welke producten er zijn. Geef een korte opsomming (max 10) en schrijf cijfers uit in woorden (bijv. 64 => vierenzestig).\n- Als er geen koppeling is of een lookup faalt, leg dit kort uit en bied aan om de beller door te verbinden.`,
       );
     }
 
@@ -1003,6 +1013,34 @@ export class VapiClient {
                 },
               },
               required: ['storeId', 'orderId'],
+            },
+          },
+          server: {
+            url: `${this.toolBaseUrl}/vapi/tools`,
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: TOOL_NAMES.listStoreProducts,
+            description:
+              'Geef een korte lijst van beschikbare producten voor een gekoppelde webshop. Spreek cijfers uit als woorden (bijv. 64 => vierenzestig).',
+            parameters: {
+              type: 'object',
+              properties: {
+                storeId: {
+                  type: 'string',
+                  enum: storeEnum,
+                  description: 'De gekoppelde winkel.',
+                },
+                limit: {
+                  type: 'integer',
+                  description: 'Maximaal aantal producten om op te sommen (standaard 10, max 20).',
+                  minimum: 1,
+                  maximum: 20,
+                },
+              },
+              required: ['storeId'],
             },
           },
           server: {
@@ -3131,6 +3169,46 @@ export class VapiClient {
 
   private resolveCommerceService(storeId: 'shopify' | 'woocommerce') {
     return storeId === 'shopify' ? this.shopifyService : this.wooService;
+  }
+
+  private numberToDutchWords(num: number): string {
+    if (!Number.isFinite(num)) return num.toString();
+    const ones = ['nul', 'een', 'twee', 'drie', 'vier', 'vijf', 'zes', 'zeven', 'acht', 'negen'];
+    const teens = ['tien', 'elf', 'twaalf', 'dertien', 'veertien', 'vijftien', 'zestien', 'zeventien', 'achttien', 'negentien'];
+    const tens = ['', '', 'twintig', 'dertig', 'veertig', 'vijftig', 'zestig', 'zeventig', 'tachtig', 'negentig'];
+
+    const toWords = (n: number): string => {
+      if (n < 10) return ones[n];
+      if (n < 20) return teens[n - 10];
+      if (n < 100) {
+        const unit = n % 10;
+        const ten = Math.floor(n / 10);
+        if (unit === 0) return tens[ten];
+        return `${ones[unit]}en${tens[ten]}`;
+      }
+      if (n < 1000) {
+        const hundred = Math.floor(n / 100);
+        const rest = n % 100;
+        const prefix = hundred === 1 ? 'honderd' : `${ones[hundred]}honderd`;
+        return rest === 0 ? prefix : `${prefix}${toWords(rest)}`;
+      }
+      if (n < 1000000) {
+        const thousand = Math.floor(n / 1000);
+        const rest = n % 1000;
+        const prefix = thousand === 1 ? 'duizend' : `${toWords(thousand)}duizend`;
+        return rest === 0 ? prefix : `${prefix}${toWords(rest)}`;
+      }
+      return num.toString();
+    };
+
+    return toWords(Math.round(num));
+  }
+
+  private replaceNumbersWithDutchWords(text: string): string {
+    return text.replace(/\d+/g, (match) => {
+      const num = Number(match);
+      return Number.isNaN(num) ? match : this.numberToDutchWords(num);
+    });
   }
 
   private getEffectiveCalendarProvider(config: VapiAssistantConfig): CalendarProvider | null {
