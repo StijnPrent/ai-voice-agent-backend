@@ -12,7 +12,7 @@ export class IntegrationService {
         @inject("IIntegrationRepository") private integrationRepository: IIntegrationRepository
     ) {}
 
-    async getAllWithStatus(companyId: bigint): Promise<IntegrationModel[]> {
+    async getAllWithStatus(companyId: bigint, useType?: string | null): Promise<IntegrationModel[]> {
         const baseUrl = (config.serverUrl || "").replace(/\/$/, "");
         const connectMap: Record<string, { url: string; method: string }> = {
             google: { url: `${baseUrl}/google/oauth2/url`, method: "GET" },
@@ -22,7 +22,9 @@ export class IntegrationService {
         };
 
         const list = await this.integrationRepository.getAllWithStatus(companyId);
-        return list.map((integration) => {
+        const filtered = this.filterByUseType(list, useType);
+
+        return filtered.map((integration) => {
             const key = integration.name.toLowerCase();
             const mapping =
                 connectMap[key] ||
@@ -39,6 +41,27 @@ export class IntegrationService {
                 mapping?.url ?? null,
                 mapping?.method ?? null
             );
+        });
+    }
+
+    private filterByUseType(list: IntegrationModel[], useType?: string | null): IntegrationModel[] {
+        const normalized = (useType ?? "both").toLowerCase();
+        if (normalized === "both") return list;
+
+        const isAppointments = normalized === "appointments";
+        const isEcommerce = normalized === "ecommerce";
+
+        return list.filter((integration) => {
+            const name = integration.name.toLowerCase();
+            const isWhatsapp = name.includes("whatsapp");
+            const isCalendar = name.includes("google") || name.includes("outlook") || name.includes("calendar");
+            const isStore = name.includes("shopify") || name.includes("woo");
+
+            // Always keep messaging (WhatsApp)
+            if (isWhatsapp) return true;
+            if (isAppointments && isCalendar) return true;
+            if (isEcommerce && isStore) return true;
+            return false;
         });
     }
 

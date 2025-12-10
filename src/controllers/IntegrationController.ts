@@ -1,9 +1,14 @@
 import {container} from "tsyringe";
 import {IntegrationService} from "../business/services/IntegrationService";
+import { CompanyService } from "../business/services/CompanyService";
 
 export class IntegrationController {
     private get service(): IntegrationService {
         return container.resolve(IntegrationService);
+    }
+
+    private get companyService(): CompanyService {
+        return container.resolve(CompanyService);
     }
 
     public async getAllIntegrations(req: any, res: any): Promise<void> {
@@ -13,7 +18,8 @@ export class IntegrationController {
                 res.status(400).send("Company ID is missing from token.");
                 return;
             }
-            const integrations = await this.service.getAllWithStatus(companyId);
+            const company = await this.companyService.findById(BigInt(companyId));
+            const integrations = await this.service.getAllWithStatus(companyId, company.useType);
             res.json(integrations.map(integration => integration.toJSON()));
         } catch (err) {
             console.error(err);

@@ -273,9 +273,9 @@ export class VapiClient {
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService = {} as any,
     @inject(VapiSessionRegistry)
     private readonly sessionRegistry: VapiSessionRegistry = {
-      registerSession: async () => {},
+      registerSession: async () => { },
       findSession: async () => null,
-      clearSessionForCallId: async () => {},
+      clearSessionForCallId: async () => { },
     } as any,
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
@@ -662,7 +662,26 @@ export class VapiClient {
       'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
       'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
       'Als er wordt gevraagd om doorverbonden te worden, gebruik altijd het bedrijfsnummer zonder naar een specifieke medewerker of afdeling te vragen.',
+      'Je bent een meertalige AI-telefonist.',
+      '- Detecteer automatisch in welke taal de beller spreekt.',
+      '- Als de beller Nederlands spreekt, antwoord dan volledig in het Nederlands.',
+      '- Als de beller Engels spreekt, antwoord dan volledig in het Engels.',
+      '- Schakel direct van taal wanneer de beller van taal verandert.',
+      '- Meng nooit meerdere talen in één antwoord.',
+
+      'Je tekstoutput moet altijd in dezelfde taal zijn als de beller.',
+
+      'Je TTS-stem is in één taal geconfigureerd, maar je mag in elke taal antwoorden; het systeem zal dit automatisch naar spraak omzetten.'
     ];
+
+    const hasCommerce = (effectiveConfig.commerceStores?.length ?? 0) > 0;
+    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog);
+    if (productInstruction) {
+      instructions.push(productInstruction);
+      instructions.push(
+        'Gebruik productinformatie primair als handleiding/troubleshooting. Als het antwoord niet in de gids staat of onzeker is, geef dat eerlijk aan en bied direct aan om door te verbinden naar een medewerker.',
+      );
+    }
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
@@ -685,6 +704,47 @@ export class VapiClient {
     );
 
     return instructions.join('\n\n');
+  }
+
+  /**
+   * Builds the full system + context message list for non-Vapi chat surfaces (e.g. WhatsApp).
+   * This mirrors the payload we send to Vapi so all channels share the same knowledge.
+   */
+  public buildContextMessages(config?: VapiAssistantConfig) {
+    const effectiveConfig = config ?? this.currentConfig;
+    if (!effectiveConfig) {
+      throw new Error('Company info must be set before generating context messages.');
+    }
+
+    const instructions = this.buildSystemPrompt(effectiveConfig);
+    const companyContext = this.buildCompanySnapshot(effectiveConfig);
+    return this.buildModelMessages(instructions, companyContext, effectiveConfig);
+  }
+
+  private buildProductInstruction(products: ProductSnapshot[]): string | null {
+    if (!products || products.length === 0) {
+      return null;
+    }
+
+    const limited = products.slice(0, 15);
+    const formatted = limited.map((product) => {
+      const synonymText =
+        product.synonyms && product.synonyms.length > 0
+          ? ` (synoniemen: ${product.synonyms.slice(0, 5).join(', ')})`
+          : '';
+      const skuText = product.sku ? `, sku: ${product.sku}` : '';
+      return `- [${product.id}] ${product.name}${skuText}${synonymText}`;
+    });
+
+    if (products.length > limited.length) {
+      formatted.push(`- ...en ${products.length - limited.length} extra producten`);
+    }
+
+    return [
+      'Productcatalogus (interne kennisbank voor aftercare/handleidingen/troubleshooting; NIET de webshop-inventory. Gebruik alleen deze productId’s):',
+      ...formatted,
+      `Gebruik altijd de tool '${TOOL_NAMES.fetchProductInfo}' om kennisbank-informatie op te halen voordat je een antwoord geeft. Als een product niet in de lijst staat, of de gids het antwoord niet bevat, zeg eerlijk dat je het niet weet en stel voor om door te verbinden.`,
+    ].join('\n');
   }
 
   private buildCompanySnapshot(config: VapiAssistantConfig): CompanySnapshot {
@@ -1015,6 +1075,31 @@ export class VapiClient {
           description:
             "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª' gelijk is aan '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª').",
           parameters: cancelCalendarParameters,
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.fetchProductInfo,
+          description:
+            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik alleen de productId uit de kennisbanklijst. Als je het antwoord niet vindt in de gids, geef dat eerlijk aan en stel voor om door te verbinden.',
+          parameters: {
+            type: 'object',
+            properties: {
+              productId: {
+                type: 'string',
+                description: 'Verplicht: productId uit de productlijst (bijv. "12").',
+              },
+              questionContext: {
+                type: 'string',
+                description: 'Optioneel: de vraag van de beller zodat alleen relevante info wordt gebruikt.',
+              },
+            },
+            required: ['productId'],
+          },
         },
         server: {
           url: `${this.toolBaseUrl}/vapi/tools`,
@@ -2206,6 +2291,98 @@ export class VapiClient {
           reason: reason ?? null,
           calendarIdsQueried: calendarIdsToQuery,
         });
+      },
+      [TOOL_NAMES.getProductDetailsByName]: async () => {
+        console.log(`[VapiClient] 🛒 === GET PRODUCT DETAILS BY NAME ===`);
+        const storeId = this.normalizeStoreId(args['storeId']);
+        const productName = this.normalizeStringArg(args['productName']);
+
+        if (!storeId) {
+          throw new Error('storeId is verplicht (shopify of woocommerce).');
+        }
+        if (!productName) {
+          throw new Error('productName is verplicht.');
+        }
+
+        console.log(`[VapiClient] Product lookup`, { storeId, productName, companyId: companyId.toString() });
+
+        const service = this.resolveCommerceService(storeId);
+        try {
+          const result = await service.getProductByName(companyId, productName);
+          return sendSuccess({
+            storeId,
+            product: {
+              id: result.id,
+              name: (result as any).title ?? (result as any).name ?? null,
+              raw: (result as any).raw ?? result,
+            },
+          });
+        } catch (error) {
+          console.error(`[VapiClient] 🛒 product lookup failed`, { storeId, productName, error });
+          throw error;
+        }
+      },
+      [TOOL_NAMES.getOrderStatus]: async () => {
+        console.log(`[VapiClient] 🧾 === GET ORDER STATUS ===`);
+        const storeId = this.normalizeStoreId(args['storeId']);
+        const orderIdRaw = args['orderId'];
+        const orderId =
+          typeof orderIdRaw === 'string' ? orderIdRaw.trim() : typeof orderIdRaw === 'number' ? orderIdRaw.toString() : '';
+
+        if (!storeId) {
+          throw new Error('storeId is verplicht (shopify of woocommerce).');
+        }
+        if (!orderId) {
+          throw new Error('orderId is verplicht.');
+        }
+
+        console.log(`[VapiClient] Order status lookup`, { storeId, orderId, companyId: companyId.toString() });
+
+        const service = this.resolveCommerceService(storeId);
+        try {
+          const result = await service.getOrderStatus(companyId, orderId);
+          return sendSuccess({
+            storeId,
+            order: {
+              id: result.id,
+              status: (result as any).status ?? null,
+              raw: (result as any).raw ?? result,
+            },
+          });
+        } catch (error) {
+          console.error(`[VapiClient] 🧾 order status lookup failed`, { storeId, orderId, error });
+          throw error;
+        }
+      },
+      [TOOL_NAMES.fetchProductInfo]: async () => {
+        const productIdRaw = this.normalizeStringArg(args['productId']);
+        if (!productIdRaw) {
+          throw new Error('productId is verplicht om productinformatie op te halen.');
+        }
+
+        const productId = Number(productIdRaw);
+        if (Number.isNaN(productId)) {
+          return sendError('Ongeldig productId ontvangen.', { productId: productIdRaw });
+        }
+
+        const product = await this.productKnowledgeService.getProduct(companyId, productId);
+        if (!product) {
+          return sendError('Dit product is niet gevonden in de kennisbank.', { productId });
+        }
+
+        const payload = {
+          productId: product.id.toString(),
+          name: product.name,
+          sku: product.sku,
+          summary: product.summary ?? product.content.summary ?? null,
+          synonyms: product.synonyms,
+          status: product.status,
+          version: product.version,
+          updatedAt: product.updatedAt.toISOString(),
+          content: product.content,
+        };
+
+        return sendSuccess(payload);
       },
     };
 
