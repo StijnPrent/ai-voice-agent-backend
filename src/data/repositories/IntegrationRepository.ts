@@ -33,8 +33,9 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
 
         return rows.map(r => {
             const name = (r.name ?? "").toString().toLowerCase();
-            let status = r.status as string;
-            let lastSync = r.lastSync;
+            let status: 'connected' | 'disconnected' | 'error' =
+                r.status === 'connected' ? 'connected' : 'disconnected';
+            let lastSync: string | null = r.lastSync ?? null;
 
             if (name.includes("shopify")) {
                 status = commerce.shopify ? "connected" : "disconnected";
