@@ -51,6 +51,18 @@ router.put(
     controller.updateCompanyContact.bind(controller)
 );
 
+// Company Profile (bulk save)
+router.get(
+    "/profile",
+    authenticateToken,
+    controller.getCompanyProfile.bind(controller)
+);
+router.put(
+    "/profile",
+    authenticateToken,
+    controller.saveCompanyProfile.bind(controller)
+);
+
 // Company Callers
 router.get(
     "/callers",

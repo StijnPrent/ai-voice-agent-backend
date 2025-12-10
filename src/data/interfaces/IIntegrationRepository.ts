@@ -2,7 +2,6 @@ import { IntegrationModel } from "../../business/models/IntegrationModel";
 
 export type CalendarIntegrationStatus = {
     googleConnected: boolean;
-    outlookConnected: boolean;
 };
 
 export interface IIntegrationRepository {

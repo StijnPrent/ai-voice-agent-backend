@@ -1,4 +1,4 @@
-// src/clients/VapiClient.ts
+﻿// src/clients/VapiClient.ts
 import axios, { AxiosInstance } from 'axios';
 import WebSocket, { RawData } from 'ws';
 import { inject, injectable, delay } from 'tsyringe';
@@ -19,9 +19,9 @@ import type { CalendarAvailability, CalendarAvailabilityCalendar, CalendarAvaila
 import { VapiSessionRegistry, VapiSessionRecord } from '../business/services/VapiSessionRegistry';
 import { getWorkerId } from '../config/workerIdentity';
 import type { CalendarProvider } from '../business/services/IntegrationService';
+import { ProductKnowledgeService } from '../business/services/ProductKnowledgeService';
 import { ShopifyService } from '../business/services/ShopifyService';
 import { WooCommerceService } from '../business/services/WooCommerceService';
-import { ProductKnowledgeService } from '../business/services/ProductKnowledgeService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -101,13 +101,13 @@ type ProductSnapshot = {
 export type VapiAssistantConfig = {
   company: CompanyModel;
   hasGoogleIntegration: boolean;
-  commerceStores?: Array<'shopify' | 'woocommerce'>;
   calendarProvider: CalendarProvider | null;
+  commerceStores?: Array<'shopify' | 'woocommerce'> | null;
   replyStyle: ReplyStyleModel;
   companyContext: CompanyContext;
   schedulingContext: SchedulingContext;
-  productCatalog: ProductSnapshot[];
   voiceSettings: VoiceSettingModel;
+  productCatalog?: ProductSnapshot[];
 };
 
 export type VapiRealtimeCallbacks = {
@@ -161,7 +161,7 @@ const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) 
     }
 
     console.log(
-      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}…`,
+      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª`,
     );
   } catch (error) {
     console.log(`${label} (stringify failed)`, { error, payload });
@@ -211,7 +211,7 @@ class VapiRealtimeSession {
 
     try {
       const type = typeof (frame as any)?.type === 'string' ? (frame as any).type : 'unknown';
-      logPayload(`[VapiRealtimeSession] ⇨ Sending JSON frame (${type})`, frame, PAYLOAD_LOG_LIMIT);
+      logPayload(`[VapiRealtimeSession] ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¿ Sending JSON frame (${type})`, frame, PAYLOAD_LOG_LIMIT);
       const payload = JSON.stringify(frame);
       this.socket.send(payload);
     } catch (error) {
@@ -276,7 +276,7 @@ export class VapiClient {
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService = {} as any,
-    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService,
+    @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService = {} as any,
     @inject(VapiSessionRegistry)
     private readonly sessionRegistry: VapiSessionRegistry = {
       registerSession: async () => { },
@@ -288,7 +288,7 @@ export class VapiClient {
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
-      console.warn('[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.');
+      console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂI_API_KEY is not set. Requests to Vapi will fail.');
     }
 
     const apiBaseUrl = process.env.VAPI_API_BASE_URL || 'https://api.vapi.ai';
@@ -330,7 +330,7 @@ export class VapiClient {
 
   private buildApiPath(path: string): string {
     if (!path.startsWith('/')) {
-      throw new Error(`[VapiClient] API paths must start with '/'. Received: ${path}`);
+      throw new Error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â paths must start with '/'. Received: ${path}`);
     }
     const normalizedPath = path.replace(/^\/+/, '');
     const segments = [this.apiPathPrefix, normalizedPath].filter((s) => s.length > 0);
@@ -345,10 +345,24 @@ export class VapiClient {
     replyStyle: ReplyStyleModel,
     context: CompanyContext,
     schedulingContext: SchedulingContext,
-    productCatalog: ProductSnapshot[],
-    voiceSettings: VoiceSettingModel,
-    commerceStores: Array<'shopify' | 'woocommerce'> = [],
+    productCatalogOrVoice: ProductSnapshot[] | VoiceSettingModel,
+    voiceSettingsOrCommerce?: VoiceSettingModel | Array<'shopify' | 'woocommerce'>,
+    commerceStoresArg: Array<'shopify' | 'woocommerce'> = [],
   ) {
+    const productCatalog: ProductSnapshot[] = Array.isArray(productCatalogOrVoice)
+      ? productCatalogOrVoice
+      : [];
+    const voiceSettings: VoiceSettingModel = Array.isArray(productCatalogOrVoice)
+      ? (voiceSettingsOrCommerce as VoiceSettingModel)
+      : (productCatalogOrVoice as VoiceSettingModel);
+    const commerceStores: Array<'shopify' | 'woocommerce'> = Array.isArray(voiceSettingsOrCommerce)
+      ? voiceSettingsOrCommerce
+      : commerceStoresArg;
+
+    if (!voiceSettings) {
+      throw new Error('[VapiClient] voiceSettings are required when setting company info.');
+    }
+
     const config: VapiAssistantConfig = {
       company,
       hasGoogleIntegration,
@@ -356,8 +370,8 @@ export class VapiClient {
       replyStyle,
       companyContext: context,
       schedulingContext,
-      productCatalog,
       voiceSettings,
+      productCatalog,
       commerceStores,
     };
 
@@ -655,6 +669,7 @@ export class VapiClient {
       'Wanneer een beller blijft aandringen op een volledig volgeboekte dag, bied dan actief aan om de beller door te verbinden met een medewerker.',
       'Bevestig afspraken uitsluitend door de datum en tijd in natuurlijke taal te herhalen en voeg geen andere details toe.',
       'Gebruik geen standaardzinnetjes zoals "Wacht even" wanneer je een tool gebruikt; blijf natuurlijk of ga direct verder zonder extra melding.',
+      'Als er wordt gevraagd om doorverbonden te worden, gebruik altijd het bedrijfsnummer zonder naar een specifieke medewerker of afdeling te vragen.',
       'Je bent een meertalige AI-telefonist.',
       '- Detecteer automatisch in welke taal de beller spreekt.',
       '- Als de beller Nederlands spreekt, antwoord dan volledig in het Nederlands.',
@@ -668,7 +683,7 @@ export class VapiClient {
     ];
 
     const hasCommerce = (effectiveConfig.commerceStores?.length ?? 0) > 0;
-    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog);
+    const productInstruction = this.buildProductInstruction(effectiveConfig.productCatalog ?? []);
     if (productInstruction) {
       instructions.push(productInstruction);
       instructions.push(
@@ -678,13 +693,13 @@ export class VapiClient {
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316…'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
+        `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
         `BELANGRIJK: Voor afspraken gebruik je de agenda-tools (${calendarProviderName}), NIET de transfer_call tool.`,
         'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
         'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
-        'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agenda’s voor beschikbaarheid en boekingen.',
+        'Plan uitsluitend afspraken met medewerkers die in het bedrijf/systeem staan. Gebruik alleen hun agenda voor beschikbaarheid en boekingen.',
         'Als er meerdere afspraaktypes beschikbaar zijn, vraag de beller altijd om een keuze. Geef eventueel suggesties op basis van wat de beller zegt, maar gebruik uitsluitend afspraaktypes die in het systeem staan.',
-        'Vraagt iemand naar een medewerker die niet in het systeem staat? Leg uit dat die persoon daar niet werkt en bied aan om verder te helpen met de medewerkers die wél beschikbaar zijn.',
+        'Vraagt iemand naar een medewerker die niet in het systeem staat? Leg uit dat die persoon daar niet werkt en bied aan om verder te helpen met de medewerkers die beschikbaar zijn.',
       );
     } else {
       instructions.push(
@@ -693,15 +708,8 @@ export class VapiClient {
     }
 
     instructions.push(
-      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer.',
+      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer. Vraag niet naar een specifieke medewerker of afdeling; verbind direct door naar de hoofd lijn en kondig aan met iets als "Natuurlijk, ik verbind u door." voordat je de transfer start.',
     );
-
-    if (hasCommerce) {
-      const storeList = (effectiveConfig.commerceStores ?? []).join(' of ');
-      instructions.push(
-        `E-commerce hulp (beschikbare winkel(s): ${storeList}):\n- Gebruik '${TOOL_NAMES.getProductDetailsByName}' als iemand naar productinfo of prijzen vraagt. Kies de juiste storeId uit de gekoppelde winkels; vraag ernaar als het onduidelijk is.\n- Gebruik '${TOOL_NAMES.getOrderStatus}' als iemand de status van een bestelling wil weten. Vraag altijd naar het ordernummer en welke winkel als dat niet genoemd wordt.\n- Als er geen koppeling is of een lookup faalt, leg dit kort uit en bied aan om de beller door te verbinden.`
-      );
-    }
 
     return instructions.join('\n\n');
   }
@@ -721,7 +729,7 @@ export class VapiClient {
     return this.buildModelMessages(instructions, companyContext, effectiveConfig);
   }
 
-  private buildProductInstruction(products: ProductSnapshot[]): string | null {
+  private buildProductInstruction(products?: ProductSnapshot[]): string | null {
     if (!products || products.length === 0) {
       return null;
     }
@@ -753,7 +761,7 @@ export class VapiClient {
       const trimmed = value.trim();
       if (!trimmed) return undefined;
       if (trimmed.length <= max) return trimmed;
-      return `${trimmed.slice(0, max - 1)}…`;
+      return `${trimmed.slice(0, max - 1)}ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª`;
     };
 
     const dayNames = [
@@ -946,109 +954,6 @@ export class VapiClient {
       },
     ];
 
-    const createCalendarParameters = {
-      type: 'object',
-      properties: {
-        summary: { type: 'string', description: 'Titel van de afspraak' },
-        start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
-        end: { type: 'string', description: 'Einde in ISO 8601' },
-        name: { type: 'string', description: 'Volledige naam van de klant' },
-        description: { type: 'string', description: 'Aanvullende details' },
-        location: { type: 'string', description: 'Locatie van de afspraak' },
-      },
-      required: ['summary', 'start', 'end', 'name'],
-    };
-
-    const checkAvailabilityParameters = {
-      type: 'object',
-      properties: {
-        date: { type: 'string', description: 'Datum (YYYY-MM-DD) om te controleren' },
-      },
-      required: ['date'],
-    };
-
-    const cancelCalendarParameters = {
-      type: 'object',
-      properties: {
-        start: {
-          type: 'string',
-          description: 'Startdatum en -tijd (ISO 8601) van de afspraak die geannuleerd moet worden',
-        },
-        name: { type: 'string', description: 'Naam van de klant (optioneel ter verificatie)' },
-        phoneNumber: {
-          type: 'string',
-          description:
-            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '06…' gelijk staat aan '+316…'.",
-        },
-        reason: { type: 'string', description: 'Reden van annulering' },
-      },
-      required: ['start', 'phoneNumber'],
-    };
-
-    tools.push(
-      {
-        type: 'function',
-        function: {
-          name: TOOL_NAMES.scheduleGoogleCalendarEvent,
-          description:
-            'Maak een nieuw event in . Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
-          parameters: createCalendarParameters,
-        },
-        server: {
-          url: `${this.toolBaseUrl}/vapi/tools`,
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: TOOL_NAMES.checkGoogleCalendarAvailability,
-          description:
-            'Controleer beschikbare tijdsloten in  voor een opgegeven datum.',
-          parameters: checkAvailabilityParameters,
-        },
-        server: {
-          url: `${this.toolBaseUrl}/vapi/tools`,
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: TOOL_NAMES.cancelGoogleCalendarEvent,
-          description:
-            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06…' gelijk is aan '+316…').",
-          parameters: cancelCalendarParameters,
-        },
-        server: {
-          url: `${this.toolBaseUrl}/vapi/tools`,
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: TOOL_NAMES.fetchProductInfo,
-          description:
-            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik alleen de productId uit de kennisbanklijst. Als je het antwoord niet vindt in de gids, geef dat eerlijk aan en stel voor om door te verbinden.',
-          parameters: {
-            type: 'object',
-            properties: {
-              productId: {
-                type: 'string',
-                description: 'Verplicht: productId uit de productlijst (bijv. "12").',
-              },
-              questionContext: {
-                type: 'string',
-                description: 'Optioneel: de vraag van de beller zodat alleen relevante info wordt gebruikt.',
-              },
-            },
-            required: ['productId'],
-          },
-        },
-        server: {
-          url: `${this.toolBaseUrl}/vapi/tools`,
-        },
-      },
-    );
-
     if (commerceStores.length > 0) {
       const storeEnum = commerceStores;
       tools.push(
@@ -1107,6 +1012,109 @@ export class VapiClient {
       );
     }
 
+    const createCalendarParameters = {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'Titel van de afspraak' },
+        start: { type: 'string', description: 'Start in ISO 8601 (bijv. 2025-07-21T10:00:00+02:00)' },
+        end: { type: 'string', description: 'Einde in ISO 8601' },
+        name: { type: 'string', description: 'Volledige naam van de klant' },
+        description: { type: 'string', description: 'Aanvullende details' },
+        location: { type: 'string', description: 'Locatie van de afspraak' },
+      },
+      required: ['summary', 'start', 'end', 'name'],
+    };
+
+    const checkAvailabilityParameters = {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Datum (YYYY-MM-DD) om te controleren' },
+      },
+      required: ['date'],
+    };
+
+    const cancelCalendarParameters = {
+      type: 'object',
+      properties: {
+        start: {
+          type: 'string',
+          description: 'Startdatum en -tijd (ISO 8601) van de afspraak die geannuleerd moet worden',
+        },
+        name: { type: 'string', description: 'Naam van de klant (optioneel ter verificatie)' },
+        phoneNumber: {
+          type: 'string',
+          description:
+            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '06ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª' gelijk staat aan '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª'.",
+        },
+        reason: { type: 'string', description: 'Reden van annulering' },
+      },
+      required: ['start', 'phoneNumber'],
+    };
+
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.scheduleGoogleCalendarEvent,
+          description:
+            'Maak een nieuw event in . Vraag eerst datum/tijd en daarna de naam ter verificatie; het telefoonnummer haal je automatisch uit het systeem. Bevestig de afspraak uiteindelijk door alleen de datum en tijd te herhalen.',
+          parameters: createCalendarParameters,
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.checkGoogleCalendarAvailability,
+          description:
+            'Controleer beschikbare tijdsloten in  voor een opgegeven datum.',
+          parameters: checkAvailabilityParameters,
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.cancelGoogleCalendarEvent,
+          description:
+            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª' gelijk is aan '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª').",
+          parameters: cancelCalendarParameters,
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: TOOL_NAMES.fetchProductInfo,
+          description:
+            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik alleen de productId uit de kennisbanklijst. Als je het antwoord niet vindt in de gids, geef dat eerlijk aan en stel voor om door te verbinden.',
+          parameters: {
+            type: 'object',
+            properties: {
+              productId: {
+                type: 'string',
+                description: 'Verplicht: productId uit de productlijst (bijv. "12").',
+              },
+              questionContext: {
+                type: 'string',
+                description: 'Optioneel: de vraag van de beller zodat alleen relevante info wordt gebruikt.',
+              },
+            },
+            required: ['productId'],
+          },
+        },
+        server: {
+          url: `${this.toolBaseUrl}/vapi/tools`,
+        },
+      },
+    );
+
     return tools;
   }
 
@@ -1146,19 +1154,6 @@ export class VapiClient {
       },
       googleCalendarEnabled: config.hasGoogleIntegration,
     };
-
-    if (config.productCatalog && config.productCatalog.length > 0) {
-      contextPayload.products = config.productCatalog
-        .slice(0, 25)
-        .map((product) => ({
-          id: product.id,
-          name: product.name,
-          sku: product.sku,
-          summary: product.summary,
-          synonyms: product.synonyms?.slice(0, 8),
-          status: product.status,
-        }));
-    }
 
     if (Object.keys(scheduling).length > 0) {
       contextPayload.scheduling = scheduling;
@@ -1277,7 +1272,7 @@ export class VapiClient {
       try {
         const parsed = JSON.parse(s);
 
-        // 👉 Late-bind the Vapi callId if /call response didn’t include it
+        // Ãƒâ€šÃ‚Â­Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¦ÃƒÆ’Ã‚Â« Late-bind the Vapi callId if /call response didnÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬â€œt include it
         const runtimeCallId =
           parsed?.message?.call?.id ??
           parsed?.call?.id ??
@@ -1427,7 +1422,7 @@ export class VapiClient {
       },
     };
 
-    // ⬇️ Minimal payload, nothing else
+    // ÃƒÆ’Ã¢â‚¬ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Minimal payload, nothing else
     const payload = { assistantId, transport };
 
     const response = await this.http.post(this.buildApiPath('/call'), payload);
@@ -1458,7 +1453,7 @@ export class VapiClient {
 
     // Try legacy/common locations FIRST, then everything else
     const callIdCandidates: unknown[] = [
-      data?.id,                      // ← most common on POST /call
+      data?.id,                      // ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã‚Â¥ÃƒÆ’Ã¢â‚¬Â° most common on POST /call
       data?.session?.id,
       data?.call?.id,
 
@@ -1547,7 +1542,7 @@ export class VapiClient {
         settled = true;
         cleanup();
         safeShutdown(() => socket.close());
-        reject(new Error(message + (body ? ` – ${body}` : '')));
+        reject(new Error(message + (body ? ` ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã‚Â´ ${body}` : '')));
       };
 
       const onOpen = () => {
@@ -1726,7 +1721,7 @@ export class VapiClient {
 
   private normalizeToolCall(raw: any): NormalizedToolCall | null {
     if (!raw) {
-      console.warn(`[VapiClient] normalizeToolCall received null/undefined`);
+      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂmalizeToolCall received null/undefined`);
       return null;
     }
 
@@ -1735,14 +1730,14 @@ export class VapiClient {
       const hasDirectName = typeof raw.name === 'string' && raw.name.length > 0;
       if (nestedCount > 0 || !hasDirectName) {
         console.warn(
-          `[VapiClient] ⚠️ normalizeToolCall skipping tool_calls wrapper (${nestedCount} nested call(s))`,
+          `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ normalizeToolCall skipping tool_calls wrapper (${nestedCount} nested call(s))`,
         );
         return null;
       }
     }
 
     console.log(
-      `[VapiClient] 🔍 Normalizing tool call. Raw keys:`,
+      `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Normalizing tool call. Raw keys:`,
       Object.keys(raw).join(', '),
     );
 
@@ -1760,11 +1755,11 @@ export class VapiClient {
       const name = raw.function.name ?? raw.function.function_name;
       let argsRaw = raw.function.arguments ?? raw.function.input;
 
-      console.log(`[VapiClient] 🔍 Found nested function structure - ID: ${id}, Name: ${name}`);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Found nested function structure - ID: ${id}, Name: ${name}`);
 
       if (!name) {
         console.warn(
-          `[VapiClient] ❌ No tool name found in nested function. Raw:`,
+          `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No tool name found in nested function. Raw:`,
           JSON.stringify(raw, null, 2),
         );
         return null;
@@ -1772,18 +1767,18 @@ export class VapiClient {
 
       // Parse arguments if string
       if (typeof argsRaw === 'string') {
-        console.log(`[VapiClient] 🔍 Arguments is string, parsing...`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Arguments is string, parsing...`);
         try {
           argsRaw = JSON.parse(argsRaw);
-          console.log(`[VapiClient] ✅ Parsed arguments:`, argsRaw);
+          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Parsed arguments:`, argsRaw);
         } catch (error) {
-          console.error(`[VapiClient] ❌ Failed to parse arguments string:`, argsRaw);
+          console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse arguments string:`, argsRaw);
           argsRaw = {};
         }
       }
 
       if (!argsRaw || typeof argsRaw !== 'object') {
-        console.log(`[VapiClient] ⚠️ No valid arguments found, using empty object`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ No valid arguments found, using empty object`);
         argsRaw = {};
       }
 
@@ -1793,7 +1788,7 @@ export class VapiClient {
         args: argsRaw as Record<string, unknown>,
       };
 
-      console.log(`[VapiClient] ✅ Successfully normalized nested function call:`, result);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Successfully normalized nested function call:`, result);
       return result;
     }
 
@@ -1801,7 +1796,7 @@ export class VapiClient {
     container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
 
     if (!container) {
-      console.warn(`[VapiClient] No container found in raw tool call`);
+      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âcontainer found in raw tool call`);
       return null;
     }
 
@@ -1820,11 +1815,11 @@ export class VapiClient {
       container.action ??
       container.function_name;
 
-    console.log(`[VapiClient] 🔍 Extracted - ID: ${id}, Name: ${name}`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Extracted - ID: ${id}, Name: ${name}`);
 
     if (!name) {
       console.warn(
-        `[VapiClient] ❌ No tool name found. Container:`,
+        `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No tool name found. Container:`,
         JSON.stringify(container, null, 2),
       );
       return null;
@@ -1840,18 +1835,18 @@ export class VapiClient {
       container.args;
 
     if (typeof argsRaw === 'string') {
-      console.log(`[VapiClient] 🔍 Arguments is string, parsing...`);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Arguments is string, parsing...`);
       try {
         argsRaw = JSON.parse(argsRaw);
-        console.log(`[VapiClient] ✅ Parsed arguments:`, argsRaw);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Parsed arguments:`, argsRaw);
       } catch (error) {
-        console.error(`[VapiClient] ❌ Failed to parse arguments string:`, argsRaw);
+        console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse arguments string:`, argsRaw);
         argsRaw = {};
       }
     }
 
     if (!argsRaw || typeof argsRaw !== 'object') {
-      console.log(`[VapiClient] ⚠️ No valid arguments found, using empty object`);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ No valid arguments found, using empty object`);
       argsRaw = {};
     }
 
@@ -1861,32 +1856,36 @@ export class VapiClient {
       args: argsRaw as Record<string, unknown>,
     };
 
-    console.log(`[VapiClient] ✅ Successfully normalized tool call:`, result);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Successfully normalized tool call:`, result);
     return result;
   }
 
   private async executeToolCall(
     call: NormalizedToolCall,
-    context: {
-      session?: VapiRealtimeSession | null;
-      callbacks?: VapiRealtimeCallbacks | null;
-      callSid?: string | null;
-      config?: VapiAssistantConfig | null;
-    },
+    contextOrSession?:
+      | {
+          session?: VapiRealtimeSession | null;
+          callbacks?: VapiRealtimeCallbacks | null;
+          callSid?: string | null;
+          config?: VapiAssistantConfig | null;
+        }
+      | VapiRealtimeSession
+      | null,
+    callbacksParam?: VapiRealtimeCallbacks | null,
   ): Promise<unknown> {
-    console.log(`[VapiClient] 🔧 === EXECUTING TOOL CALL ===`);
-    console.log(`[VapiClient] Tool ID: ${call.id}`);
-    console.log(`[VapiClient] Tool Name: ${call.name}`);
-    console.log(`[VapiClient] Tool Args:`, JSON.stringify(call.args, null, 2));
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âº === EXECUTING TOOL CALL ===`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl ID: ${call.id}`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl Name: ${call.name}`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl Args:`, JSON.stringify(call.args, null, 2));
 
     const cachedEntry = this.toolResponseLog.get(call.id);
     if (cachedEntry) {
-      console.log(`[VapiClient] ♻️ Returning cached tool response for ${call.id}`);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Returning cached tool response for ${call.id}`);
       return cachedEntry.payload;
     }
 
     const normalizedToolName = this.normalizeToolName(call.name);
-    console.log(`[VapiClient] Normalized name: ${normalizedToolName}`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âmalized name: ${normalizedToolName}`);
 
     const googleTools = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
       TOOL_NAMES.scheduleGoogleCalendarEvent,
@@ -1894,11 +1893,30 @@ export class VapiClient {
       TOOL_NAMES.cancelGoogleCalendarEvent,
     ]);
 
-    const sessionRef = context.session ?? null;
-    const callbacks = context.callbacks ?? null;
+    let sessionRef: VapiRealtimeSession | null = null;
+    let callbacks: VapiRealtimeCallbacks | null = null;
+    let explicitCallSid: string | null | undefined;
+    let explicitConfig: VapiAssistantConfig | null | undefined;
+
+    if (contextOrSession && typeof (contextOrSession as any).session !== 'undefined') {
+      const ctx = contextOrSession as {
+        session?: VapiRealtimeSession | null;
+        callbacks?: VapiRealtimeCallbacks | null;
+        callSid?: string | null;
+        config?: VapiAssistantConfig | null;
+      };
+      sessionRef = ctx.session ?? null;
+      callbacks = ctx.callbacks ?? null;
+      explicitCallSid = ctx.callSid;
+      explicitConfig = ctx.config ?? null;
+    } else {
+      sessionRef = (contextOrSession as VapiRealtimeSession) ?? null;
+      callbacks = callbacksParam ?? null;
+    }
+
     const sessionContext = sessionRef ? this.sessionContexts.get(sessionRef) ?? null : null;
-    const callSidForConfig = context.callSid ?? sessionContext?.callSid ?? null;
-    const config = context.config ?? this.getConfigForCall(callSidForConfig);
+    const callSidForConfig = explicitCallSid ?? sessionContext?.callSid ?? null;
+    const config = explicitConfig ?? this.getConfigForCall(callSidForConfig);
 
     let finalPayload: unknown = null;
     let payloadWasSet = false;
@@ -1908,10 +1926,10 @@ export class VapiClient {
       try {
         payloadPreview = JSON.stringify(payload).slice(0, 200);
       } catch (error) {
-        console.warn('[VapiClient] ⚠️ Failed to stringify payload for preview', error);
+        console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Failed to stringify payload for preview', error);
       }
 
-      console.log(`[VapiClient] 💾 Recording tool response`, {
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¥ Recording tool response`, {
         toolCallId: call.id,
         payloadType: typeof payload,
         payloadPreview,
@@ -1923,7 +1941,7 @@ export class VapiClient {
     };
 
     if (!config) {
-      console.error('[VapiClient] ❌ No config found for session');
+      console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No config found for session');
       const payload = {
         success: false,
         error: 'Session not configured',
@@ -1932,11 +1950,11 @@ export class VapiClient {
     }
 
     console.log(
-      `[VapiClient] Config found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
+      `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âfig found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
     );
 
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
-      console.warn(`[VapiClient] ⚠️ Google tool called but integration disabled`);
+      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Google tool called but integration disabled`);
       const payload = {
         success: false,
         error: 'Google integration not available',
@@ -1946,7 +1964,7 @@ export class VapiClient {
 
     const sendSuccess = (data: unknown) => {
       const payload = { success: true, data };
-      console.log(`[VapiClient] ✅ Tool response payload`, {
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool response payload`, {
         toolCallId: call.id,
         payload,
       });
@@ -1959,7 +1977,7 @@ export class VapiClient {
         error: message,
         details,
       };
-      console.error(`[VapiClient] ❌ Tool response payload`, {
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool response payload`, {
         toolCallId: call.id,
         payload,
       });
@@ -1971,7 +1989,7 @@ export class VapiClient {
 
     const handlers: Record<string, () => Promise<unknown>> = {
       [TOOL_NAMES.transferCall]: async () => {
-        console.log(`[VapiClient] 📞 === TRANSFER CALL ===`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬â€ === TRANSFER CALL ===`);
 
         const transferCallback = callbacks?.onTransferCall;
         if (!transferCallback) {
@@ -1985,7 +2003,7 @@ export class VapiClient {
         const callerId = this.normalizeStringArg(args['callerId']);
         const reason = this.normalizeStringArg(args['reason']);
 
-        console.log(`[VapiClient] Transfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânsfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
 
         const result = await transferCallback({ phoneNumber, callSid, callerId, reason });
 
@@ -2001,19 +2019,19 @@ export class VapiClient {
         });
       },
       [TOOL_NAMES.checkGoogleCalendarAvailability]: async () => {
-        console.log(`[VapiClient] 📅 === CHECK CALENDAR AVAILABILITY ===`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â  === CHECK CALENDAR AVAILABILITY ===`);
 
         const date = this.normalizeStringArg(args['date']);
-        console.log(`[VapiClient] Requested date: ${date}`);
-        console.log(`[VapiClient] All args:`, args);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âuested date: ${date}`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â args:`, args);
 
         if (!date) {
           throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
         }
 
-        console.log(`[VapiClient] Getting business hours for date...`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âting business hours for date...`);
         const { openHour, closeHour } = this.getBusinessHoursForDate(config, date);
-        console.log(`[VapiClient] Business hours: ${openHour}:00 - ${closeHour}:00`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âiness hours: ${openHour}:00 - ${closeHour}:00`);
 
         const staffPreference = this.resolveStaffPreference(config, args, sessionContext);
         const staffCalendarMap = this.buildStaffCalendarMap(config);
@@ -2021,7 +2039,7 @@ export class VapiClient {
           ? [staffPreference.calendarId]
           : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
 
-        console.log(`[VapiClient] Staff preference`, {
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âff preference`, {
           staffMemberId: staffPreference.staffMember?.id ?? null,
           staffMemberName: staffPreference.staffMember?.name ?? null,
           explicitCalendarId: staffPreference.explicitCalendarId,
@@ -2040,10 +2058,10 @@ export class VapiClient {
 
           if (availabilityResult.durationMs > 0) {
             console.log(
-              `[VapiClient] Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
+              `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âgle availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
             );
           } else {
-            console.log(`[VapiClient] Using cached availability result`);
+            console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âng cached availability result`);
           }
 
           const { availability, availableRanges, perCalendarRanges } = availabilityResult;
@@ -2067,8 +2085,8 @@ export class VapiClient {
             };
           });
 
-          console.log(`[VapiClient] Busy intervals:`, availability.busy);
-          console.log(`[VapiClient] Derived available ranges:`, availableRanges);
+          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ây intervals:`, availability.busy);
+          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âived available ranges:`, availableRanges);
 
           const busyCount = availability.busy.length;
           const availableCount = availableRanges.length;
@@ -2103,7 +2121,7 @@ export class VapiClient {
             message,
           });
         } catch (error) {
-          console.error('[VapiClient] Error getting beschikbaarheid:', error);
+          console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âor getting beschikbaarheid:', error);
           const fallbackMessage =
             error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
               ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
@@ -2114,7 +2132,7 @@ export class VapiClient {
         }
       },
       [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
-        console.log(`[VapiClient] 📝 === SCHEDULE CALENDAR EVENT ===`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‹Å“ === SCHEDULE CALENDAR EVENT ===`);
 
         const summary = this.normalizeStringArg(args['summary']);
         const start = this.normalizeStringArg(args['start']);
@@ -2128,7 +2146,7 @@ export class VapiClient {
         const rawPhoneNumber = providedPhoneNumber ?? sessionPhoneNumber ?? null;
         const phoneNumber = this.normalizePhoneNumber(rawPhoneNumber);
 
-        console.log(`[VapiClient] Event params:`, {
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt params:`, {
           summary,
           start,
           end,
@@ -2160,14 +2178,14 @@ export class VapiClient {
             );
             if (calendarSelection) {
               selectedCalendarId = calendarSelection.calendarId;
-              console.log(`[VapiClient] Selected calendar ${selectedCalendarId} (${calendarSelection.summary ?? 'unknown'}) for booking.`);
+              console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âected calendar ${selectedCalendarId} (${calendarSelection.summary ?? 'unknown'}) for booking.`);
               const staffForCalendar = staffCalendarMap.get(calendarSelection.calendarId) ?? [];
               if (!assignedStaff && staffForCalendar.length > 0) {
                 assignedStaff = staffForCalendar[0];
               }
             }
           } catch (selectionError) {
-            console.warn('[VapiClient] Failed to resolve calendar availability', selectionError);
+            console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to resolve calendar availability', selectionError);
           }
         }
 
@@ -2182,7 +2200,7 @@ export class VapiClient {
           }
         }
 
-        console.log(`[VapiClient] Calendar assignment`, {
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âendar assignment`, {
           candidateCalendarIds,
           selectedCalendarId,
           assignedStaffId: assignedStaff?.id ?? null,
@@ -2191,13 +2209,13 @@ export class VapiClient {
 
         if (phoneNumber) {
           try {
-            console.log(`[VapiClient] Persisting caller ${phoneNumber} (${name})`);
+            console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âsisting caller ${phoneNumber} (${name})`);
             await this.companyService.createCompanyCaller(companyId, { name, phoneNumber });
           } catch (error) {
-            console.error('[VapiClient] Failed to persist caller info', error);
+            console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to persist caller info', error);
           }
         } else {
-          console.log('[VapiClient] No phone number provided; skipping caller persistence.');
+          console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âphone number provided; skipping caller persistence.');
         }
 
         const details: string[] = [];
@@ -2233,11 +2251,11 @@ export class VapiClient {
 
         event.extendedProperties = { private: privateProperties };
 
-        console.log(`[VapiClient] Creating event in calendar ${selectedCalendarId ?? 'primary'}...`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âating event in calendar ${selectedCalendarId ?? 'primary'}...`);
         const created = await this.googleService.scheduleEvent(companyId, event, {
           calendarId: selectedCalendarId ?? undefined,
         });
-        console.log(`[VapiClient] Event created:`, created.id);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt created:`, created.id);
 
         if (sessionRef) {
           this.updateSessionStaffPreference(sessionRef, sessionContext, {
@@ -2248,14 +2266,10 @@ export class VapiClient {
 
         return sendSuccess({
           event: created,
-          calendarId: selectedCalendarId ?? null,
-          staffMemberId: assignedStaff?.id ?? null,
-          staffMemberName: assignedStaff?.name ?? null,
-          calendarIdsQueried: candidateCalendarIds,
         });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
-        console.log(`[VapiClient] 🗑️ === CANCEL CALENDAR EVENT ===`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ === CANCEL CALENDAR EVENT ===`);
 
         const start = this.normalizeStringArg(args['start'] ?? args['startTime']);
         const sessionCallerName = this.normalizeStringArg(sessionContext?.callerName);
@@ -2269,7 +2283,7 @@ export class VapiClient {
           ? [staffPreference.calendarId]
           : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
 
-        console.log(`[VapiClient] Cancel params:`, {
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âcel params:`, {
           start,
           name,
           phoneNumber,
@@ -2281,15 +2295,24 @@ export class VapiClient {
           throw new Error('Ontbrekende starttijd of telefoonnummer om te annuleren.');
         }
 
-        console.log(`[VapiClient] Calling GoogleService.cancelEvent...`);
-        await this.googleService.cancelEvent(
-          companyId,
-          start,
-          phoneNumber,
-          name ?? undefined,
-          { calendarIds: calendarIdsToQuery ?? undefined },
-        );
-        console.log(`[VapiClient] Event cancelled`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âling GoogleService.cancelEvent...`);
+        if (calendarIdsToQuery && calendarIdsToQuery.length > 0) {
+          await this.googleService.cancelEvent(
+            companyId,
+            start,
+            phoneNumber,
+            name ?? undefined,
+            { calendarIds: calendarIdsToQuery },
+          );
+        } else {
+          await this.googleService.cancelEvent(
+            companyId,
+            start,
+            phoneNumber,
+            name ?? undefined,
+          );
+        }
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt cancelled`);
 
         if (sessionRef) {
           this.updateSessionStaffPreference(sessionRef, sessionContext, {
@@ -2402,24 +2425,24 @@ export class VapiClient {
     const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
 
     if (!handler) {
-      console.error(`[VapiClient] ❌ No handler found!`);
-      console.error(`[VapiClient] Looking for: ${normalizedToolName}`);
-      console.error(`[VapiClient] Available handlers:`, Object.keys(handlers));
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No handler found!`);
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âking for: ${normalizedToolName}`);
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âilable handlers:`, Object.keys(handlers));
       return sendError(`Onbekende tool: ${call.name}`);
     }
 
-    console.log(`[VapiClient] 🎯 Handler found, executing...`);
+    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â» Handler found, executing...`);
 
     try {
       const handlerResult = await handler();
-      console.log(`[VapiClient] ✅ Handler completed with result:`, handlerResult);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Handler completed with result:`, handlerResult);
 
       if (!payloadWasSet && handlerResult) {
-        console.log(`[VapiClient] Using handler return value as payload`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âng handler return value as payload`);
         finalPayload = handlerResult;
         this.recordToolResponse(call.id, handlerResult, normalizedToolName);
       } else if (!payloadWasSet) {
-        console.log(`[VapiClient] Handler returned no result, setting finalPayload to null`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âdler returned no result, setting finalPayload to null`);
         finalPayload = null;
       }
     } catch (error) {
@@ -2427,12 +2450,12 @@ export class VapiClient {
         error instanceof Error
           ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
           : `Onbekende fout bij uitvoeren van ${call.name}`;
-      console.error(`[VapiClient] ❌ Handler threw error:`, error);
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Handler threw error:`, error);
       return sendError(message, error);
     }
 
     if (!finalPayload) {
-      console.error(`[VapiClient] ❌ CRITICAL: No payload was set after execution!`);
+      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â CRITICAL: No payload was set after execution!`);
       const payload = {
         success: false,
         error: `Tool ${call.name} executed without response`,
@@ -2488,7 +2511,7 @@ export class VapiClient {
 
     const pending = this.availabilityPending.get(key);
     if (pending) {
-      console.log(`[VapiClient] �?� Awaiting in-flight availability request for ${key}`);
+      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â?Ãƒâ€šÃ‚Â´ÃƒÂ¢Ã¢â‚¬ÂÃ‚ÂÃƒâ€šÃ‚Â¢ Awaiting in-flight availability request for ${key}`);
       const result = await pending.promise;
       return {
         availability: result.availability,
@@ -2501,13 +2524,20 @@ export class VapiClient {
 
     const startedAt = Date.now();
     const availabilityPromise = (async () => {
-      const availability = await this.googleService.getAvailableSlots(
-        companyId,
-        date,
-        openHour,
-        closeHour,
-        { calendarIds: uniqueOrderedIds ?? undefined },
-      );
+      const availability = uniqueOrderedIds && uniqueOrderedIds.length > 0
+        ? await this.googleService.getAvailableSlots(
+            companyId,
+            date,
+            openHour,
+            closeHour,
+            { calendarIds: uniqueOrderedIds },
+          )
+        : await this.googleService.getAvailableSlots(
+            companyId,
+            date,
+            openHour,
+            closeHour,
+          );
 
       const perCalendarRanges: Record<string, AvailableRange[]> = {};
       const calendarEntries = availability.calendars ?? [];
@@ -2602,7 +2632,7 @@ export class VapiClient {
       timeoutHandle = setTimeout(() => {
         if (settled) return;
         settled = true;
-        console.warn(`[VapiClient] ⚠️ Operation timed out after ${timeoutMs}ms`);
+        console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Operation timed out after ${timeoutMs}ms`);
         clear();
         reject(new Error(timeoutMessage));
       }, timeoutMs);
@@ -2614,8 +2644,8 @@ export class VapiClient {
   public async handleToolWebhookRequest(
     body: unknown,
   ): Promise<{ results: Array<{ toolCallId: string; result?: any; error?: any }> }> {
-    console.log('[VapiClient] 🌐 Received tool webhook payload');
-    logPayload('[VapiClient] 🧾 Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
+    console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬Â° Received tool webhook payload');
+    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¥ Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
     const callId = VapiClient.extractCallIdFromWebhook(raw);
@@ -2624,7 +2654,7 @@ export class VapiClient {
     const fallbackToolCallId = this.extractToolCallId(raw);
     const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
     console.log(
-      '[VapiClient] 🔎 Extracted webhook context',
+      '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬Å¾ Extracted webhook context',
       {
         callId: callId ?? '<none>',
         normalizedName: normalized?.name ?? '<unknown>',
@@ -2635,9 +2665,9 @@ export class VapiClient {
     );
 
     if (!normalized) {
-      console.warn('[VapiClient] ⚠️ Unable to normalize tool call payload');
+      console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Unable to normalize tool call payload');
 
-      // ⬇️ IMPORTANT: pull the real id from message.* and echo it back
+      // ÃƒÆ’Ã¢â‚¬ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ IMPORTANT: pull the real id from message.* and echo it back
       const realId =
         this.extractToolCallId(raw)  // now checks message.toolCalls / toolCallList / toolWithToolCallList
         ?? toolCallId                // keep your earlier computed value as fallback
@@ -2652,7 +2682,7 @@ export class VapiClient {
 
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
     console.log(
-      '[VapiClient] 🔍 Session lookup result',
+      '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Session lookup result',
       {
         callId: callId ?? '<none>',
         sessionFound: Boolean(sessionInfo),
@@ -2674,21 +2704,21 @@ export class VapiClient {
                 config: registryContext.config,
               })) ?? { success: false, error: 'Tool execution returned empty result.' };
 
-            logPayload('[VapiClient] 📦 Tool execution payload (registry session)', payload);
+            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload (registry session)', payload);
             const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-            logPayload('[VapiClient] ⇨ Tool webhook response (registry session)', response);
+            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (registry session)', response);
             return response;
           } catch (error) {
             const message =
               error instanceof Error ? error.message : 'Tool execution failed for registry session.';
-            console.error('[VapiClient] ❌ Registry-backed tool execution failed', {
+            console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Registry-backed tool execution failed', {
               callId,
               error,
             });
             const payload = { success: false, error: message };
             this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
             const response = { results: [{ toolCallId, result: payload }] };
-            logPayload('[VapiClient] ⇨ Tool webhook response (registry session error)', response);
+            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (registry session error)', response);
             return response;
           }
         }
@@ -2701,7 +2731,7 @@ export class VapiClient {
         // If we have active sessions but no matching callId, use the first available session
         const firstCallId = Array.from(this.activeSessionsByCallId.keys())[0];
         fallbackSessionInfo = this.activeSessionsByCallId.get(firstCallId);
-        console.log(`[VapiClient] 🔄 Using fallback session for callId: ${firstCallId}`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¤ Using fallback session for callId: ${firstCallId}`);
       }
 
       const sessionToUse = sessionInfo || fallbackSessionInfo;
@@ -2710,10 +2740,10 @@ export class VapiClient {
         const recorded = this.toolResponseLog.get(toolCallId);
         if (recorded?.payload) {
           console.log(
-            `[VapiClient] ♻️ Returning cached tool response for ${toolCallId} (no active session)`,
+            `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Returning cached tool response for ${toolCallId} (no active session)`,
           );
           const response = { results: [{ toolCallId, result: recorded.payload }] };
-          logPayload('[VapiClient] ⇨ Tool webhook response (from cache)', response);
+          logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (from cache)', response);
           return response;
         }
         const payload = {
@@ -2724,7 +2754,7 @@ export class VapiClient {
         };
         this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
         const response = { results: [{ toolCallId, result: payload }] };
-        logPayload('[VapiClient] ⇨ Tool webhook response (no session)', response);
+        logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (no session)', response);
         return response;
       }
 
@@ -2737,9 +2767,9 @@ export class VapiClient {
         })
         ?? { success: false, error: 'Tool execution returned empty result.' };
 
-      logPayload('[VapiClient] 📦 Tool execution payload (fallback session)', payload);
+      logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload (fallback session)', payload);
       const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-      logPayload('[VapiClient] ⇨ Tool webhook response (fallback session)', response);
+      logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (fallback session)', response);
       return response;
     }
 
@@ -2752,9 +2782,9 @@ export class VapiClient {
       ?? { success: false, error: 'Tool execution returned empty result.' };
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
-    logPayload('[VapiClient] 📦 Tool execution payload', payload);
+    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload', payload);
     const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-    logPayload('[VapiClient] ⇨ Tool webhook response (success)', response);
+    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (success)', response);
     return response;
   }
 
@@ -2766,16 +2796,16 @@ export class VapiClient {
     if (this.toolResponseLog.size > 100) {
       const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
       if (oldestKey) {
-        console.log(`[VapiClient] 🧹 Evicting cached tool response ${oldestKey}`);
+        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â£ Evicting cached tool response ${oldestKey}`);
         this.toolResponseLog.delete(oldestKey);
       }
     }
 
-    console.log('[VapiClient] 🗂️ Recording tool response', {
+    console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Recording tool response', {
       toolCallId,
       normalizedName: normalizedName ?? '<unknown>',
     });
-    logPayload('[VapiClient] 🗂️ Tool response payload (cached)', payload);
+    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Tool response payload (cached)', payload);
     this.toolResponseLog.set(toolCallId, {
       timestamp: Date.now(),
       payload,
@@ -2787,14 +2817,14 @@ export class VapiClient {
     const context = this.sessionContexts.get(session);
     if (context?.callId) {
       console.log(
-        '[VapiClient] 🔻 Removing active session for callId',
+        '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã¢â‚¬â€ Removing active session for callId',
         context.callId,
       );
       this.activeSessionsByCallId.delete(context.callId);
       void this.sessionRegistry
         .unregisterSession(context.callId)
         .catch((error) =>
-          console.error('[VapiClient] Failed to unregister session from registry', {
+          console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to unregister session from registry', {
             callId: context.callId,
             error,
           }),
@@ -2823,7 +2853,7 @@ export class VapiClient {
     try {
       const record = await this.sessionRegistry.findSession(callId);
       if (!record) {
-        console.warn(`[VapiClient] 📭 No registry session found for callId=${callId}`);
+        console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¡ No registry session found for callId=${callId}`);
         return { callSid: null, config: null };
       }
 
@@ -2838,7 +2868,7 @@ export class VapiClient {
           config,
         });
       } catch (error) {
-        console.error('[VapiClient] ⚠️ Failed to refresh session TTL in registry', {
+        console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Failed to refresh session TTL in registry', {
           callId,
           error,
         });
@@ -2849,7 +2879,7 @@ export class VapiClient {
         config,
       };
     } catch (error) {
-      console.error('[VapiClient] ❌ Failed to load session context from registry', { callId, error });
+      console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to load session context from registry', { callId, error });
       return { callSid: null, config: null };
     }
   }
@@ -2870,7 +2900,7 @@ export class VapiClient {
         }
         return parsed;
       } catch (error) {
-        console.error('[VapiClient] ❌ Failed to parse registry session config', {
+        console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse registry session config', {
           callId: record.callId,
           error,
         });
@@ -3093,7 +3123,9 @@ export class VapiClient {
   private normalizeStoreId(value: unknown): 'shopify' | 'woocommerce' | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim().toLowerCase();
-    if (normalized === 'shopify' || normalized === 'woocommerce') return normalized;
+    if (normalized === 'shopify' || normalized === 'woocommerce') {
+      return normalized;
+    }
     return null;
   }
 
@@ -3108,15 +3140,15 @@ export class VapiClient {
     return config.hasGoogleIntegration ? 'google' : null;
   }
 
+  private isPhorestProvider(_config: VapiAssistantConfig): boolean {
+    return false;
+  }
+
   private getCalendarProviderName(provider: CalendarProvider | null): string {
-    switch (provider) {
-      case 'outlook':
-        return 'Outlook';
-      case 'google':
-        return 'Google';
-      default:
-        return 'agenda';
+    if (provider === 'google') {
+      return 'Google';
     }
+    return 'agenda';
   }
 
   private getCalendarProviderDescription(provider: CalendarProvider | null): string {
@@ -3217,7 +3249,7 @@ export class VapiClient {
           return cachedId;
         } catch (error) {
           console.warn(
-            `[VapiClient] Cached assistant ${cachedId} for company ${assistantName} could not be updated; recreating.`,
+            `[VapiClient] assistant ${cachedId} for company ${assistantName} could not be updated; recreating.`,
             error,
           );
           this.assistantCache.delete(cacheKey);
@@ -3232,7 +3264,7 @@ export class VapiClient {
           return existingId;
         } catch (error) {
           console.warn(
-            `[VapiClient] Existing assistant ${existingId} for company ${assistantName} could not be updated; creating new.`,
+            `[VapiClient] assistant ${existingId} for company ${assistantName} could not be updated; creating new.`,
             error,
           );
         }
@@ -3243,7 +3275,7 @@ export class VapiClient {
       return createdId;
     } catch (error: unknown) {
       this.logAxiosError(
-        `[VapiClient] Failed to sync assistant for company ${assistantName}`,
+        `[VapiClient] led to sync assistant for company ${assistantName}`,
         error,
         payload,
       );
@@ -3254,9 +3286,8 @@ export class VapiClient {
   private buildAssistantPayload(config: VapiAssistantConfig) {
     const instructions = this.buildSystemPrompt(config);
     const companyContext = this.buildCompanySnapshot(config);
-
     console.log(
-      `[VapiClient] 🏗️ Building assistant payload for company: ${config.company.name}, Google integration: ${config.hasGoogleIntegration}, commerce stores: ${(config.commerceStores ?? []).join(',') || 'none'}`,
+      `[VapiClient] Building assistant payload for company: ${config.company.name}, Google integration: ${config.hasGoogleIntegration}, commerce stores: ${(config.commerceStores ?? []).join(",") || "none"}`,
     );
     const tools = this.getTools(
       config.hasGoogleIntegration,
@@ -3272,7 +3303,7 @@ export class VapiClient {
 
     const payload: Record<string, unknown> = {
       name: this.getAssistantName(config),
-      transcriber: { provider: 'deepgram', language: 'multi' },
+      transcriber: { provider: 'deepgram', model: 'nova-3', language: 'multi' },
       model: {
         provider: this.modelProvider,
         model: this.modelName,
@@ -3284,6 +3315,7 @@ export class VapiClient {
       firstMessageMode: 'assistant-speaks-first',
       voicemailMessage: 'sorry er is helaas niemand anders beschikbaar op het moment',
       endCallMessage: 'Fijne dag!',
+      commerceStores: config.commerceStores ?? [],
     };
 
     const firstMessage = config.voiceSettings?.welcomePhrase?.trim();
@@ -3332,21 +3364,6 @@ export class VapiClient {
       metadata.tools = tools;
     }
 
-    if (config.productCatalog && config.productCatalog.length > 0) {
-      metadata.productCatalog = config.productCatalog
-        .slice(0, 25)
-        .map((product) => ({
-          id: product.id,
-          name: product.name,
-          sku: product.sku,
-          status: product.status,
-          version: product.version,
-          updatedAt: product.updatedAt,
-          synonyms: product.synonyms?.slice(0, 8),
-          summary: product.summary,
-        }));
-    }
-
     if (config.voiceSettings) {
       const voiceMetadata: Record<string, unknown> = {};
       const trimmedVoiceId = config.voiceSettings.voiceId?.trim();
@@ -3386,7 +3403,7 @@ export class VapiClient {
       const container = assistant.assistant ?? assistant;
       return container.id ?? container._id ?? null;
     } catch (error) {
-      this.logAxiosError(`[VapiClient] Failed to find assistant '${name}'`, error, undefined, 'warn');
+      this.logAxiosError(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to find assistant '${name}'`, error, undefined, 'warn');
       return null;
     }
   }
@@ -3402,7 +3419,7 @@ export class VapiClient {
       }
       return id;
     } catch (error) {
-      this.logAxiosError('[VapiClient] Failed to create assistant', error, payload);
+      this.logAxiosError('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to create assistant', error, payload);
       throw error;
     }
   }
@@ -3411,7 +3428,7 @@ export class VapiClient {
     try {
       await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
     } catch (error) {
-      this.logAxiosError(`[VapiClient] Failed to update assistant ${id}`, error, payload);
+      this.logAxiosError(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to update assistant ${id}`, error, payload);
       throw error;
     }
   }
@@ -3480,6 +3497,13 @@ export class VapiClient {
 }
 
 export type { VapiRealtimeSession };
+
+
+
+
+
+
+
 
 
 

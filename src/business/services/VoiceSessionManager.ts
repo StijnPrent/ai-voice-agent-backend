@@ -28,7 +28,7 @@ export class VoiceSessionManager {
 
         this.sessions.set(callSid, voiceService);
         console.log(
-            `[VoiceSessionManager] 🆕 Created VoiceService session`,
+            `[VoiceSessionManager] Created VoiceService session`,
             this.describeSession(voiceService, callSid)
         );
         return voiceService;
@@ -44,7 +44,7 @@ export class VoiceSessionManager {
 
         const session = this.sessions.get(callSid);
         console.log(
-            `[VoiceSessionManager] 🔎 Lookup by callSid ${callSid}: ${session ? "found" : "missing"}`
+            `[VoiceSessionManager] Lookup by callSid ${callSid}: ${session ? "found" : "missing"}`
         );
         return session;
     }
@@ -56,7 +56,7 @@ export class VoiceSessionManager {
 
         const session = this.sessionsByVapiCallId.get(callId);
         console.log(
-            `[VoiceSessionManager] 🔎 Lookup by Vapi callId ${callId}: ${session ? "found" : "missing"}`
+            `[VoiceSessionManager] Lookup by Vapi callId ${callId}: ${session ? "found" : "missing"}`
         );
         return session;
     }
@@ -70,7 +70,7 @@ export class VoiceSessionManager {
         if (callSid) {
             const session = this.sessions.get(callSid);
             console.log(
-                `[VoiceSessionManager] 🔁 resolveActiveSession explicit callSid=${callSid} -> ${
+                `[VoiceSessionManager] resolveActiveSession explicit callSid=${callSid} -> ${
                     session ? "found" : "missing"
                 }`
             );
@@ -80,13 +80,13 @@ export class VoiceSessionManager {
         if (this.sessions.size === 1) {
             const single = this.sessions.values().next().value as VoiceService | undefined;
             if (single) {
-                console.log("[VoiceSessionManager] 🔁 resolveActiveSession using sole active session");
+                console.log("[VoiceSessionManager] resolveActiveSession using sole active session");
                 return single;
             }
         }
 
         console.warn(
-            `[VoiceSessionManager] ⚠️ resolveActiveSession ambiguous (active=${this.sessions.size})`
+            `[VoiceSessionManager] resolveActiveSession ambiguous (active=${this.sessions.size})`
         );
         return undefined;
     }
@@ -111,7 +111,7 @@ export class VoiceSessionManager {
         if (!voiceService || existing === voiceService) {
             this.sessions.delete(callSid);
             console.log(
-                `[VoiceSessionManager] 🗑️ Released VoiceService session`,
+                `[VoiceSessionManager] Released VoiceService session`,
                 this.describeSession(existing, callSid)
             );
         }
@@ -132,7 +132,7 @@ export class VoiceSessionManager {
 
         this.sessionsByVapiCallId.set(callId, voiceService);
         console.log(
-            `[VoiceSessionManager] 🔗 Associated Vapi callId ${callId}`,
+            `[VoiceSessionManager] Associated Vapi callId ${callId}`,
             this.describeSession(voiceService)
         );
     }
@@ -150,7 +150,7 @@ export class VoiceSessionManager {
         if (!voiceService || existing === voiceService) {
             this.sessionsByVapiCallId.delete(callId);
             console.log(
-                `[VoiceSessionManager] 🔓 Released Vapi callId ${callId}`,
+                `[VoiceSessionManager] Released Vapi callId ${callId}`,
                 this.describeSession(existing)
             );
         }
