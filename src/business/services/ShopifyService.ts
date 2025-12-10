@@ -67,31 +67,6 @@ export class ShopifyService {
         await this.repo.deleteIntegration(companyId);
     }
 
-    public async listProducts(companyId: bigint, limit = 25): Promise<Array<{ id: string; title: string; raw: any }>> {
-        const integration = await this.ensureIntegration(companyId);
-        const version = config.shopifyApiVersion || "2024-07";
-        const safeLimit = Math.max(1, Math.min(limit, 50));
-        const url = `https://${integration.shopDomain}/admin/api/${version}/products.json`;
-
-        const response = await axios.get(url, {
-            headers: {
-                "X-Shopify-Access-Token": integration.accessToken,
-                "Content-Type": "application/json",
-            },
-            params: {
-                limit: safeLimit,
-                fields: "id,title,body_html,handle",
-            },
-        });
-
-        const products: any[] = Array.isArray(response.data?.products) ? response.data.products : [];
-        return products.map((p) => ({
-            id: String(p.id),
-            title: String(p.title ?? ""),
-            raw: p,
-        }));
-    }
-
     public async getProductByName(companyId: bigint, name: string): Promise<{ id: string; title: string; raw: any }> {
         const integration = await this.ensureIntegration(companyId);
         const version = config.shopifyApiVersion || "2024-07";
