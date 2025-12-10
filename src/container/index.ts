@@ -81,6 +81,9 @@ import { IWhatsappIntegrationRepository } from "../data/interfaces/IWhatsappInte
 import { WhatsappIntegrationRepository } from "../data/repositories/WhatsappIntegrationRepository";
 import { IWhatsappConversationRepository } from "../data/interfaces/IWhatsappConversationRepository";
 import { WhatsappConversationRepository } from "../data/repositories/WhatsappConversationRepository";
+import { CustomInstructionService } from "../business/services/CustomInstructionService";
+import { ICustomInstructionRepository } from "../data/interfaces/ICustomInstructionRepository";
+import { CustomInstructionRepository } from "../data/repositories/CustomInstructionRepository";
 
 // Register all clients in the container
 container.register(VapiClient, { useClass: VapiClient });
@@ -126,6 +129,7 @@ container.register(ProductKnowledgeService, { useClass: ProductKnowledgeService 
 container.register(AssistantContextBuilder, { useClass: AssistantContextBuilder });
 container.register(WhatsappIntegrationService, { useClass: WhatsappIntegrationService });
 container.register(WhatsappChatService, { useClass: WhatsappChatService });
+container.register(CustomInstructionService, { useClass: CustomInstructionService });
 
 // Register data repositories
 container.register<ICompanyRepository>("ICompanyRepository", {
@@ -196,6 +200,9 @@ container.register<IWhatsappIntegrationRepository>("IWhatsappIntegrationReposito
 })
 container.register<IWhatsappConversationRepository>("IWhatsappConversationRepository", {
     useClass: WhatsappConversationRepository,
+})
+container.register<ICustomInstructionRepository>("ICustomInstructionRepository", {
+    useClass: CustomInstructionRepository,
 })
 
 // Mail Client selection

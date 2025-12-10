@@ -29,6 +29,7 @@ import wooCommerceRoute from "./routes/WooCommerceRoute";
 import commerceRoute from "./routes/CommerceRoute";
 import billingRoute from "./routes/BillingRoute";
 import whatsappRoute from "./routes/WhatsappRoute";
+import customInstructionRoute from "./routes/CustomInstructionRoute";
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use("/woocommerce", wooCommerceRoute);
 app.use("/commerce", commerceRoute);
 app.use("/billing", billingRoute);
 app.use("/whatsapp", whatsappRoute);
+app.use("/custom-instructions", customInstructionRoute);
 mountLeadsMcpServer(app);
 
 const server = createServer(app);

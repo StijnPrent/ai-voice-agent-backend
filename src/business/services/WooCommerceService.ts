@@ -117,6 +117,36 @@ export class WooCommerceService {
         }
     }
 
+    public async listProducts(
+        companyId: bigint,
+        limit: number = 10
+    ): Promise<Array<{ id: string; name: string; price?: string | null; sku?: string | null; summary?: string | null }>> {
+        const integration = await this.ensureIntegration(companyId);
+        const version = integration.apiVersion || config.wooDefaultVersion || "wc/v3";
+        const sanitizedLimit = Math.min(20, Math.max(1, Math.floor(limit)));
+        const url = `${integration.storeUrl}/wp-json/${version}/products`;
+
+        const response = await axios.get(url, {
+            params: {
+                per_page: sanitizedLimit,
+                status: "publish",
+            },
+            auth: {
+                username: integration.consumerKey,
+                password: integration.consumerSecret,
+            },
+        });
+
+        const products: any[] = Array.isArray(response.data) ? response.data : [];
+        return products.slice(0, sanitizedLimit).map((p) => ({
+            id: String(p.id),
+            name: String(p.name ?? ""),
+            price: p.price ? String(p.price) : null,
+            sku: p.sku ?? null,
+            summary: typeof p.short_description === "string" ? p.short_description : null,
+        }));
+    }
+
     private normalizeStoreUrl(url: string): string {
         const trimmed = (url || "").trim();
         if (!trimmed) {

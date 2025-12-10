@@ -7,6 +7,7 @@ import { IVoiceRepository } from "../../data/interfaces/IVoiceRepository";
 import { ISchedulingRepository } from "../../data/interfaces/ISchedulingRepository";
 import { IntegrationService } from "./IntegrationService";
 import { AssistantSyncError } from "../errors/AssistantSyncError";
+import { CustomInstructionService } from "./CustomInstructionService";
 
 @injectable()
 export class AssistantSyncService {
@@ -19,7 +20,8 @@ export class AssistantSyncService {
         @inject("ICompanyRepository") private readonly companyRepository: ICompanyRepository,
         @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
         @inject("ISchedulingRepository") private readonly schedulingRepository: ISchedulingRepository,
-        @inject(IntegrationService) private readonly integrationService: IntegrationService
+        @inject(IntegrationService) private readonly integrationService: IntegrationService,
+        @inject(CustomInstructionService) private readonly customInstructionService: CustomInstructionService
     ) {}
 
     public async syncCompanyAssistant(companyId: bigint): Promise<void> {
@@ -118,11 +120,12 @@ export class AssistantSyncService {
             this.companyRepository.fetchCompanyCallers(companyId),
         ]);
 
-        const [appointmentTypes, staffMembers, calendarStatus, commerce] = await Promise.all([
+        const [appointmentTypes, staffMembers, calendarStatus, commerce, customInstructions] = await Promise.all([
             this.schedulingRepository.fetchAppointmentTypes(companyId),
             this.schedulingRepository.fetchStaffMembers(companyId),
             this.integrationService.getCalendarIntegrationStatus(companyId),
             this.integrationService.getCommerceConnections(companyId),
+            this.customInstructionService.list(companyId),
         ]);
         const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
         const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
@@ -153,6 +156,7 @@ export class AssistantSyncService {
             },
             productCatalog: [],
             voiceSettings,
+            customInstructions: customInstructions.map((i) => i.instruction),
         };
     }
 
