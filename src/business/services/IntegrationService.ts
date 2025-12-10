@@ -3,7 +3,7 @@ import { inject, injectable } from "tsyringe";
 import { IntegrationModel } from "../models/IntegrationModel";
 import config from "../../config/config";
 
-export type CalendarProvider = "google" | "outlook";
+export type CalendarProvider = "google";
 
 @injectable()
 export class IntegrationService {
@@ -17,8 +17,6 @@ export class IntegrationService {
         const connectMap: Record<string, { url: string; method: string }> = {
             google: { url: `${baseUrl}/google/oauth2/url`, method: "GET" },
             "google calendar": { url: `${baseUrl}/google/oauth2/url`, method: "GET" },
-            outlook: { url: `${baseUrl}/outlook/oauth2/url`, method: "GET" },
-            "outlook calendar": { url: `${baseUrl}/outlook/oauth2/url`, method: "GET" },
             shopify: { url: `${baseUrl}/shopify/start`, method: "POST" },
             woocommerce: { url: `${baseUrl}/woocommerce/connect`, method: "POST" },
         };
@@ -30,7 +28,7 @@ export class IntegrationService {
             const key = integration.name.toLowerCase();
             const mapping =
                 connectMap[key] ||
-                (key.includes("google") ? connectMap["google"] : key.includes("outlook") ? connectMap["outlook"] : undefined);
+                (key.includes("google") ? connectMap["google"] : undefined);
             return new IntegrationModel(
                 integration.integrationId,
                 integration.name,
@@ -84,15 +82,12 @@ export class IntegrationService {
     }
 
     public isCalendarConnected(status: CalendarIntegrationStatus): boolean {
-        return status.googleConnected || status.outlookConnected;
+        return status.googleConnected;
     }
 
     public pickCalendarProvider(status: CalendarIntegrationStatus): CalendarProvider | null {
         if (status.googleConnected) {
             return "google";
-        }
-        if (status.outlookConnected) {
-            return "outlook";
         }
         return null;
     }

@@ -81,6 +81,27 @@ export class CompanyService {
         return base ? `${base}${normalizedPath}` : normalizedPath;
     }
 
+    private async maybeSyncAssistant(companyId: bigint, options?: { skipAssistantSync?: boolean }) {
+        if (options?.skipAssistantSync) {
+            return;
+        }
+        await this.assistantSyncService.syncCompanyAssistant(companyId);
+    }
+
+    private normalizeBoolean(value: unknown): boolean {
+        if (typeof value === "boolean") {
+            return value;
+        }
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            return ["true", "1", "yes", "y"].includes(normalized);
+        }
+        if (typeof value === "number") {
+            return value !== 0;
+        }
+        return Boolean(value);
+    }
+
     private hashToken(token: string): string {
         return crypto.createHash("sha256").update(token).digest("hex");
     }
@@ -309,9 +330,13 @@ export class CompanyService {
     }
 
     // Company Info
-    public async addInfo(companyId: bigint, value: string): Promise<CompanyInfoModel> {
+    public async addInfo(
+        companyId: bigint,
+        value: string,
+        options?: { skipAssistantSync?: boolean }
+    ): Promise<CompanyInfoModel> {
         const info = await this.companyRepo.addInfo(companyId, value);
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        await this.maybeSyncAssistant(companyId, options);
         return info;
     }
 
@@ -319,21 +344,28 @@ export class CompanyService {
         return this.companyRepo.fetchInfo(companyId);
     }
 
-    public async updateInfo(id: number, value: string): Promise<CompanyInfoModel> {
+    public async updateInfo(
+        id: number,
+        value: string,
+        options?: { skipAssistantSync?: boolean }
+    ): Promise<CompanyInfoModel> {
         const info = new CompanyInfoModel(id, value, new Date());
         const updated = await this.companyRepo.updateInfo(info);
         const companyId = await this.companyRepo.getCompanyIdForInfo(id);
         if (companyId) {
-            await this.assistantSyncService.syncCompanyAssistant(companyId);
+            await this.maybeSyncAssistant(companyId, options);
         }
         return updated;
     }
 
-    public async removeInfo(infoId: number): Promise<void> {
+    public async removeInfo(
+        infoId: number,
+        options?: { skipAssistantSync?: boolean }
+    ): Promise<void> {
         const companyId = await this.companyRepo.getCompanyIdForInfo(infoId);
         await this.companyRepo.removeInfo(infoId);
         if (companyId) {
-            await this.assistantSyncService.syncCompanyAssistant(companyId);
+            await this.maybeSyncAssistant(companyId, options);
         }
     }
 
@@ -352,7 +384,8 @@ export class CompanyService {
             size?: string;
             foundedYear?: number;
             description?: string;
-        }
+        },
+        options?: { skipAssistantSync?: boolean }
     ): Promise<CompanyDetailsModel> {
         const existing = await this.companyRepo.fetchCompanyDetails(companyId);
         const details = new CompanyDetailsModel(
@@ -369,15 +402,18 @@ export class CompanyService {
             ? await this.companyRepo.updateCompanyDetails(details)
             : await this.companyRepo.addCompanyDetails(details);
 
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        await this.maybeSyncAssistant(companyId, options);
         return saved;
     }
 
-    public async deleteCompanyDetails(detailsId: number): Promise<void> {
+    public async deleteCompanyDetails(
+        detailsId: number,
+        options?: { skipAssistantSync?: boolean }
+    ): Promise<void> {
         const companyId = await this.companyRepo.getCompanyIdForDetails(detailsId);
         await this.companyRepo.deleteCompanyDetails(detailsId);
         if (companyId) {
-            await this.assistantSyncService.syncCompanyAssistant(companyId);
+            await this.maybeSyncAssistant(companyId, options);
         }
     }
 
@@ -396,7 +432,8 @@ export class CompanyService {
             email?: string;
             contact_email?: string;
             address?: string;
-        }
+        },
+        options?: { skipAssistantSync?: boolean }
     ): Promise<CompanyContactModel> {
         const existing = await this.companyRepo.fetchCompanyContact(companyId);
         const contact = new CompanyContactModel(
@@ -414,15 +451,18 @@ export class CompanyService {
             await this.companyRepo.addCompanyContact(contact);
         }
 
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        await this.maybeSyncAssistant(companyId, options);
         return (await this.companyRepo.fetchCompanyContact(companyId)) ?? contact;
     }
 
-    public async deleteCompanyContact(contactId: number): Promise<void> {
+    public async deleteCompanyContact(
+        contactId: number,
+        options?: { skipAssistantSync?: boolean }
+    ): Promise<void> {
         const companyId = await this.companyRepo.getCompanyIdForContact(contactId);
         await this.companyRepo.deleteCompanyContact(contactId);
         if (companyId) {
-            await this.assistantSyncService.syncCompanyAssistant(companyId);
+            await this.maybeSyncAssistant(companyId, options);
         }
     }
 
@@ -508,7 +548,8 @@ export class CompanyService {
         dayOfWeek: number,
         isOpen: boolean,
         openTime: string | null,
-        closeTime: string | null
+        closeTime: string | null,
+        options?: { skipAssistantSync?: boolean }
     ): Promise<CompanyHourModel> {
         const existing = await this.companyRepo.findCompanyHourByDay(companyId, dayOfWeek);
         const hour = new CompanyHourModel(
@@ -522,7 +563,7 @@ export class CompanyService {
         const saved = existing
             ? await this.companyRepo.updateCompanyHour(hour)
             : await this.companyRepo.addCompanyHour(hour);
-        await this.assistantSyncService.syncCompanyAssistant(companyId);
+        await this.maybeSyncAssistant(companyId, options);
         return saved;
     }
 
@@ -533,18 +574,19 @@ export class CompanyService {
     }
 
     public async updateCompanyHour(
-        hour: CompanyHourModel
+        hour: CompanyHourModel,
+        options?: { skipAssistantSync?: boolean }
     ): Promise<CompanyHourModel> {
         const saved = await this.companyRepo.updateCompanyHour(hour);
-        await this.assistantSyncService.syncCompanyAssistant(hour.companyId);
+        await this.maybeSyncAssistant(hour.companyId, options);
         return saved;
     }
 
-    public async deleteCompanyHour(hourId: number): Promise<void> {
+    public async deleteCompanyHour(hourId: number, options?: { skipAssistantSync?: boolean }): Promise<void> {
         const companyId = await this.companyRepo.getCompanyIdForHour(hourId);
         await this.companyRepo.deleteCompanyHour(hourId);
         if (companyId) {
-            await this.assistantSyncService.syncCompanyAssistant(companyId);
+            await this.maybeSyncAssistant(companyId, options);
         }
     }
 
@@ -562,5 +604,118 @@ export class CompanyService {
             info,
             callers,
         };
+    }
+
+    public async saveCompanyProfile(
+        companyId: bigint,
+        payload: {
+            details?: {
+                name?: string;
+                industry?: string;
+                size?: string;
+                foundedYear?: number;
+                description?: string;
+            };
+            contact?: {
+                website?: string;
+                phone?: string;
+                email?: string;
+                contact_email?: string;
+                address?: string;
+            };
+            hours?: Array<{
+                id?: number | null;
+                dayOfWeek: number;
+                isOpen: boolean;
+                openTime: string | null;
+                closeTime: string | null;
+            }>;
+            info?: Array<{
+                id?: number | null;
+                value: string;
+            }>;
+        }
+    ): Promise<{
+        details: CompanyDetailsModel | null;
+        contact: CompanyContactModel | null;
+        hours: CompanyHourModel[];
+        info: CompanyInfoModel[];
+    }> {
+        let didMutate = false;
+
+        const details = payload.details
+            ? await this.saveCompanyDetails(companyId, payload.details, { skipAssistantSync: true })
+            : await this.getCompanyDetails(companyId);
+        if (payload.details) {
+            didMutate = true;
+        }
+
+        const contact = payload.contact
+            ? await this.saveCompanyContact(companyId, payload.contact, { skipAssistantSync: true })
+            : await this.getCompanyContact(companyId);
+        if (payload.contact) {
+            didMutate = true;
+        }
+
+        if (payload.hours?.length) {
+            didMutate = true;
+            for (const hourInput of payload.hours) {
+                const safeDay = Math.min(Math.max(Math.floor(hourInput.dayOfWeek), 0), 6);
+                const isOpen = this.normalizeBoolean(hourInput.isOpen);
+                const normalizedOpen =
+                    typeof hourInput.openTime === "string" && hourInput.openTime.trim().length > 0
+                        ? hourInput.openTime
+                        : null;
+                const normalizedClose =
+                    typeof hourInput.closeTime === "string" && hourInput.closeTime.trim().length > 0
+                        ? hourInput.closeTime
+                        : null;
+
+                if (hourInput.id !== undefined && hourInput.id !== null) {
+                    await this.updateCompanyHour(
+                        new CompanyHourModel(
+                            Number(hourInput.id),
+                            companyId,
+                            safeDay,
+                            isOpen,
+                            normalizedOpen,
+                            normalizedClose
+                        ),
+                        { skipAssistantSync: true }
+                    );
+                } else {
+                    await this.addCompanyHour(
+                        companyId,
+                        safeDay,
+                        isOpen,
+                        normalizedOpen,
+                        normalizedClose,
+                        { skipAssistantSync: true }
+                    );
+                }
+            }
+        }
+
+        const hours = await this.getCompanyHours(companyId);
+
+        if (payload.info?.length) {
+            didMutate = true;
+            for (const infoInput of payload.info) {
+                const trimmedValue = (infoInput.value ?? "").trim();
+                if (infoInput.id !== undefined && infoInput.id !== null) {
+                    await this.updateInfo(Number(infoInput.id), trimmedValue, { skipAssistantSync: true });
+                } else {
+                    await this.addInfo(companyId, trimmedValue, { skipAssistantSync: true });
+                }
+            }
+        }
+
+        const info = await this.getCompanyInfo(companyId);
+
+        if (didMutate) {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        }
+
+        return { details, contact, hours, info };
     }
 }

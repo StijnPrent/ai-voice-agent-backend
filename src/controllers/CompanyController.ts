@@ -8,6 +8,7 @@ import { InvalidAccessCodeError } from "../business/errors/InvalidAccessCodeErro
 import { CompanyDetailsModel } from "../business/models/CompanyDetailsModel";
 import { CompanyContactModel } from "../business/models/CompanyContactModel";
 import { CompanyHourModel } from "../business/models/CompanyHourModel";
+import { CompanyInfoModel } from "../business/models/CompanyInfoModel";
 import { CompanyCallerModel } from "../business/models/CompanyCallerModel";
 import { EarlyAccessService } from "../business/services/EarlyAccessService";
 import { EmailNotVerifiedError } from "../business/errors/EmailNotVerifiedError";
@@ -61,6 +62,13 @@ export class CompanyController {
             isOpen: hour.isOpen,
             openTime: hour.openTime,
             closeTime: hour.closeTime,
+        };
+    }
+
+    private static mapInfo(info: CompanyInfoModel) {
+        return {
+            id: info.id,
+            value: info.value,
         };
     }
 
@@ -422,6 +430,154 @@ export class CompanyController {
             res.json(CompanyController.mapContact(saved));
         } catch (err) {
             this.handleError(res, err, "Error updating company contact");
+        }
+    }
+
+    // ---------- Company Profile (bulk) ----------
+    public async getCompanyProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+            const context = await this.service.getCompanyContext(companyId);
+            res.json({
+                details: CompanyController.mapDetails(context.details),
+                contact: CompanyController.mapContact(context.contact),
+                hours: context.hours.map(CompanyController.mapHour),
+                info: context.info.map(CompanyController.mapInfo),
+            });
+        } catch (err) {
+            this.handleError(res, err, "Error fetching company profile");
+        }
+    }
+
+    // ---------- Company Profile (bulk) ----------
+    public async saveCompanyProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
+        try {
+            const companyId = req.companyId;
+            if (!companyId) {
+                res.status(400).json({ message: "Company ID is missing from token." });
+                return;
+            }
+
+            const { details, contact, hours, info } = req.body ?? {};
+
+            let normalizedDetails: {
+                name?: string;
+                industry?: string;
+                size?: string;
+                foundedYear?: number;
+                description?: string;
+            } | undefined;
+            if (details && typeof details === "object") {
+                const parsedFoundedYear =
+                    details.foundedYear === undefined || details.foundedYear === null
+                        ? undefined
+                        : Number(details.foundedYear);
+                normalizedDetails = {
+                    name: details.name ?? undefined,
+                    industry: details.industry ?? undefined,
+                    size: details.size ?? undefined,
+                    foundedYear: Number.isFinite(parsedFoundedYear) ? parsedFoundedYear : undefined,
+                    description: details.description ?? undefined,
+                };
+            }
+
+            const normalizedContact =
+                contact && typeof contact === "object"
+                    ? {
+                        website: contact.website ?? undefined,
+                        phone: contact.phone ?? undefined,
+                        email: contact.email ?? contact.contact_email ?? undefined,
+                        contact_email: contact.contact_email ?? contact.email ?? undefined,
+                        address: contact.address ?? undefined,
+                    }
+                    : undefined;
+
+            const normalizedHours: Array<{
+                id?: number | null;
+                dayOfWeek: number;
+                isOpen: boolean;
+                openTime: string | null;
+                closeTime: string | null;
+            }> = [];
+
+            if (Array.isArray(hours)) {
+                for (const hour of hours) {
+                    const parsedDay = Number(hour?.dayOfWeek);
+                    if (!Number.isFinite(parsedDay)) {
+                        res.status(400).json({ message: "dayOfWeek must be a number for all hours." });
+                        return;
+                    }
+                    const safeDay = Math.min(Math.max(Math.floor(parsedDay), 0), 6);
+                    const normalizedOpen =
+                        typeof hour?.openTime === "string" && hour.openTime.trim().length > 0
+                            ? hour.openTime
+                            : null;
+                    const normalizedClose =
+                        typeof hour?.closeTime === "string" && hour.closeTime.trim().length > 0
+                            ? hour.closeTime
+                            : null;
+
+                    let parsedId: number | null = null;
+                    if (hour?.id !== undefined && hour?.id !== null) {
+                        parsedId = Number(hour.id);
+                        if (!Number.isFinite(parsedId)) {
+                            res.status(400).json({ message: "Hour id must be numeric when provided." });
+                            return;
+                        }
+                    }
+
+                    normalizedHours.push({
+                        id: parsedId,
+                        dayOfWeek: safeDay,
+                        isOpen: CompanyController.toBoolean(hour?.isOpen),
+                        openTime: normalizedOpen,
+                        closeTime: normalizedClose,
+                    });
+                }
+            }
+
+            const normalizedInfo: Array<{ id?: number | null; value: string }> = [];
+            if (Array.isArray(info)) {
+                for (const item of info) {
+                    const value = typeof item?.value === "string" ? item.value.trim() : "";
+                    if (!value) {
+                        res.status(400).json({ message: "value is required for company info items." });
+                        return;
+                    }
+
+                    const rawId = item?.id ?? item?.persistedId;
+                    let parsedId: number | null = null;
+                    if (rawId !== undefined && rawId !== null) {
+                        parsedId = Number(rawId);
+                        if (!Number.isFinite(parsedId)) {
+                            res.status(400).json({ message: "Info id must be numeric when provided." });
+                            return;
+                        }
+                    }
+
+                    normalizedInfo.push({ id: parsedId, value });
+                }
+            }
+
+            const result = await this.service.saveCompanyProfile(companyId, {
+                details: normalizedDetails,
+                contact: normalizedContact,
+                hours: normalizedHours.length ? normalizedHours : undefined,
+                info: normalizedInfo.length ? normalizedInfo : undefined,
+            });
+
+            res.json({
+                details: CompanyController.mapDetails(result.details),
+                contact: CompanyController.mapContact(result.contact),
+                hours: result.hours.map(CompanyController.mapHour),
+                info: result.info.map(CompanyController.mapInfo),
+            });
+        } catch (err) {
+            this.handleError(res, err, "Error saving company profile");
         }
     }
 

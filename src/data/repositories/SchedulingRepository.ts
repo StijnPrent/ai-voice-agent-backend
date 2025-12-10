@@ -272,6 +272,11 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         await this.execute<ResultSetHeader>(sql, [staffId, companyId]);
     }
 
+    public async updateStaffPhorestId(companyId: bigint, staffId: number, phorestStaffId: string | null): Promise<void> {
+        // Phorest is not available in this environment; no-op for compatibility.
+        return;
+    }
+
     /**
      * Haalt ALLE medewerkers op:
      * - specialties (tags)
