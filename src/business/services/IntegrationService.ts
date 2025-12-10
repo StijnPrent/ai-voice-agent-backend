@@ -2,7 +2,7 @@ import { CalendarIntegrationStatus, IIntegrationRepository } from "../../data/in
 import {inject, injectable} from "tsyringe";
 import {IntegrationModel} from "../models/IntegrationModel";
 
-export type CalendarProvider = "google" | "outlook" | "phorest";
+export type CalendarProvider = "google";
 
 @injectable()
 export class IntegrationService {
@@ -25,18 +25,12 @@ export class IntegrationService {
     }
 
     public isCalendarConnected(status: CalendarIntegrationStatus): boolean {
-        return status.googleConnected || status.outlookConnected || status.phorestConnected;
+        return status.googleConnected;
     }
 
     public pickCalendarProvider(status: CalendarIntegrationStatus): CalendarProvider | null {
-        if (status.phorestConnected) {
-            return "phorest";
-        }
         if (status.googleConnected) {
             return "google";
-        }
-        if (status.outlookConnected) {
-            return "outlook";
         }
         return null;
     }

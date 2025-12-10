@@ -114,7 +114,7 @@ export class VoiceService {
      * @param callSid Twilio call identifier used for logging, repository lookups, and Vapi
      * session association.
      * @param streamSid Twilio media stream identifier returned to Twilio in `clear` events.
-     * @param to Destination phone number for the call. Must be present—used to resolve the
+     * @param to Destination phone number for the call. Must be presentâ€”used to resolve the
      * owning company and their voice settings; streaming cannot continue without a match.
      * @param from Optional caller phone number. If omitted, we fall back to the value embedded in
      * the first Twilio media event (`initialEvent`). Used for caller tracking and transfer logic.
@@ -514,11 +514,18 @@ export class VoiceService {
         phoneNumber?: string | null,
         options?: { callSid?: string | null; callerId?: string | null; reason?: string | null }
     ): Promise<{ transferredTo: string; callSid: string }> {
-        const candidateStreamCallSid = options?.callSid ?? this.callSid;
-        const selectedCallSid = this.parentCallSid ?? candidateStreamCallSid;
+        const isTwilioCallSid = (value: string) => /^CA[a-zA-Z0-9]{32}$/.test(value.trim());
 
-        if (!selectedCallSid) {
-            throw new Error("Er is geen actieve callSid beschikbaar om door te verbinden.");
+        // Only consider real Twilio callSids, prefer the live callSid, then parentCallSid, then any provided override.
+        const rawCandidates = [
+            this.callSid,
+            this.parentCallSid,
+            options?.callSid ?? null,
+        ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+
+        const callSidCandidates = rawCandidates.filter(isTwilioCallSid);
+        if (callSidCandidates.length === 0) {
+            throw new Error("Er is geen actieve Twilio callSid beschikbaar om door te verbinden.");
         }
 
         const candidateTarget = phoneNumber ?? this.companyTransferNumber;
@@ -527,7 +534,8 @@ export class VoiceService {
             throw new Error("Er is geen geldig doelnummer voor doorverbinden beschikbaar.");
         }
 
-        const callerIdCandidate = options?.callerId ?? this.companyTwilioNumber ?? null;
+        // Prefer an explicit callerId, otherwise present the original caller number, then fall back to the company's Twilio number.
+        const callerIdCandidate = options?.callerId ?? this.callerNumber ?? this.companyTwilioNumber ?? null;
         let sanitizedCallerId = callerIdCandidate
             ? this.sanitizeTransferTarget(callerIdCandidate)
             : null;
@@ -538,7 +546,7 @@ export class VoiceService {
                 sanitizedCallerId = this.sanitizeTransferTarget(fallbackCallerId);
                 if (sanitizedCallerId) {
                     console.log(
-                        `[${selectedCallSid}] Using fallback callerId from TWILIO_FROM environment variable (${sanitizedCallerId})`
+                        `[${this.callSid ?? "unknown"}] Using fallback callerId from TWILIO_FROM environment variable (${sanitizedCallerId})`
                     );
                 }
             }
@@ -546,40 +554,48 @@ export class VoiceService {
 
         if (!sanitizedCallerId) {
             console.warn(
-                `[${selectedCallSid}] ⚠️ No callerId configured for transfer; Twilio may reject the dial. Configure a valid Twilio number.`
+                `[${this.callSid ?? "unknown"}] No callerId configured for transfer; Twilio may reject the dial. Configure a valid Twilio number.`
             );
         }
 
         const reasonLog = options?.reason ? ` (reden: ${options.reason})` : "";
-        console.log(
-            `[${selectedCallSid}] Doorverbinden naar ${sanitizedTarget}${
-                sanitizedCallerId ? ` met callerId ${sanitizedCallerId}` : ""
-            }${reasonLog}`
-        );
+        let lastError: unknown;
 
-        try {
-            await this.twilioClient.transferCall(selectedCallSid, sanitizedTarget, {
-                callerId: sanitizedCallerId,
-                reason: options?.reason ?? null,
-            });
-        } catch (error) {
-            console.error(`[${selectedCallSid}] ❌ Doorverbinden mislukt`, error);
-            throw (
-                error instanceof Error
-                    ? error
-                    : new Error("Doorverbinden mislukt door een onbekende fout.")
+        for (const candidate of callSidCandidates) {
+            const callSid = candidate.trim();
+            console.log(
+                `[${callSid}] Doorverbinden naar ${sanitizedTarget}${
+                    sanitizedCallerId ? ` met callerId ${sanitizedCallerId}` : ""
+                }${reasonLog}`
             );
+
+            try {
+                await this.twilioClient.transferCall(callSid, sanitizedTarget, {
+                    callerId: sanitizedCallerId,
+                    reason: options?.reason ?? null,
+                });
+                return { transferredTo: sanitizedTarget, callSid };
+            } catch (error) {
+                lastError = error;
+                console.error(`[${callSid}] Doorverbinden mislukt`, error);
+            }
         }
 
-        return { transferredTo: sanitizedTarget, callSid: selectedCallSid };
-    }
-
-    public getVapiCallId(): string | null {
+        throw (
+            lastError instanceof Error
+                ? lastError
+                : new Error("Doorverbinden mislukt door een onbekende fout.")
+        );
+    }public getVapiCallId(): string | null {
         return this.vapiCallId;
     }
 
     public getCallSid(): string | null {
         return this.callSid;
+    }
+
+    public getParentCallSid(): string | null {
+        return this.parentCallSid;
     }
 
     public async handleVapiToolWebhook(body: unknown) {
@@ -590,43 +606,49 @@ export class VoiceService {
 
         try {
             const preview = this.safeSerialize(body);
-            console.log(`[${callSid}] [VoiceService] ⇦ Delegated tool webhook payload ${contextLabel}`, preview);
+            console.log(`[${callSid}] [VoiceService] â‡¦ Delegated tool webhook payload ${contextLabel}`, preview);
         } catch (error) {
-            console.warn(`[${callSid}] [VoiceService] ⚠️ Failed to preview incoming tool webhook ${contextLabel}`, error);
+            console.warn(`[${callSid}] [VoiceService] âš ï¸ Failed to preview incoming tool webhook ${contextLabel}`, error);
         }
 
         const result = await this.vapiClient.handleToolWebhookRequest(body);
 
         try {
             const preview = this.safeSerialize(result);
-            console.log(`[${callSid}] [VoiceService] ⇨ Tool webhook response ${contextLabel}`, preview);
+            console.log(`[${callSid}] [VoiceService] â‡¨ Tool webhook response ${contextLabel}`, preview);
         } catch (error) {
-            console.warn(`[${callSid}] [VoiceService] ⚠️ Failed to preview outgoing tool webhook response ${contextLabel}`, error);
+            console.warn(`[${callSid}] [VoiceService] âš ï¸ Failed to preview outgoing tool webhook response ${contextLabel}`, error);
         }
 
         return result;
     }
 
     private resolveTransferTarget(): string | null {
+        const callId = this.callSid ?? "unknown";
+
         if (this.companyTransferNumber) {
             return this.companyTransferNumber;
         }
 
-        const envFallback = process.env.TWILIO_TO?.trim();
-        if (!envFallback) {
-            return null;
+        const envFallback = this.sanitizeTransferTarget(process.env.TWILIO_TO ?? "");
+        if (envFallback) {
+            console.log(
+                `[${callId}] Using TWILIO_TO as fallback transfer target: ${envFallback}`
+            );
+            this.companyTransferNumber = envFallback;
+            return envFallback;
         }
 
-        const sanitized = this.sanitizeTransferTarget(envFallback);
-        if (!sanitized) {
-            return null;
+        const twilioNumber = this.sanitizeTransferTarget(this.companyTwilioNumber ?? "");
+        if (twilioNumber) {
+            console.log(
+                `[${callId}] Using company Twilio number as last-resort transfer target: ${twilioNumber}`
+            );
+            this.companyTransferNumber = twilioNumber;
+            return twilioNumber;
         }
 
-        console.log(
-            `[${this.callSid ?? "unknown"}] Using TWILIO_TO as fallback transfer target: ${sanitized}`
-        );
-        this.companyTransferNumber = sanitized;
-        return sanitized;
+        return null;
     }
 
     private sanitizeTransferTarget(target: string): string {
@@ -667,7 +689,7 @@ export class VoiceService {
                 return serialized;
             }
 
-            return `${serialized.slice(0, limit)}… (truncated ${serialized.length - limit} chars)`;
+            return `${serialized.slice(0, limit)}â€¦ (truncated ${serialized.length - limit} chars)`;
         } catch (error) {
             return `[unserializable: ${(error as Error)?.message ?? "unknown error"}]`;
         }
@@ -1010,7 +1032,7 @@ export class VoiceService {
             console.log(`${contextParts[0]} [Dial ${kind}] payload=${preview}`);
         } catch (error) {
             console.warn(
-                `${contextParts[0]} [Dial ${kind}] ⚠️ Failed to serialize payload`,
+                `${contextParts[0]} [Dial ${kind}] âš ï¸ Failed to serialize payload`,
                 error instanceof Error ? error.message : error
             );
         }
@@ -1063,3 +1085,4 @@ type TwilioMediaStreamEvent = {
 };
 
 type NullableString = string | null | undefined;
+

@@ -16,23 +16,18 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
         i.category             AS category,
         i.logo                 AS logo,
         CASE
-          WHEN gci.company_id IS NOT NULL
-            OR phi.company_id IS NOT NULL
-          THEN 'connected'
+          WHEN gci.company_id IS NOT NULL THEN 'connected'
           ELSE 'disconnected'
         END                    AS status,
-        COALESCE(gci.updated_at, phi.updated_at) AS lastSync,
+        gci.updated_at     AS lastSync,
         i.updated_at           AS integrationUpdatedAt
       FROM integrations i
       LEFT JOIN google_calendar_integrations gci
         ON gci.integration_id = i.id
        AND gci.company_id    = ?
-      LEFT JOIN phorest_integrations phi
-        ON phi.integration_id = i.id
-       AND phi.company_id    = ?
       ORDER BY i.name;
     `;
-        const rows = await this.execute<RowDataPacket[]>(sql, [companyId, companyId, companyId]);
+        const rows = await this.execute<RowDataPacket[]>(sql, [companyId]);
         return rows.map(r => new IntegrationModel(
             r.integrationId,
             r.name,
@@ -47,22 +42,21 @@ export class IntegrationRepository extends BaseRepository implements IIntegratio
 
     public async hasCalendarConnected(companyId: bigint): Promise<boolean> {
         const status = await this.getCalendarIntegrationStatus(companyId);
-        return status.googleConnected || status.outlookConnected || status.phorestConnected;
+        return status.googleConnected;
     }
 
     public async getCalendarIntegrationStatus(companyId: bigint): Promise<CalendarIntegrationStatus> {
         const sql = `
             SELECT
-                EXISTS(SELECT 1 FROM google_calendar_integrations WHERE company_id = ?)  AS googleConnected,
-                EXISTS(SELECT 1 FROM phorest_integrations WHERE company_id = ?)         AS phorestConnected
+                EXISTS(SELECT 1 FROM google_calendar_integrations WHERE company_id = ?)   AS googleConnected
         `;
         const idParam = companyId.toString();
-        const rows = await this.execute<RowDataPacket[]>(sql, [idParam, idParam, idParam]);
-        const row = rows[0] ?? { googleConnected: 0, outlookConnected: 0, phorestConnected: 0 };
+        const rows = await this.execute<RowDataPacket[]>(sql, [idParam]);
+        const row = rows[0] ?? { googleConnected: 0 };
         return {
             googleConnected: Boolean(row.googleConnected),
-            outlookConnected: Boolean(row.outlookConnected),
-            phorestConnected: Boolean(row.phorestConnected),
+            outlookConnected: false,
+            phorestConnected: false,
         };
     }
 

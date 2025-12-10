@@ -210,16 +210,15 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
 
         const sql = `
             INSERT INTO staff_members
-                (company_id, name, role_title, google_calendar_id, google_calendar_summary, phorest_staff_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+                (company_id, name, role_title, google_calendar_id, google_calendar_summary, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
         `;
         const res = await this.execute<ResultSetHeader>(sql, [
             model.companyId,
             model.name,
             model.role,
             model.googleCalendarId ?? null,
-            model.googleCalendarSummary ?? null,
-            model.phorestStaffId ?? null
+            model.googleCalendarSummary ?? null
         ]);
         const staffId = res.insertId;
 
@@ -243,15 +242,13 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
             "role_title = ?",
             "google_calendar_id = ?",
             "google_calendar_summary = ?",
-            "phorest_staff_id = ?",
             "updated_at = NOW()"
         ];
         const params: any[] = [
             model.name,
             model.role,
             model.googleCalendarId ?? null,
-            model.googleCalendarSummary ?? null,
-            model.phorestStaffId ?? null
+            model.googleCalendarSummary ?? null
         ];
 
         const sql = `
@@ -276,12 +273,8 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
     }
 
     public async updateStaffPhorestId(companyId: bigint, staffId: number, phorestStaffId: string | null): Promise<void> {
-        const sql = `
-            UPDATE staff_members
-            SET phorest_staff_id = ?, updated_at = NOW()
-            WHERE id = ? AND company_id = ?
-        `;
-        await this.execute<ResultSetHeader>(sql, [phorestStaffId ?? null, staffId, companyId]);
+        // Phorest is not available in this environment; no-op for compatibility.
+        return;
     }
 
     /**
@@ -295,7 +288,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
         const baseSql = `
             SELECT
                 sm.id AS staff_id, sm.company_id, sm.name, sm.role_title,
-                sm.google_calendar_id, sm.google_calendar_summary, sm.phorest_staff_id,
+                sm.google_calendar_id, sm.google_calendar_summary,
                 sm.created_at, sm.updated_at,
                 s.id AS spec_id, s.name AS spec_name
             FROM staff_members sm
@@ -323,9 +316,7 @@ export class SchedulingRepository extends BaseRepository implements ISchedulingR
                     typeof r.google_calendar_summary === "string" && r.google_calendar_summary.trim().length > 0
                         ? r.google_calendar_summary.trim()
                         : null,
-                    typeof r.phorest_staff_id === "string" && r.phorest_staff_id.trim().length > 0
-                        ? r.phorest_staff_id.trim()
-                        : null,
+                    null,
                     r.created_at,
                     r.updated_at
                 );
