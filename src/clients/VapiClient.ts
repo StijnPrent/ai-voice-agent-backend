@@ -234,7 +234,6 @@ const TOOL_NAMES = {
   cancelGoogleCalendarEvent: 'cancel_google_calendar_event',
   getProductDetailsByName: 'get_product_details_by_name',
   getOrderStatus: 'get_order_status',
-  listStoreProducts: 'list_store_products',
   fetchProductInfo: 'fetch_product_info',
   listStoreProducts: 'list_store_products',
 } as const;
@@ -252,7 +251,6 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.cancelGoogleCalendarEvent,
   TOOL_NAMES.getProductDetailsByName,
   TOOL_NAMES.getOrderStatus,
-  TOOL_NAMES.listStoreProducts,
   TOOL_NAMES.fetchProductInfo,
   TOOL_NAMES.listStoreProducts,
 ]);
