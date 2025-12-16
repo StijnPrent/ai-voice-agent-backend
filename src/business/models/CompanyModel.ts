@@ -9,6 +9,7 @@ export class CompanyModel {
         private _assistantId: string | null = null,
         private _assistantEnabled: boolean = true,
         private _assistantOutsideHoursOnly: boolean = false,
+        private _assistantTransfersEnabled: boolean = true,
         private _emailVerifiedAt: Date | null = null,
         private _useType: string | null = null,
     ) {}
@@ -24,6 +25,7 @@ export class CompanyModel {
             assistantId: this.assistantId,
             assistantEnabled: this.assistantEnabled,
             assistantOutsideHoursOnly: this.assistantOutsideHoursOnly,
+            assistantTransfersEnabled: this.assistantTransfersEnabled,
             emailVerifiedAt: this.emailVerifiedAt ? this.emailVerifiedAt.toISOString() : null,
             useType: this.useType,
         };
@@ -63,6 +65,10 @@ export class CompanyModel {
 
     public get assistantOutsideHoursOnly(): boolean {
         return this._assistantOutsideHoursOnly;
+    }
+
+    public get assistantTransfersEnabled(): boolean {
+        return this._assistantTransfersEnabled;
     }
 
     public get emailVerifiedAt(): Date | null {

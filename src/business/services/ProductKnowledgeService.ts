@@ -7,6 +7,7 @@ import {
     ProductStructuredContent,
 } from "../models/ProductKnowledgeModel";
 import { IProductKnowledgeRepository, ProductUpsertInput } from "../../data/interfaces/IProductKnowledgeRepository";
+import { AssistantSyncService } from "./AssistantSyncService";
 
 const faqSchema = z.object({
     question: z.string().min(1, "FAQ question is required."),
@@ -48,7 +49,8 @@ type IngestOptions = {
 @injectable()
 export class ProductKnowledgeService {
     constructor(
-        @inject("IProductKnowledgeRepository") private readonly repository: IProductKnowledgeRepository
+        @inject("IProductKnowledgeRepository") private readonly repository: IProductKnowledgeRepository,
+        @inject(AssistantSyncService) private readonly assistantSyncService: AssistantSyncService
     ) {}
 
     public async listCatalog(companyId: bigint, status?: ProductStatus): Promise<ProductKnowledgeModel[]> {
@@ -64,10 +66,14 @@ export class ProductKnowledgeService {
         if (payload.id) {
             const existing = await this.repository.getById(companyId, payload.id);
             if (existing) {
-                return this.repository.update(companyId, payload.id, normalized);
+                const updated = await this.repository.update(companyId, payload.id, normalized);
+                void this.queueAssistantSync(companyId);
+                return updated;
             }
         }
-        return this.repository.create(companyId, normalized);
+        const created = await this.repository.create(companyId, normalized);
+        void this.queueAssistantSync(companyId);
+        return created;
     }
 
     public async ingestFromText(
@@ -83,7 +89,9 @@ export class ProductKnowledgeService {
         const parsedFromJson = this.tryParseJsonArray(sanitized);
         const rawProducts = parsedFromJson ?? (await this.runStructuredExtraction(sanitized, filename));
         const validated = this.validateProducts(rawProducts, targetStatus, source);
-        return this.repository.bulkUpsert(companyId, validated, targetStatus);
+        const saved = await this.repository.bulkUpsert(companyId, validated, targetStatus);
+        void this.queueAssistantSync(companyId);
+        return saved;
     }
 
     private normalizeProduct(payload: ProductUpsertInput): ProductUpsertInput {
@@ -161,6 +169,17 @@ export class ProductKnowledgeService {
                 source: source ?? "ingestion",
             })
         );
+    }
+
+    private async queueAssistantSync(companyId: bigint): Promise<void> {
+        try {
+            await this.assistantSyncService.syncCompanyAssistant(companyId);
+        } catch (error) {
+            console.error(
+                `[ProductKnowledgeService] Failed to sync assistant for company ${companyId.toString()}`,
+                error
+            );
+        }
     }
 
     private tryParseJsonArray(raw: string): unknown[] | null {

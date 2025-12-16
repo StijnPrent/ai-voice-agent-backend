@@ -89,7 +89,7 @@ export class CallLogService {
     public async getCallDetails(companyId: bigint, callSid: string): Promise<CallDetailsResponse> {
         const record = await this.callLogRepository.getCallBySid(companyId, callSid);
         if (!record) {
-            throw new ResourceNotFoundError("Call not found for the specified company.");
+            throw new ResourceNotFoundError("Call not found or older than 14 days for the specified company.");
         }
 
         if (!record.vapiCallId) {

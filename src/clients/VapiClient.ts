@@ -1,4 +1,4 @@
-﻿// src/clients/VapiClient.ts
+// src/clients/VapiClient.ts
 import axios, { AxiosInstance } from 'axios';
 import WebSocket, { RawData } from 'ws';
 import { inject, injectable, delay } from 'tsyringe';
@@ -22,6 +22,7 @@ import type { CalendarProvider } from '../business/services/IntegrationService';
 import { ProductKnowledgeService } from '../business/services/ProductKnowledgeService';
 import { ShopifyService } from '../business/services/ShopifyService';
 import { WooCommerceService } from '../business/services/WooCommerceService';
+import { TransactionalMailService } from '../business/services/TransactionalMailService';
 
 type CompanyContext = {
   details: CompanyDetailsModel | null;
@@ -162,7 +163,7 @@ const logPayload = (label: string, payload: unknown, limit = PAYLOAD_LOG_LIMIT) 
     }
 
     console.log(
-      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª`,
+      `${label} (truncated to ${limit} of ${serialized.length} chars): ${serialized.slice(0, limit)}...`,
     );
   } catch (error) {
     console.log(`${label} (stringify failed)`, { error, payload });
@@ -236,6 +237,7 @@ const TOOL_NAMES = {
   getOrderStatus: 'get_order_status',
   fetchProductInfo: 'fetch_product_info',
   listStoreProducts: 'list_store_products',
+  sendCallerNote: 'send_caller_note',
 } as const;
 
 const LEGACY_TOOL_ALIASES = new Map<string, (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
@@ -253,6 +255,7 @@ const KNOWN_TOOL_NAMES = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
   TOOL_NAMES.getOrderStatus,
   TOOL_NAMES.fetchProductInfo,
   TOOL_NAMES.listStoreProducts,
+  TOOL_NAMES.sendCallerNote,
 ]);
 
 class VapiRealtimeSession {
@@ -272,7 +275,7 @@ class VapiRealtimeSession {
 
     try {
       const type = typeof (frame as any)?.type === 'string' ? (frame as any).type : 'unknown';
-      logPayload(`[VapiRealtimeSession] ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â¿ Sending JSON frame (${type})`, frame, PAYLOAD_LOG_LIMIT);
+      logPayload(`[VapiRealtimeSession] Sending JSON frame (${type})`, frame, PAYLOAD_LOG_LIMIT);
       const payload = JSON.stringify(frame);
       this.socket.send(payload);
     } catch (error) {
@@ -325,6 +328,7 @@ export class VapiClient {
     string,
     { session: VapiRealtimeSession; callbacks: VapiRealtimeCallbacks; callSid: string }
   >();
+  private readonly callerNoteLog = new Map<string, { signature: string; timestamp: number; to: string }>();
   private readonly sessionConfigs = new Map<string, VapiAssistantConfig>();
   private readonly toolResponseLog = new Map<
     string,
@@ -333,11 +337,13 @@ export class VapiClient {
   private currentConfig: VapiAssistantConfig | null = null;
   private toolResults = new Map<string, unknown>();
   private readonly workerId: string;
+  private readonly productAutoMatchThreshold = 0.82;
 
   constructor(
     @inject(GoogleService) private readonly googleService: GoogleService,
     @inject(delay(() => CompanyService)) private readonly companyService: CompanyService = {} as any,
     @inject(ProductKnowledgeService) private readonly productKnowledgeService: ProductKnowledgeService = {} as any,
+    @inject(TransactionalMailService) private readonly mailService: TransactionalMailService = {} as any,
     @inject(VapiSessionRegistry)
     private readonly sessionRegistry: VapiSessionRegistry = {
       registerSession: async () => { },
@@ -349,7 +355,7 @@ export class VapiClient {
   ) {
     this.apiKey = process.env.VAPI_API_KEY || '';
     if (!this.apiKey) {
-      console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂI_API_KEY is not set. Requests to Vapi will fail.');
+      console.warn('[VapiClient] VAPI_API_KEY is not set. Requests to Vapi will fail.');
     }
 
     const apiBaseUrl = process.env.VAPI_API_BASE_URL || 'https://api.vapi.ai';
@@ -391,7 +397,7 @@ export class VapiClient {
 
   private buildApiPath(path: string): string {
     if (!path.startsWith('/')) {
-      throw new Error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â paths must start with '/'. Received: ${path}`);
+      throw new Error(`[VapiClient] API paths must start with '/'. Received: ${path}`);
     }
     const normalizedPath = path.replace(/^\/+/, '');
     const segments = [this.apiPathPrefix, normalizedPath].filter((s) => s.length > 0);
@@ -737,11 +743,11 @@ export class VapiClient {
       '- Als de beller Nederlands spreekt, antwoord dan volledig in het Nederlands.',
       '- Als de beller Engels spreekt, antwoord dan volledig in het Engels.',
       '- Schakel direct van taal wanneer de beller van taal verandert.',
-      '- Meng nooit meerdere talen in één antwoord.',
+      '- Meng nooit meerdere talen in een antwoord.',
 
       'Je tekstoutput moet altijd in dezelfde taal zijn als de beller.',
 
-      'Je TTS-stem is in één taal geconfigureerd, maar je mag in elke taal antwoorden; het systeem zal dit automatisch naar spraak omzetten.'
+      'Je TTS-stem is in een taal geconfigureerd, maar je mag in elke taal antwoorden; het systeem zal dit automatisch naar spraak omzetten.'
     ];
 
     const hasCommerce = (effectiveConfig.commerceStores?.length ?? 0) > 0;
@@ -750,19 +756,24 @@ export class VapiClient {
       instructions.push(productInstruction);
       instructions.push(
         'Gebruik productinformatie primair als handleiding/troubleshooting. Als het antwoord niet in de gids staat of onzeker is, geef dat eerlijk aan en bied direct aan om door te verbinden naar een medewerker.',
+        'Aftercare/support hoort altijd via de kennisbank tool \'fetch_product_info\'. Commerce tools zijn alleen voor assortiment/prijzen/bestelstatus en nooit voor support of troubleshooting.',
+        'Voordat je een productId vastzet: doe een fuzzy match op naam/SKU/synoniemen en stel maximaal 2 korte verduidelijkingsvragen. Kies alleen een productId als de match-score duidelijk boven de drempel ligt of de klant expliciet bevestigt.',
+        'Geen zekere match? Volg de fallback: max 2 vragen, bied veilige generieke checks (herstarten, stroom/kabels controleren, korte beschrijving/SKU navragen) en bied direct een medewerker aan (doorverbinden/escaleren).',
+        'Bij troubleshooting geef je altijd 1 concrete stap tegelijk (kort en praktisch), wacht op bevestiging van de beller of het is gelukt, en ga pas dan door naar de volgende stap.',
+        'Bied pas een transfer_call aan nadat alle relevante stappen uit de gids zijn geprobeerd of als de beller daar expliciet om vraagt.',
       );
     }
 
     if (hasCommerce) {
       const storeList = (effectiveConfig.commerceStores ?? []).join(' of ');
       instructions.push(
-        `E-commerce hulp (beschikbare winkel(s): ${storeList}):\n- Gebruik '${TOOL_NAMES.getProductDetailsByName}' als iemand naar productinfo of prijzen vraagt. Kies de juiste storeId uit de gekoppelde winkels; vraag ernaar als het onduidelijk is.\n- Gebruik '${TOOL_NAMES.getOrderStatus}' als iemand de status van een bestelling wil weten. Vraag altijd naar het ordernummer en welke winkel als dat niet genoemd wordt.\n- Gebruik '${TOOL_NAMES.listStoreProducts}' wanneer iemand vraagt welke producten er zijn. Geef een korte opsomming (max 10) en schrijf cijfers uit in woorden (bijv. 64 => vierenzestig).\n- Als er geen koppeling is of een lookup faalt, leg dit kort uit en bied aan om de beller door te verbinden.`,
+        `E-commerce hulp (beschikbare winkel(s): ${storeList}); alleen assortiment/bestellingen - support/troubleshooting hoort via '${TOOL_NAMES.fetchProductInfo}':\n- Gebruik '${TOOL_NAMES.getProductDetailsByName}' als iemand naar productinfo of prijzen vraagt. Kies de juiste storeId uit de gekoppelde winkels; vraag ernaar als het onduidelijk is.\n- Gebruik '${TOOL_NAMES.getOrderStatus}' als iemand de status van een bestelling wil weten. Vraag altijd naar het ordernummer en welke winkel als dat niet genoemd wordt.\n- Gebruik '${TOOL_NAMES.listStoreProducts}' wanneer iemand vraagt welke producten er zijn. Geef een korte opsomming (max 10) en schrijf cijfers uit in woorden (bijv. 64 => vierenzestig).\n- Als er geen koppeling is of een lookup faalt, leg dit kort uit en bied aan om de beller door te verbinden.`,
       );
     }
 
     if (effectiveConfig.hasGoogleIntegration) {
       instructions.push(
-        `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
+        `Je hebt toegang tot ${calendarDescription} van het bedrijf. Gebruik altijd eerst de tool '${TOOL_NAMES.checkGoogleCalendarAvailability}' voordat je een tijdstip voorstelt. Voor het inplannen gebruik je het telefoonnummer dat al bekend is in het systeem en vraag je alleen naar de naam van de beller voordat je '${TOOL_NAMES.scheduleGoogleCalendarEvent}' gebruikt. Voor annuleringen moet je zowel de naam als het telefoonnummer bevestigen en een telefoonnummer dat met '06' begint interpreteer je als '+31612345678'. Vraag altijd expliciet of de afspraak definitief ingepland mag worden en controleer vooraf of je de naam goed hebt begrepen, maar herhaal bij de definitieve bevestiging alleen de datum en tijd. Als hij succesvol is ingepland dan bevestig je het alleen door de datum en tijd in natuurlijke taal te herhalen zonder de locatie.`,
         `BELANGRIJK: Voor afspraken gebruik je de agenda-tools (${calendarProviderName}), NIET de transfer_call tool.`,
         'Wanneer een beller een voorkeur uitspreekt voor een specifieke medewerker, werk dan uitsluitend met diens agenda. Zonder voorkeur kies je zelf een beschikbare medewerker en vermeld je wie de afspraak uitvoert.',
         'Noem bij het voorstellen of bevestigen van een afspraak altijd de naam van de medewerker waarbij de afspraak staat ingepland zodra dat bekend is.',
@@ -776,8 +787,22 @@ export class VapiClient {
       );
     }
 
+    if (effectiveConfig.company.assistantTransfersEnabled !== false) {
+      instructions.push(
+        'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer. Vraag niet naar een specifieke medewerker of afdeling; verbind direct door naar de hoofd lijn en kondig aan met iets als "Natuurlijk, ik verbind u door." voordat je de transfer start.',
+      );
+    } else {
+      instructions.push(
+        'Doorverbinden staat uit voor dit bedrijf. Bied géén transfer aan. Als iemand doorverbonden wil worden, leg uit dat het niet kan en bied aan om een notitie door te geven met naam, telefoonnummer en reden.'
+      );
+    }
+
     instructions.push(
-      'Gebruik de tool \'transfer_call\' zodra de beller aangeeft te willen worden doorverbonden. Gebruik altijd het standaard bedrijfsnummer. Vraag niet naar een specifieke medewerker of afdeling; verbind direct door naar de hoofd lijn en kondig aan met iets als "Natuurlijk, ik verbind u door." voordat je de transfer start.',
+      'Vraag NIET om het telefoonnummer wanneer je een notitie of terugbelverzoek opneemt; zeg dat je kunt terugbellen op het huidige nummer en vraag alleen of ze een ander nummer willen gebruiken. Als ze een ander nummer willen, laat hen het langzaam spellen en herhaal het traag terug. Bij het doorgeven van een notitie vul je altijd de callerName (naam beller) en callerNumber (alleen alternatief nummer als ze dat geven) in de tool-call mee.'
+    );
+
+    instructions.push(
+      'Voor een notitie of terugbelverzoek: 1) Vraag eerst naar de naam en reden. 2) Bied daarna aan om terug te bellen op dit nummer, of vraag of ze een ander nummer willen. 3) Als ze een ander nummer willen, laat ze het langzaam opnoemen en herhaal elke cijfergroep rustig ter bevestiging.'
     );
 
     const custom = (effectiveConfig.customInstructions ?? []).map((i) => i?.trim()).filter(Boolean);
@@ -826,9 +851,13 @@ export class VapiClient {
     }
 
     return [
-      'Productcatalogus (interne kennisbank voor aftercare/handleidingen/troubleshooting; NIET de webshop-inventory. Gebruik alleen deze productId’s):',
+      'Productcatalogus (interne kennisbank voor aftercare/handleidingen/troubleshooting; NIET de webshop-inventory. Gebruik alleen deze productIds):',
       ...formatted,
       `Gebruik altijd de tool '${TOOL_NAMES.fetchProductInfo}' om kennisbank-informatie op te halen voordat je een antwoord geeft. Als een product niet in de lijst staat, of de gids het antwoord niet bevat, zeg eerlijk dat je het niet weet en stel voor om door te verbinden.`,
+      'Gebruik NOOIT eigen troubleshooting of verzonnen stappen; haal altijd info op via de tool voordat je antwoordt.',
+      'Lever troubleshooting altijd stap-voor-stap: geef Stap 1, vraag of het gelukt is, wacht op de reactie, ga pas daarna naar de volgende stap. Lees nooit alle stappen tegelijk voor.',
+      'Vraag bij onzekerheid om het nummer tussen [] of de naam/synoniem, kies het beste matchende product en bevestig het ID voordat je doorgaat.',
+      'Bied een transfer pas aan nadat alle relevante stappen uit de gids zijn geprobeerd of als de beller daar expliciet om vraagt.',
     ].join('\n');
   }
 
@@ -838,7 +867,7 @@ export class VapiClient {
       const trimmed = value.trim();
       if (!trimmed) return undefined;
       if (trimmed.length <= max) return trimmed;
-      return `${trimmed.slice(0, max - 1)}ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª`;
+      return `${trimmed.slice(0, max - 1)}...`;
     };
 
     const dayNames = [
@@ -994,6 +1023,7 @@ export class VapiClient {
     hasGoogleIntegration?: boolean,
     calendarProvider?: CalendarProvider | null,
     commerceStores: Array<'shopify' | 'woocommerce'> = [],
+    transfersEnabled = true,
   ) {
     const enabled = Boolean(hasGoogleIntegration);
     const provider: CalendarProvider | null = calendarProvider ?? (enabled ? 'google' : null);
@@ -1003,8 +1033,10 @@ export class VapiClient {
       `[VapiClient] tools builder - calendar integration enabled: ${enabled} (${providerName})`,
     );
 
-    const tools: any[] = [
-      {
+    const tools: any[] = [];
+
+    if (transfersEnabled) {
+      tools.push({
         type: 'function',
         function: {
           name: TOOL_NAMES.transferCall,
@@ -1028,8 +1060,42 @@ export class VapiClient {
         server: {
           url: `${this.toolBaseUrl}/vapi/tools`,
         },
+      });
+    }
+
+    tools.push({
+      type: 'function',
+      function: {
+        name: TOOL_NAMES.sendCallerNote,
+        description:
+          'Leg een korte notitie vast van de beller (bijvoorbeeld wanneer doorverbinden niet kan) en stuur deze per e-mail naar het bedrijf.',
+        parameters: {
+          type: 'object',
+          properties: {
+            note: {
+              type: 'string',
+              description: 'Verplichte notitie van de beller in eigen woorden.',
+            },
+            callerName: {
+              type: 'string',
+              description: 'Optioneel: naam van de beller.',
+            },
+            callerNumber: {
+              type: 'string',
+              description: 'Optioneel: telefoonnummer van de beller.',
+            },
+            callSid: {
+              type: 'string',
+              description: 'Optioneel: Twilio callSid voor referentie.',
+            },
+          },
+          required: ['note'],
+        },
       },
-    ];
+      server: {
+        url: `${this.toolBaseUrl}/vapi/tools`,
+      },
+    });
 
     if (commerceStores.length > 0) {
       const storeEnum = commerceStores;
@@ -1039,7 +1105,7 @@ export class VapiClient {
           function: {
             name: TOOL_NAMES.getProductDetailsByName,
             description:
-              'Zoek productdetails op voor een gekoppelde webshop met een herkenbare productnaam. Kies storeId uit de beschikbare winkels.',
+              'Zoek productdetails op voor een gekoppelde webshop (assortiment/prijzen). Niet gebruiken voor aftercare/support; kies storeId uit de beschikbare winkels.',
             parameters: {
               type: 'object',
               properties: {
@@ -1065,7 +1131,7 @@ export class VapiClient {
           function: {
             name: TOOL_NAMES.getOrderStatus,
             description:
-              'Haal de orderstatus op van een gekoppelde webshop aan de hand van het orderId dat de beller geeft.',
+              'Haal de orderstatus op van een gekoppelde webshop aan de hand van het orderId dat de beller geeft (alleen orderdata, niet voor support).',
             parameters: {
               type: 'object',
               properties: {
@@ -1091,7 +1157,7 @@ export class VapiClient {
           function: {
             name: TOOL_NAMES.listStoreProducts,
             description:
-              'Geef een korte lijst van beschikbare producten voor een gekoppelde webshop. Spreek cijfers uit als woorden (bijv. 64 => vierenzestig).',
+              'Geef een korte lijst van beschikbare producten voor een gekoppelde webshop (catalogusoverzicht; niet voor aftercare/support). Spreek cijfers uit als woorden (bijv. 64 => vierenzestig).',
             parameters: {
               type: 'object',
               properties: {
@@ -1149,7 +1215,7 @@ export class VapiClient {
         phoneNumber: {
           type: 'string',
           description:
-            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '06ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª' gelijk staat aan '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª'.",
+            "Telefoonnummer van de klant (verplicht ter verificatie). Herken dat '0612345678' gelijk staat aan '+31612345678'.",
         },
         reason: { type: 'string', description: 'Reden van annulering' },
       },
@@ -1186,7 +1252,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.cancelGoogleCalendarEvent,
           description:
-            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '06ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª' gelijk is aan '+316ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡Ãƒâ€šÃ‚Âª').",
+            "Annuleer een bestaand event in Google Agenda na verificatie met telefoonnummer (onthoud dat '0612345678' gelijk is aan '+31612345678').",
           parameters: cancelCalendarParameters,
         },
         server: {
@@ -1198,7 +1264,7 @@ export class VapiClient {
         function: {
           name: TOOL_NAMES.fetchProductInfo,
           description:
-            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik alleen de productId uit de kennisbanklijst. Als je het antwoord niet vindt in de gids, geef dat eerlijk aan en stel voor om door te verbinden.',
+            'Haal productinformatie, FAQ en policies op uit de interne kennisbank (aftercare/handleidingen/troubleshooting). Dit is NIET de webshop-inventory; gebruik deze tool ook voor fuzzy zoekopdrachten op naam/SKU/synoniemen. Commerce tools zijn nooit voor support.',
           parameters: {
             type: 'object',
             properties: {
@@ -1206,12 +1272,15 @@ export class VapiClient {
                 type: 'string',
                 description: 'Verplicht: productId uit de productlijst (bijv. "12").',
               },
+              searchText: {
+                type: 'string',
+                description: 'Optioneel: zoektekst op basis van naam/SKU/synoniemen of omschrijving wanneer productId niet zeker is.',
+              },
               questionContext: {
                 type: 'string',
                 description: 'Optioneel: de vraag van de beller zodat alleen relevante info wordt gebruikt.',
               },
             },
-            required: ['productId'],
           },
         },
         server: {
@@ -1377,7 +1446,7 @@ export class VapiClient {
       try {
         const parsed = JSON.parse(s);
 
-        // Ãƒâ€šÃ‚Â­Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¦ÃƒÆ’Ã‚Â« Late-bind the Vapi callId if /call response didnÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã¢â‚¬â€œt include it
+        // Late-bind the Vapi callId if /call response didn't include it
         const runtimeCallId =
           parsed?.message?.call?.id ??
           parsed?.call?.id ??
@@ -1527,7 +1596,7 @@ export class VapiClient {
       },
     };
 
-    // ÃƒÆ’Ã¢â‚¬ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Minimal payload, nothing else
+    // Minimal payload, nothing else
     const payload = { assistantId, transport };
 
     const response = await this.http.post(this.buildApiPath('/call'), payload);
@@ -1558,7 +1627,7 @@ export class VapiClient {
 
     // Try legacy/common locations FIRST, then everything else
     const callIdCandidates: unknown[] = [
-      data?.id,                      // ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã‚Â¥ÃƒÆ’Ã¢â‚¬Â° most common on POST /call
+      data?.id,                      // most common on POST /call
       data?.session?.id,
       data?.call?.id,
 
@@ -1647,7 +1716,7 @@ export class VapiClient {
         settled = true;
         cleanup();
         safeShutdown(() => socket.close());
-        reject(new Error(message + (body ? ` ÃƒÆ’Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã‚Â´ ${body}` : '')));
+        reject(new Error(message + (body ? ` A  ${body}` : '')));
       };
 
       const onOpen = () => {
@@ -1826,7 +1895,7 @@ export class VapiClient {
 
   private normalizeToolCall(raw: any): NormalizedToolCall | null {
     if (!raw) {
-      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂmalizeToolCall received null/undefined`);
+      console.warn(`[VapiClient] normalizeToolCall received null/undefined`);
       return null;
     }
 
@@ -1835,14 +1904,14 @@ export class VapiClient {
       const hasDirectName = typeof raw.name === 'string' && raw.name.length > 0;
       if (nestedCount > 0 || !hasDirectName) {
         console.warn(
-          `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ normalizeToolCall skipping tool_calls wrapper (${nestedCount} nested call(s))`,
+          `[VapiClient] normalizeToolCall skipping tool_calls wrapper (${nestedCount} nested call(s))`,
         );
         return null;
       }
     }
 
     console.log(
-      `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Normalizing tool call. Raw keys:`,
+      `[VapiClient] Normalizing tool call. Raw keys:`,
       Object.keys(raw).join(', '),
     );
 
@@ -1860,11 +1929,11 @@ export class VapiClient {
       const name = raw.function.name ?? raw.function.function_name;
       let argsRaw = raw.function.arguments ?? raw.function.input;
 
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Found nested function structure - ID: ${id}, Name: ${name}`);
+      console.log(`[VapiClient] Found nested function structure - ID: ${id}, Name: ${name}`);
 
       if (!name) {
         console.warn(
-          `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No tool name found in nested function. Raw:`,
+          `[VapiClient] No tool name found in nested function. Raw:`,
           JSON.stringify(raw, null, 2),
         );
         return null;
@@ -1872,18 +1941,18 @@ export class VapiClient {
 
       // Parse arguments if string
       if (typeof argsRaw === 'string') {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Arguments is string, parsing...`);
+        console.log(`[VapiClient] Arguments is string, parsing...`);
         try {
           argsRaw = JSON.parse(argsRaw);
-          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Parsed arguments:`, argsRaw);
+          console.log(`[VapiClient] Parsed arguments:`, argsRaw);
         } catch (error) {
-          console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse arguments string:`, argsRaw);
+          console.error(`[VapiClient] Failed to parse arguments string:`, argsRaw);
           argsRaw = {};
         }
       }
 
       if (!argsRaw || typeof argsRaw !== 'object') {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ No valid arguments found, using empty object`);
+        console.log(`[VapiClient] No valid arguments found, using empty object`);
         argsRaw = {};
       }
 
@@ -1893,7 +1962,7 @@ export class VapiClient {
         args: argsRaw as Record<string, unknown>,
       };
 
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Successfully normalized nested function call:`, result);
+      console.log(`[VapiClient] Successfully normalized nested function call:`, result);
       return result;
     }
 
@@ -1901,7 +1970,7 @@ export class VapiClient {
     container = raw.tool_call ?? raw.toolCall ?? raw.tool ?? raw;
 
     if (!container) {
-      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âcontainer found in raw tool call`);
+      console.warn(`[VapiClient] No tool call container found in raw payload`);
       return null;
     }
 
@@ -1920,11 +1989,11 @@ export class VapiClient {
       container.action ??
       container.function_name;
 
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Extracted - ID: ${id}, Name: ${name}`);
+    console.log(`[VapiClient] Extracted - ID: ${id}, Name: ${name}`);
 
     if (!name) {
       console.warn(
-        `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No tool name found. Container:`,
+        `[VapiClient] No tool name found. Container:`,
         JSON.stringify(container, null, 2),
       );
       return null;
@@ -1940,18 +2009,18 @@ export class VapiClient {
       container.args;
 
     if (typeof argsRaw === 'string') {
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Arguments is string, parsing...`);
+      console.log(`[VapiClient] Arguments is string, parsing...`);
       try {
         argsRaw = JSON.parse(argsRaw);
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Parsed arguments:`, argsRaw);
+        console.log(`[VapiClient] Parsed arguments:`, argsRaw);
       } catch (error) {
-        console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse arguments string:`, argsRaw);
+        console.error(`[VapiClient] Failed to parse arguments string:`, argsRaw);
         argsRaw = {};
       }
     }
 
     if (!argsRaw || typeof argsRaw !== 'object') {
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ No valid arguments found, using empty object`);
+      console.log(`[VapiClient] No valid arguments found, using empty object`);
       argsRaw = {};
     }
 
@@ -1961,7 +2030,7 @@ export class VapiClient {
       args: argsRaw as Record<string, unknown>,
     };
 
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Successfully normalized tool call:`, result);
+    console.log(`[VapiClient] Successfully normalized tool call:`, result);
     return result;
   }
 
@@ -1978,19 +2047,19 @@ export class VapiClient {
       | null,
     callbacksParam?: VapiRealtimeCallbacks | null,
   ): Promise<unknown> {
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âº === EXECUTING TOOL CALL ===`);
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl ID: ${call.id}`);
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl Name: ${call.name}`);
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âl Args:`, JSON.stringify(call.args, null, 2));
+    console.log(`[VapiClient] === EXECUTING TOOL CALL ===`);
+    console.log(`[VapiClient] Call ID: ${call.id}`);
+    console.log(`[VapiClient] Call Name: ${call.name}`);
+    console.log(`[VapiClient] Call Args:`, JSON.stringify(call.args, null, 2));
 
     const cachedEntry = this.toolResponseLog.get(call.id);
     if (cachedEntry) {
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Returning cached tool response for ${call.id}`);
+      console.log(`[VapiClient] Returning cached tool response for ${call.id}`);
       return cachedEntry.payload;
     }
 
     const normalizedToolName = this.normalizeToolName(call.name);
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âmalized name: ${normalizedToolName}`);
+    console.log(`[VapiClient] Normalized name: ${normalizedToolName}`);
 
     const googleTools = new Set<(typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]>([
       TOOL_NAMES.scheduleGoogleCalendarEvent,
@@ -2031,10 +2100,10 @@ export class VapiClient {
       try {
         payloadPreview = JSON.stringify(payload).slice(0, 200);
       } catch (error) {
-        console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Failed to stringify payload for preview', error);
+        console.warn('[VapiClient] Failed to stringify payload for preview', error);
       }
 
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¥ Recording tool response`, {
+      console.log(`[VapiClient] Recording tool response`, {
         toolCallId: call.id,
         payloadType: typeof payload,
         payloadPreview,
@@ -2046,7 +2115,7 @@ export class VapiClient {
     };
 
     if (!config) {
-      console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No config found for session');
+      console.error('[VapiClient] No config found for session');
       const payload = {
         success: false,
         error: 'Session not configured',
@@ -2055,11 +2124,11 @@ export class VapiClient {
     }
 
     console.log(
-      `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âfig found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
+      `[VapiClient] Config found - Company: ${config.company.name}, Google: ${config.hasGoogleIntegration}`,
     );
 
     if (normalizedToolName && googleTools.has(normalizedToolName) && !config.hasGoogleIntegration) {
-      console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Google tool called but integration disabled`);
+      console.warn(`[VapiClient] Google tool called but integration disabled`);
       const payload = {
         success: false,
         error: 'Google integration not available',
@@ -2069,7 +2138,7 @@ export class VapiClient {
 
     const sendSuccess = (data: unknown) => {
       const payload = { success: true, data };
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool response payload`, {
+      console.log(`[VapiClient] Tool response payload`, {
         toolCallId: call.id,
         payload,
       });
@@ -2082,7 +2151,7 @@ export class VapiClient {
         error: message,
         details,
       };
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool response payload`, {
+      console.error(`[VapiClient] Tool response payload`, {
         toolCallId: call.id,
         payload,
       });
@@ -2094,7 +2163,11 @@ export class VapiClient {
 
     const handlers: Record<string, () => Promise<unknown>> = {
       [TOOL_NAMES.transferCall]: async () => {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬â€ === TRANSFER CALL ===`);
+        console.log(`[VapiClient] === TRANSFER CALL ===`);
+
+        if (config.company.assistantTransfersEnabled === false) {
+          return sendError('Doorverbinden is uitgeschakeld voor dit bedrijf.');
+        }
 
         const transferCallback = callbacks?.onTransferCall;
         if (!transferCallback) {
@@ -2108,7 +2181,7 @@ export class VapiClient {
         const callerId = this.normalizeStringArg(args['callerId']);
         const reason = this.normalizeStringArg(args['reason']);
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânsfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
+        console.log(`[VapiClient] Transfer params - Phone: ${phoneNumber}, CallSid: ${callSid}`);
 
         const result = await transferCallback({ phoneNumber, callSid, callerId, reason });
 
@@ -2123,20 +2196,93 @@ export class VapiClient {
           reason: reason ?? null,
         });
       },
+      [TOOL_NAMES.sendCallerNote]: async () => {
+        console.log(`[VapiClient] === SEND CALLER NOTE ===`);
+
+        const noteRaw = this.normalizeStringArg((args as any)?.note ?? null);
+        if (!noteRaw) {
+          throw new Error('Geen notitie ontvangen om te versturen.');
+        }
+        const note = noteRaw.slice(0, 1200);
+        const callerName =
+          this.normalizeStringArg((args as any)?.callerName ?? null) ??
+          sessionContext?.callerName ??
+          null;
+        const callerNumber =
+          this.normalizePhoneNumber(
+            this.normalizeStringArg((args as any)?.callerNumber ?? sessionContext?.callerNumber ?? null),
+          ) ?? null;
+        const callSid =
+          this.normalizeStringArg((args as any)?.callSid ?? null) ??
+          sessionContext?.callSid ??
+          callSidForConfig ??
+          null;
+
+        const callKey = callSid ?? `company-${companyId.toString()}`;
+        const signature = `${callKey}|${callerNumber ?? ''}|${note}`;
+        const existing = this.callerNoteLog.get(callKey);
+        const now = Date.now();
+        if (existing && existing.signature === signature && now - existing.timestamp < 15 * 60 * 1000) {
+          console.log(`[VapiClient] Duplicate caller note suppressed for key=${callKey}`);
+          return sendSuccess({
+            message: 'Notitie al verstuurd',
+            to: existing.to,
+            callSid,
+            callerName,
+            callerNumber,
+            duplicate: true,
+          });
+        }
+
+        const recipientCandidates = [
+          this.normalizeStringArg((config.company as any)?.email ?? null),
+          this.normalizeStringArg(config.companyContext?.contact?.contact_email ?? null),
+          this.normalizeStringArg((config.companyContext?.contact as any)?.email ?? null),
+        ].filter((value): value is string => Boolean(value));
+
+        const to = recipientCandidates[0] ?? null;
+        if (!to) {
+          return sendError('Geen e-mailadres beschikbaar om de notitie naar te sturen.');
+        }
+
+        const finalCallerName = callerName ?? 'Onbekend';
+        const finalCallerNumber = callerNumber ?? 'Onbekend';
+
+        try {
+          await this.mailService.sendCallerNote({
+            to,
+            companyName: config.company.name,
+            callerName: finalCallerName,
+            callerNumber: finalCallerNumber,
+            note,
+          });
+          this.callerNoteLog.set(callKey, { signature, timestamp: now, to });
+        } catch (error) {
+          return sendError('Notitie kon niet via e-mail worden verstuurd.', error);
+        }
+
+        return sendSuccess({
+          message: 'Notitie verstuurd',
+          to,
+          callSid,
+          callerName,
+          callerNumber,
+        });
+      },
       [TOOL_NAMES.checkGoogleCalendarAvailability]: async () => {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â  === CHECK CALENDAR AVAILABILITY ===`);
+        console.log(`[VapiClient] === CHECK CALENDAR AVAILABILITY ===`);
 
         const date = this.normalizeStringArg(args['date']);
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âuested date: ${date}`);
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â args:`, args);
+        console.log(`[VapiClient] Requested date: ${date}`);
+        console.log(`[VapiClient] Args:`, args);
 
         if (!date) {
           throw new Error('Ontbrekende datum voor agenda beschikbaarheid.');
         }
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âting business hours for date...`);
+        console.log(`[VapiClient] Getting business hours for date...`);
         const { openHour, closeHour } = this.getBusinessHoursForDate(config, date);
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âiness hours: ${openHour}:00 - ${closeHour}:00`);
+        console.log(`[VapiClient] Business hours: ${openHour}:00 - ${closeHour}:00`);
 
         const staffPreference = this.resolveStaffPreference(config, args, sessionContext);
         const staffCalendarMap = this.buildStaffCalendarMap(config);
@@ -2144,7 +2290,7 @@ export class VapiClient {
           ? [staffPreference.calendarId]
           : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âff preference`, {
+        console.log(`[VapiClient] Staff preference`, {
           staffMemberId: staffPreference.staffMember?.id ?? null,
           staffMemberName: staffPreference.staffMember?.name ?? null,
           explicitCalendarId: staffPreference.explicitCalendarId,
@@ -2163,10 +2309,10 @@ export class VapiClient {
 
           if (availabilityResult.durationMs > 0) {
             console.log(
-              `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âgle availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
+              `[VapiClient] Google availability resolved in ${availabilityResult.durationMs}ms (${availabilityResult.source})`,
             );
           } else {
-            console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âng cached availability result`);
+            console.log(`[VapiClient] Using cached availability result`);
           }
 
           const { availability, availableRanges, perCalendarRanges } = availabilityResult;
@@ -2190,8 +2336,8 @@ export class VapiClient {
             };
           });
 
-          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ây intervals:`, availability.busy);
-          console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âived available ranges:`, availableRanges);
+          console.log(`[VapiClient] Busy intervals:`, availability.busy);
+          console.log(`[VapiClient] Received available ranges:`, availableRanges);
 
           const busyCount = availability.busy.length;
           const availableCount = availableRanges.length;
@@ -2226,7 +2372,7 @@ export class VapiClient {
             message,
           });
         } catch (error) {
-          console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âor getting beschikbaarheid:', error);
+          console.error('[VapiClient] Error getting beschikbaarheid:', error);
           const fallbackMessage =
             error instanceof Error && /Beschikbaarheidsaanvraag/i.test(error.message)
               ? 'Het ophalen van de agenda duurde te lang. Probeer het later opnieuw.'
@@ -2237,7 +2383,7 @@ export class VapiClient {
         }
       },
       [TOOL_NAMES.scheduleGoogleCalendarEvent]: async () => {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‹Å“ === SCHEDULE CALENDAR EVENT ===`);
+        console.log(`[VapiClient] === SCHEDULE CALENDAR EVENT ===`);
 
         const summary = this.normalizeStringArg(args['summary']);
         const start = this.normalizeStringArg(args['start']);
@@ -2251,7 +2397,7 @@ export class VapiClient {
         const rawPhoneNumber = providedPhoneNumber ?? sessionPhoneNumber ?? null;
         const phoneNumber = this.normalizePhoneNumber(rawPhoneNumber);
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt params:`, {
+        console.log(`[VapiClient] Event params:`, {
           summary,
           start,
           end,
@@ -2283,14 +2429,14 @@ export class VapiClient {
             );
             if (calendarSelection) {
               selectedCalendarId = calendarSelection.calendarId;
-              console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âected calendar ${selectedCalendarId} (${calendarSelection.summary ?? 'unknown'}) for booking.`);
+              console.log(`[VapiClient] Selected calendar ${selectedCalendarId} (${calendarSelection.summary ?? 'unknown'}) for booking.`);
               const staffForCalendar = staffCalendarMap.get(calendarSelection.calendarId) ?? [];
               if (!assignedStaff && staffForCalendar.length > 0) {
                 assignedStaff = staffForCalendar[0];
               }
             }
           } catch (selectionError) {
-            console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to resolve calendar availability', selectionError);
+            console.warn('[VapiClient] Failed to resolve calendar availability', selectionError);
           }
         }
 
@@ -2305,7 +2451,7 @@ export class VapiClient {
           }
         }
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âendar assignment`, {
+        console.log(`[VapiClient] Calendar assignment`, {
           candidateCalendarIds,
           selectedCalendarId,
           assignedStaffId: assignedStaff?.id ?? null,
@@ -2314,13 +2460,13 @@ export class VapiClient {
 
         if (phoneNumber) {
           try {
-            console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âsisting caller ${phoneNumber} (${name})`);
+            console.log(`[VapiClient] Persisting caller ${phoneNumber} (${name})`);
             await this.companyService.createCompanyCaller(companyId, { name, phoneNumber });
           } catch (error) {
-            console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to persist caller info', error);
+            console.error('[VapiClient] Failed to persist caller info', error);
           }
         } else {
-          console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âphone number provided; skipping caller persistence.');
+          console.log('[VapiClient] No phone number provided; skipping caller persistence.');
         }
 
         const details: string[] = [];
@@ -2356,11 +2502,11 @@ export class VapiClient {
 
         event.extendedProperties = { private: privateProperties };
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âating event in calendar ${selectedCalendarId ?? 'primary'}...`);
+        console.log(`[VapiClient] Creating event in calendar ${selectedCalendarId ?? 'primary'}...`);
         const created = await this.googleService.scheduleEvent(companyId, event, {
           calendarId: selectedCalendarId ?? undefined,
         });
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt created:`, created.id);
+        console.log(`[VapiClient] Event created:`, created.id);
 
         if (sessionRef) {
           this.updateSessionStaffPreference(sessionRef, sessionContext, {
@@ -2374,7 +2520,7 @@ export class VapiClient {
         });
       },
       [TOOL_NAMES.cancelGoogleCalendarEvent]: async () => {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¦Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ === CANCEL CALENDAR EVENT ===`);
+        console.log(`[VapiClient] === CANCEL CALENDAR EVENT ===`);
 
         const start = this.normalizeStringArg(args['start'] ?? args['startTime']);
         const sessionCallerName = this.normalizeStringArg(sessionContext?.callerName);
@@ -2388,7 +2534,7 @@ export class VapiClient {
           ? [staffPreference.calendarId]
           : (staffCalendarMap.size > 0 ? Array.from(staffCalendarMap.keys()) : null);
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âcel params:`, {
+        console.log(`[VapiClient] Cancel params:`, {
           start,
           name,
           phoneNumber,
@@ -2400,7 +2546,7 @@ export class VapiClient {
           throw new Error('Ontbrekende starttijd of telefoonnummer om te annuleren.');
         }
 
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âling GoogleService.cancelEvent...`);
+        console.log(`[VapiClient] Calling GoogleService.cancelEvent...`);
         if (calendarIdsToQuery && calendarIdsToQuery.length > 0) {
           await this.googleService.cancelEvent(
             companyId,
@@ -2417,7 +2563,7 @@ export class VapiClient {
             name ?? undefined,
           );
         }
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Ânt cancelled`);
+        console.log(`[VapiClient] Event cancelled`);
 
         if (sessionRef) {
           this.updateSessionStaffPreference(sessionRef, sessionContext, {
@@ -2434,7 +2580,7 @@ export class VapiClient {
         });
       },
       [TOOL_NAMES.getProductDetailsByName]: async () => {
-        console.log(`[VapiClient] 🛒 === GET PRODUCT DETAILS BY NAME ===`);
+        console.log(`[VapiClient] === GET PRODUCT DETAILS BY NAME ===`);
         const storeId = this.normalizeStoreId(args['storeId']);
         const productName = this.normalizeStringArg(args['productName']);
 
@@ -2459,12 +2605,12 @@ export class VapiClient {
             },
           });
         } catch (error) {
-          console.error(`[VapiClient] 🛒 product lookup failed`, { storeId, productName, error });
+          console.error(`[VapiClient] product lookup failed`, { storeId, productName, error });
           throw error;
         }
       },
       [TOOL_NAMES.getOrderStatus]: async () => {
-        console.log(`[VapiClient] 🧾 === GET ORDER STATUS ===`);
+        console.log(`[VapiClient] === GET ORDER STATUS ===`);
         const storeId = this.normalizeStoreId(args['storeId']);
         const orderIdRaw = args['orderId'];
         const orderId =
@@ -2491,7 +2637,7 @@ export class VapiClient {
             },
           });
         } catch (error) {
-          console.error(`[VapiClient] 🧾 order status lookup failed`, { storeId, orderId, error });
+          console.error(`[VapiClient] order status lookup failed`, { storeId, orderId, error });
           throw error;
         }
       },
@@ -2527,57 +2673,143 @@ export class VapiClient {
       },
       [TOOL_NAMES.fetchProductInfo]: async () => {
         const productIdRaw = this.normalizeStringArg(args['productId']);
-        if (!productIdRaw) {
-          throw new Error('productId is verplicht om productinformatie op te halen.');
-        }
+        const searchText =
+          this.normalizeStringArg(args['searchText'] as string) ??
+          this.normalizeStringArg(args['productName'] as string) ??
+          this.normalizeStringArg(args['sku'] as string);
+        const questionContext = this.normalizeStringArg(args['questionContext']);
+        const catalog = config.productCatalog ?? [];
 
-        const productId = Number(productIdRaw);
-        if (Number.isNaN(productId)) {
-          return sendError('Ongeldig productId ontvangen.', { productId: productIdRaw });
-        }
+        const formatCandidates = (
+          candidates: { product: ProductSnapshot; score: number }[],
+        ): Array<{ id: string; name: string; sku?: string | null; score: number }> =>
+          candidates.map((entry) => ({
+            id: entry.product.id,
+            name: entry.product.name,
+            sku: entry.product.sku ?? null,
+            score: Number(entry.score.toFixed(3)),
+          }));
 
-        const product = await this.productKnowledgeService.getProduct(companyId, productId);
-        if (!product) {
-          return sendError('Dit product is niet gevonden in de kennisbank.', { productId });
-        }
+        const sendFallbackWith = (
+          reason: string,
+          candidates: Array<{ id: string; name: string; sku?: string | null; score: number }>,
+        ) =>
+          sendSuccess({
+            resolved: false,
+            reason,
+            candidates,
+            questionContext: questionContext ?? null,
+            fallback: {
+              clarificationQuestions: 2,
+              safeChecks: [],
+              escalate: true,
+            },
+            message:
+              'Geen zekere match: vraag expliciet naar productId/naam/SKU/synoniem of laat het nummer tussen [] noemen, bevestig het ID en roep daarna de tool aan. Geen eigen troubleshooting; bied anders doorverbinden aan.',
+          });
 
-        const payload = {
-          productId: product.id.toString(),
-          name: product.name,
-          sku: product.sku,
-          summary: product.summary ?? product.content.summary ?? null,
-          synonyms: product.synonyms,
-          status: product.status,
-          version: product.version,
-          updatedAt: product.updatedAt.toISOString(),
-          content: product.content,
+        const buildPayload = (
+          product: any,
+          meta?: {
+            matchScore?: number | null;
+            matchedFromSearch?: boolean;
+            candidates?: Array<{ id: string; name: string; sku?: string | null; score: number }>;
+          },
+        ) =>
+          sendSuccess({
+            productId: product.id.toString(),
+            name: product.name,
+            sku: product.sku,
+            summary: product.summary ?? product.content.summary ?? null,
+            synonyms: product.synonyms,
+            status: product.status,
+            version: product.version,
+            updatedAt: product.updatedAt.toISOString(),
+            content: product.content,
+            matchScore: meta?.matchScore ?? null,
+            matchedFromSearch: Boolean(meta?.matchedFromSearch),
+            candidates: meta?.candidates,
+            questionContext: questionContext ?? null,
+          });
+
+        const tryProductId = async (
+          idValue: string | null,
+          meta?: {
+            matchScore?: number | null;
+            matchedFromSearch?: boolean;
+            candidates?: Array<{ id: string; name: string; sku?: string | null; score: number }>;
+          },
+        ) => {
+          if (!idValue) return null;
+          const numericId = Number(idValue);
+          if (!Number.isFinite(numericId)) {
+            return null;
+          }
+
+          const product = await this.productKnowledgeService.getProduct(companyId, numericId);
+          if (!product) {
+            return null;
+          }
+
+          return buildPayload(product, meta);
         };
 
-        return sendSuccess(payload);
+        const direct = await tryProductId(productIdRaw, { matchScore: 1, matchedFromSearch: false });
+        if (direct) {
+          return direct;
+        }
+
+        const searchBasis = searchText ?? questionContext ?? productIdRaw ?? null;
+        const candidatesRaw = this.findProductCandidates(searchBasis, catalog, 5);
+        const candidates = formatCandidates(candidatesRaw);
+
+        if (candidatesRaw.length === 0) {
+          return sendFallbackWith('no_match', []);
+        }
+
+        const best = candidatesRaw[0];
+        const numericBestId = Number(best.product.id);
+        const confident =
+          Number.isFinite(numericBestId) &&
+          (best.score >= this.productAutoMatchThreshold ||
+            (best.score >= 0.72 && candidatesRaw.length === 1));
+
+        if (confident) {
+          const product = await this.productKnowledgeService.getProduct(companyId, numericBestId);
+          if (product) {
+            return buildPayload(product, {
+              matchScore: best.score,
+              matchedFromSearch: true,
+              candidates,
+            });
+          }
+        }
+
+        return sendFallbackWith('low_confidence_match', candidates);
       },
     };
 
     const handler = normalizedToolName ? handlers[normalizedToolName] : undefined;
 
     if (!handler) {
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â No handler found!`);
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âking for: ${normalizedToolName}`);
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âilable handlers:`, Object.keys(handlers));
+      console.error(`[VapiClient] No handler found!`);
+      console.error(`[VapiClient] Looking for: ${normalizedToolName}`);
+      console.error(`[VapiClient] Available handlers:`, Object.keys(handlers));
       return sendError(`Onbekende tool: ${call.name}`);
     }
 
-    console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â» Handler found, executing...`);
+    console.log(`[VapiClient] Handler found, executing...`);
 
     try {
       const handlerResult = await handler();
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Handler completed with result:`, handlerResult);
+      console.log(`[VapiClient] Handler completed with result:`, handlerResult);
 
       if (!payloadWasSet && handlerResult) {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âng handler return value as payload`);
+        console.log(`[VapiClient] Using handler return value as payload`);
         finalPayload = handlerResult;
         this.recordToolResponse(call.id, handlerResult, normalizedToolName);
       } else if (!payloadWasSet) {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âdler returned no result, setting finalPayload to null`);
+        console.log(`[VapiClient] Handler returned no result, setting finalPayload to null`);
         finalPayload = null;
       }
     } catch (error) {
@@ -2585,12 +2817,12 @@ export class VapiClient {
         error instanceof Error
           ? error.message || `Onbekende fout bij uitvoeren van ${call.name}`
           : `Onbekende fout bij uitvoeren van ${call.name}`;
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Handler threw error:`, error);
+      console.error(`[VapiClient] Handler threw error:`, error);
       return sendError(message, error);
     }
 
     if (!finalPayload) {
-      console.error(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â CRITICAL: No payload was set after execution!`);
+      console.error(`[VapiClient] CRITICAL: No payload was set after execution!`);
       const payload = {
         success: false,
         error: `Tool ${call.name} executed without response`,
@@ -2599,6 +2831,99 @@ export class VapiClient {
     }
 
     return finalPayload;
+  }
+
+  private findProductCandidates(
+    query: string | null,
+    catalog: ProductSnapshot[],
+    limit: number = 5,
+  ): Array<{ product: ProductSnapshot; score: number }> {
+    const trimmed = (query ?? '').trim().toLowerCase();
+    if (!trimmed) return [];
+
+    const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0);
+    const bracketIdMatch = trimmed.match(/\[(\d+)\]/);
+    const explicitId = bracketIdMatch ? bracketIdMatch[1] : null;
+
+    const levenshtein = (a: string, b: string): number => {
+      const m = a.length;
+      const n = b.length;
+      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+      for (let i = 0; i <= m; i++) dp[i][0] = i;
+      for (let j = 0; j <= n; j++) dp[0][j] = j;
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,
+            dp[i][j - 1] + 1,
+            dp[i - 1][j - 1] + cost,
+          );
+        }
+      }
+      return dp[m][n];
+    };
+
+    const tokenSimilarity = (a: string, b: string): number => {
+      if (!a || !b) return 0;
+      const dist = levenshtein(a, b);
+      const maxLen = Math.max(a.length, b.length);
+      if (maxLen === 0) return 0;
+      const score = 1 - dist / maxLen;
+      return score;
+    };
+
+    const scoreFor = (haystack: string | undefined | null) => {
+      const text = (haystack ?? '').toLowerCase();
+      if (!text) return 0;
+
+      if (text === trimmed) return 1;
+      if (text.includes(trimmed)) return 0.9;
+
+      const textTokens = text.split(/[^a-z0-9]+/).filter((t) => t.length > 0);
+      let bestApprox = 0;
+      for (const qt of tokens) {
+        if (!qt) continue;
+        for (const tt of textTokens) {
+          const sim = tokenSimilarity(qt, tt);
+          if (sim > bestApprox) bestApprox = sim;
+        }
+      }
+
+      if (bestApprox >= 0.9) return 0.8;
+      if (bestApprox >= 0.75) return 0.7;
+
+      if (tokens.length > 1 && tokens.every((t) => text.includes(t))) return 0.7;
+      if (tokens.some((t) => text.includes(t))) return 0.55;
+
+      if (bestApprox >= 0.6) return 0.5;
+      return 0;
+    };
+
+    const scored = catalog
+      .map((product) => {
+        const nameScore = scoreFor(product.name);
+        const skuScore = scoreFor(product.sku);
+        const synonymScores = (product.synonyms ?? []).map((s) => scoreFor(s));
+        const bestSynonymScore = synonymScores.length ? Math.max(...synonymScores) : 0;
+
+        let idScore = 0;
+        if (explicitId && product.id === explicitId) {
+          idScore = 0.98;
+        } else if (product.id && product.id.toLowerCase() === trimmed) {
+          idScore = 0.95;
+        } else if (product.id && trimmed.includes(product.id.toLowerCase())) {
+          idScore = 0.75;
+        }
+
+        const score = Math.max(nameScore, skuScore, bestSynonymScore, idScore);
+        return { product, score };
+      })
+      .filter((entry) => entry.score > 0.25)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    return scored;
   }
 
   private async getAvailabilityWithCache(
@@ -2646,7 +2971,7 @@ export class VapiClient {
 
     const pending = this.availabilityPending.get(key);
     if (pending) {
-      console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â?Ãƒâ€šÃ‚Â´ÃƒÂ¢Ã¢â‚¬ÂÃ‚ÂÃƒâ€šÃ‚Â¢ Awaiting in-flight availability request for ${key}`);
+      console.log(`[VapiClient] Awaiting in-flight availability request for ${key}`);
       const result = await pending.promise;
       return {
         availability: result.availability,
@@ -2767,7 +3092,7 @@ export class VapiClient {
       timeoutHandle = setTimeout(() => {
         if (settled) return;
         settled = true;
-        console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Operation timed out after ${timeoutMs}ms`);
+        console.warn(`[VapiClient] Operation timed out after ${timeoutMs}ms`);
         clear();
         reject(new Error(timeoutMessage));
       }, timeoutMs);
@@ -2779,8 +3104,8 @@ export class VapiClient {
   public async handleToolWebhookRequest(
     body: unknown,
   ): Promise<{ results: Array<{ toolCallId: string; result?: any; error?: any }> }> {
-    console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬Â° Received tool webhook payload');
-    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¥ Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
+    console.log('[VapiClient] Received tool webhook payload');
+    logPayload('[VapiClient] Tool webhook payload', body, PAYLOAD_LOG_LIMIT);
 
     const raw = body as Record<string, unknown> | null | undefined;
     const callId = VapiClient.extractCallIdFromWebhook(raw);
@@ -2788,21 +3113,18 @@ export class VapiClient {
     const normalized = this.normalizeToolCall(rawToolCall);
     const fallbackToolCallId = this.extractToolCallId(raw);
     const toolCallId = normalized?.id ?? fallbackToolCallId ?? `tool_${Date.now()}`;
-    console.log(
-      '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã¢â‚¬Å¾ Extracted webhook context',
-      {
-        callId: callId ?? '<none>',
-        normalizedName: normalized?.name ?? '<unknown>',
-        normalizedId: normalized?.id ?? '<none>',
-        fallbackToolCallId: fallbackToolCallId ?? '<none>',
-        finalToolCallId: toolCallId,
-      },
-    );
+    console.log('[VapiClient] Extracted webhook context', {
+      callId: callId ?? '<none>',
+      normalizedName: normalized?.name ?? '<unknown>',
+      normalizedId: normalized?.id ?? '<none>',
+      fallbackToolCallId: fallbackToolCallId ?? '<none>',
+      finalToolCallId: toolCallId,
+    });
 
     if (!normalized) {
-      console.warn('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Unable to normalize tool call payload');
+      console.warn('[VapiClient] Unable to normalize tool call payload');
 
-      // ÃƒÆ’Ã¢â‚¬ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â§Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ IMPORTANT: pull the real id from message.* and echo it back
+      // IMPORTANT: pull the real id from message.* and echo it back
       const realId =
         this.extractToolCallId(raw)  // now checks message.toolCalls / toolCallList / toolWithToolCallList
         ?? toolCallId                // keep your earlier computed value as fallback
@@ -2817,7 +3139,7 @@ export class VapiClient {
 
     const sessionInfo = callId ? this.activeSessionsByCallId.get(callId) : undefined;
     console.log(
-      '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¬ Session lookup result',
+      '[VapiClient] Session lookup result',
       {
         callId: callId ?? '<none>',
         sessionFound: Boolean(sessionInfo),
@@ -2839,21 +3161,21 @@ export class VapiClient {
                 config: registryContext.config,
               })) ?? { success: false, error: 'Tool execution returned empty result.' };
 
-            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload (registry session)', payload);
+            logPayload('[VapiClient] a Tool execution payload (registry session)', payload);
             const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (registry session)', response);
+            logPayload('[VapiClient] Tool webhook response (registry session)', response);
             return response;
           } catch (error) {
             const message =
               error instanceof Error ? error.message : 'Tool execution failed for registry session.';
-            console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Registry-backed tool execution failed', {
+            console.error('[VapiClient] Registry-backed tool execution failed', {
               callId,
               error,
             });
             const payload = { success: false, error: message };
             this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
             const response = { results: [{ toolCallId, result: payload }] };
-            logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (registry session error)', response);
+            logPayload('[VapiClient] Tool webhook response (registry session error)', response);
             return response;
           }
         }
@@ -2866,7 +3188,7 @@ export class VapiClient {
         // If we have active sessions but no matching callId, use the first available session
         const firstCallId = Array.from(this.activeSessionsByCallId.keys())[0];
         fallbackSessionInfo = this.activeSessionsByCallId.get(firstCallId);
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â¤ Using fallback session for callId: ${firstCallId}`);
+        console.log(`[VapiClient] Using fallback session for callId: ${firstCallId}`);
       }
 
       const sessionToUse = sessionInfo || fallbackSessionInfo;
@@ -2875,10 +3197,10 @@ export class VapiClient {
         const recorded = this.toolResponseLog.get(toolCallId);
         if (recorded?.payload) {
           console.log(
-            `[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Returning cached tool response for ${toolCallId} (no active session)`,
+            `[VapiClient] Returning cached tool response for ${toolCallId} (no active session)`,
           );
           const response = { results: [{ toolCallId, result: recorded.payload }] };
-          logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (from cache)', response);
+          logPayload('[VapiClient] Tool webhook response (from cache)', response);
           return response;
         }
         const payload = {
@@ -2889,7 +3211,7 @@ export class VapiClient {
         };
         this.recordToolResponse(toolCallId, payload, this.normalizeToolName(normalized.name));
         const response = { results: [{ toolCallId, result: payload }] };
-        logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (no session)', response);
+        logPayload('[VapiClient] Tool webhook response (no session)', response);
         return response;
       }
 
@@ -2902,9 +3224,9 @@ export class VapiClient {
         })
         ?? { success: false, error: 'Tool execution returned empty result.' };
 
-      logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload (fallback session)', payload);
+      logPayload('[VapiClient] a Tool execution payload (fallback session)', payload);
       const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-      logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (fallback session)', response);
+      logPayload('[VapiClient] Tool webhook response (fallback session)', response);
       return response;
     }
 
@@ -2917,9 +3239,9 @@ export class VapiClient {
       ?? { success: false, error: 'Tool execution returned empty result.' };
 
     // IMPORTANT: return the RAW payload object (not stringified, not just a message)
-    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Âª Tool execution payload', payload);
+    logPayload('[VapiClient] a Tool execution payload', payload);
     const response = { results: [{ toolCallId: normalized.id, result: payload }] };
-    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Tool webhook response (success)', response);
+    logPayload('[VapiClient] Tool webhook response (success)', response);
     return response;
   }
 
@@ -2931,16 +3253,16 @@ export class VapiClient {
     if (this.toolResponseLog.size > 100) {
       const oldestKey = this.toolResponseLog.keys().next().value as string | undefined;
       if (oldestKey) {
-        console.log(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â£ Evicting cached tool response ${oldestKey}`);
+        console.log(`[VapiClient] Evicting cached tool response ${oldestKey}`);
         this.toolResponseLog.delete(oldestKey);
       }
     }
 
-    console.log('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Recording tool response', {
+    console.log('[VapiClient] Recording tool response', {
       toolCallId,
       normalizedName: normalizedName ?? '<unknown>',
     });
-    logPayload('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÆ’Ã‚Â©Ãƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Tool response payload (cached)', payload);
+    logPayload('[VapiClient] Tool response payload (cached)', payload);
     this.toolResponseLog.set(toolCallId, {
       timestamp: Date.now(),
       payload,
@@ -2952,14 +3274,14 @@ export class VapiClient {
     const context = this.sessionContexts.get(session);
     if (context?.callId) {
       console.log(
-        '[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã¢â‚¬â€ Removing active session for callId',
+        '[VapiClient] Removing active session for callId',
         context.callId,
       );
       this.activeSessionsByCallId.delete(context.callId);
       void this.sessionRegistry
         .unregisterSession(context.callId)
         .catch((error) =>
-          console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to unregister session from registry', {
+          console.error('[VapiClient] Failed to unregister session from registry', {
             callId: context.callId,
             error,
           }),
@@ -2988,7 +3310,7 @@ export class VapiClient {
     try {
       const record = await this.sessionRegistry.findSession(callId);
       if (!record) {
-        console.warn(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â¡ No registry session found for callId=${callId}`);
+        console.warn(`[VapiClient] No registry session found for callId=${callId}`);
         return { callSid: null, config: null };
       }
 
@@ -3003,7 +3325,7 @@ export class VapiClient {
           config,
         });
       } catch (error) {
-        console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚ÂÃƒâ€šÃ‚Â´Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¦ Failed to refresh session TTL in registry', {
+        console.error('[VapiClient] Failed to refresh session TTL in registry', {
           callId,
           error,
         });
@@ -3014,7 +3336,7 @@ export class VapiClient {
         config,
       };
     } catch (error) {
-      console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to load session context from registry', { callId, error });
+      console.error('[VapiClient] Failed to load session context from registry', { callId, error });
       return { callSid: null, config: null };
     }
   }
@@ -3035,7 +3357,7 @@ export class VapiClient {
         }
         return parsed;
       } catch (error) {
-        console.error('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Â Failed to parse registry session config', {
+        console.error('[VapiClient] Failed to parse registry session config', {
           callId: record.callId,
           error,
         });
@@ -3468,6 +3790,7 @@ export class VapiClient {
       config.hasGoogleIntegration,
       config.calendarProvider,
       config.commerceStores ?? [],
+      config.company.assistantTransfersEnabled !== false,
     );
     console.log(
       `[VapiClient] tools ready (${tools.length}):`,
@@ -3577,7 +3900,7 @@ export class VapiClient {
       const container = assistant.assistant ?? assistant;
       return container.id ?? container._id ?? null;
     } catch (error) {
-      this.logAxiosError(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to find assistant '${name}'`, error, undefined, 'warn');
+      this.logAxiosError(`[VapiClient] led to find assistant '${name}'`, error, undefined, 'warn');
       return null;
     }
   }
@@ -3593,7 +3916,7 @@ export class VapiClient {
       }
       return id;
     } catch (error) {
-      this.logAxiosError('[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to create assistant', error, payload);
+      this.logAxiosError('[VapiClient] led to create assistant', error, payload);
       throw error;
     }
   }
@@ -3602,7 +3925,7 @@ export class VapiClient {
     try {
       await this.http.patch(this.buildApiPath(`/assistant/${id}`), payload);
     } catch (error) {
-      this.logAxiosError(`[VapiClient] ÃƒÂ°Ã…Â¸Ã‚ÂÃ¢â‚¬â€ÃƒÂ¯Ã‚Â¸Ã‚Âled to update assistant ${id}`, error, payload);
+      this.logAxiosError(`[VapiClient] led to update assistant ${id}`, error, payload);
       throw error;
     }
   }
@@ -3671,18 +3994,3 @@ export class VapiClient {
 }
 
 export type { VapiRealtimeSession };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

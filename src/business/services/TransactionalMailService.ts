@@ -11,7 +11,8 @@ type TemplateKey =
   | "early-access"
   | "invoice-issued"
   | "invoice-paid"
-  | "trial-started";
+  | "trial-started"
+  | "caller-note";
 
 interface TemplateVars {
   [key: string]: string | null | undefined;
@@ -179,6 +180,31 @@ export class TransactionalMailService {
     await this.dispatchMail({
       type: "trial-started",
       template: "trial-started",
+      to: params.to,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      textBody: rendered.text,
+      payload: params,
+      from: this.systemFrom,
+    });
+  }
+
+  public async sendCallerNote(params: {
+    to: string;
+    companyName?: string | null;
+    callerName?: string | null;
+    callerNumber?: string | null;
+    note: string;
+  }): Promise<void> {
+    const rendered = await this.renderTemplate(
+      "caller-note",
+      params,
+      this.defaultCallerNoteTemplate()
+    );
+
+    await this.dispatchMail({
+      type: "caller-note",
+      template: "caller-note",
       to: params.to,
       subject: rendered.subject,
       htmlBody: rendered.html,
@@ -403,6 +429,27 @@ export class TransactionalMailService {
             <p>We hebben je account aangemaakt en je SEPA-incasso ingesteld. Je proef loopt tot {{trialEndsAt}}.</p>
             <p>Na de proefperiode zetten we je abonnement automatisch om naar betaald en schrijven we het gebruik maandelijks af.</p>
             <p>Stel je account in en start direct via onze app.</p>
+          </body>
+        </html>
+      `,
+    };
+  }
+
+  private defaultCallerNoteTemplate() {
+    return {
+      subject: "Nieuwe notitie van een beller voor {{companyName}}",
+      body: `
+        <html>
+          <body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;line-height:1.5">
+            <h2 style="margin:0 0 12px 0;color:#0f172a;">Nieuwe notitie</h2>
+            <p>Er is een notitie achtergelaten voor {{companyName}}.</p>
+            <ul style="padding-left:18px;">
+              <li><strong>Beller:</strong> {{callerName}}</li>
+              <li><strong>Telefoon:</strong> {{callerNumber}}</li>
+            </ul>
+            <p><strong>Notitie:</strong></p>
+            <p style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">{{note}}</p>
+            <p style="margin-top:16px;font-size:12px;color:#475569;">Deze e-mail is automatisch verstuurd door CallingBird.</p>
           </body>
         </html>
       `,

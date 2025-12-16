@@ -205,6 +205,8 @@ export class CompanyService {
             new Date(),
             null,
             true,
+            false,
+            true,
             null,
             useType ?? null
         );
@@ -326,7 +328,18 @@ export class CompanyService {
     }
 
     public async setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void> {
+        console.log(`Setting assistant enabled=${enabled} for companyId=${companyId}`);
         await this.companyRepo.setAssistantEnabled(companyId, enabled);
+    }
+
+    public async setAssistantOutsideHoursOnly(companyId: bigint, enabled: boolean): Promise<void> {
+        console.log(`Setting assistantOutsideHoursOnly=${enabled} for companyId=${companyId}`);
+        await this.companyRepo.setAssistantOutsideHoursOnly(companyId, enabled);
+    }
+
+    public async setAssistantTransfersEnabled(companyId: bigint, enabled: boolean): Promise<void> {
+        console.log(`Setting assistantTransfersEnabled=${enabled} for companyId=${companyId}`);
+        await this.companyRepo.setAssistantTransfersEnabled(companyId, enabled);
     }
 
     // Company Info

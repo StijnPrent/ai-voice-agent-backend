@@ -56,6 +56,23 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
     throw new Error("Unsupported companyId type");
   };
 
+  const parseBoolean = (input: unknown): boolean | null => {
+    if (typeof input === "boolean") {
+      return input;
+    }
+    if (typeof input === "string") {
+      const normalized = input.trim().toLowerCase();
+      if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
+      if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
+    }
+    if (typeof input === "number") {
+      if (Number.isFinite(input)) {
+        return input !== 0;
+      }
+    }
+    return null;
+  };
+
   const resolveCompany = async (
     companyIdInput: unknown,
     twilioNumberInput: unknown
@@ -139,10 +156,28 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
 
   router.post("/assistant/state", async (req, res) => {
     try {
-      const { enabled, companyId, twilioNumber } = req.body ?? {};
+      const {
+        enabled,
+        outsideHoursOnly,
+        assistantOutsideHoursOnly,
+        transfersEnabled,
+        allowTransfer,
+        companyId,
+        twilioNumber,
+      } = req.body ?? {};
 
-      if (typeof enabled !== "boolean") {
-        res.status(400).json({ error: "'enabled' must be a boolean value." });
+      const normalizedEnabled = parseBoolean(enabled);
+      const normalizedOutsideHoursOnly = parseBoolean(
+        typeof outsideHoursOnly !== "undefined" ? outsideHoursOnly : assistantOutsideHoursOnly
+      );
+      const normalizedTransfersEnabled = parseBoolean(
+        typeof allowTransfer !== "undefined" ? allowTransfer : transfersEnabled
+      );
+
+      if (normalizedEnabled === null && normalizedOutsideHoursOnly === null && normalizedTransfersEnabled === null) {
+        res
+          .status(400)
+          .json({ error: "Provide 'enabled', 'outsideHoursOnly' or 'transfersEnabled' as a boolean value." });
         return;
       }
 
@@ -154,7 +189,18 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         return;
       }
 
-      await companyService.setAssistantEnabled(company.id, enabled);
+      if (normalizedEnabled !== null) {
+        await companyService.setAssistantEnabled(company.id, normalizedEnabled);
+      }
+
+      if (normalizedOutsideHoursOnly !== null) {
+        await companyService.setAssistantOutsideHoursOnly(company.id, normalizedOutsideHoursOnly);
+      }
+
+      if (normalizedTransfersEnabled !== null) {
+        await companyService.setAssistantTransfersEnabled(company.id, normalizedTransfersEnabled);
+      }
+
       const updated = await companyService.findById(company.id);
 
       res.json({
@@ -162,6 +208,8 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         companyId: updated.id.toString(),
         twilioNumber: updated.twilioNumber ?? null,
         enabled: updated.assistantEnabled,
+        outsideHoursOnly: updated.assistantOutsideHoursOnly,
+        transfersEnabled: updated.assistantTransfersEnabled,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected error";
@@ -197,6 +245,8 @@ export function voiceRoutes(sessionManager: VoiceSessionManager) {
         companyId: company.id.toString(),
         twilioNumber: company.twilioNumber ?? null,
         enabled: company.assistantEnabled,
+        outsideHoursOnly: company.assistantOutsideHoursOnly,
+        transfersEnabled: company.assistantTransfersEnabled,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected error";

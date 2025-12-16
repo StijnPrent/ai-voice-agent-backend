@@ -15,6 +15,7 @@ export interface ICompanyRepository {
     saveAssistantId(companyId: bigint, assistantId: string): Promise<void>;
     setAssistantEnabled(companyId: bigint, enabled: boolean): Promise<void>;
     setAssistantOutsideHoursOnly(companyId: bigint, enabled: boolean): Promise<void>;
+    setAssistantTransfersEnabled(companyId: bigint, enabled: boolean): Promise<void>;
     markEmailVerified(companyId: bigint): Promise<void>;
 
     // ---------- Company Info ----------

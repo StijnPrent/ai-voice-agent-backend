@@ -42,6 +42,7 @@ export class CallLogRepository extends BaseRepository implements ICallLogReposit
             WHERE company_id = ?
               AND from_number IS NOT NULL
               AND from_number <> ''
+              AND started_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
             GROUP BY from_number
             ORDER BY last_started DESC
             LIMIT ?
@@ -60,6 +61,7 @@ export class CallLogRepository extends BaseRepository implements ICallLogReposit
             FROM company_call_sessions
             WHERE company_id = ?
               AND call_sid = ?
+              AND started_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
             LIMIT 1
         `;
 
@@ -88,6 +90,7 @@ export class CallLogRepository extends BaseRepository implements ICallLogReposit
             FROM company_call_sessions
             WHERE company_id = ?
               AND from_number = ?
+              AND started_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
             ORDER BY started_at DESC
         `;
 

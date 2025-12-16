@@ -8,6 +8,7 @@ import { ISchedulingRepository } from "../../data/interfaces/ISchedulingReposito
 import { IntegrationService } from "./IntegrationService";
 import { AssistantSyncError } from "../errors/AssistantSyncError";
 import { CustomInstructionService } from "./CustomInstructionService";
+import { IProductKnowledgeRepository } from "../../data/interfaces/IProductKnowledgeRepository";
 
 @injectable()
 export class AssistantSyncService {
@@ -21,7 +22,8 @@ export class AssistantSyncService {
         @inject("IVoiceRepository") private readonly voiceRepository: IVoiceRepository,
         @inject("ISchedulingRepository") private readonly schedulingRepository: ISchedulingRepository,
         @inject(IntegrationService) private readonly integrationService: IntegrationService,
-        @inject(CustomInstructionService) private readonly customInstructionService: CustomInstructionService
+        @inject(CustomInstructionService) private readonly customInstructionService: CustomInstructionService,
+        @inject("IProductKnowledgeRepository") private readonly productKnowledgeRepository: IProductKnowledgeRepository
     ) {}
 
     public async syncCompanyAssistant(companyId: bigint): Promise<void> {
@@ -120,12 +122,14 @@ export class AssistantSyncService {
             this.companyRepository.fetchCompanyCallers(companyId),
         ]);
 
-        const [appointmentTypes, staffMembers, calendarStatus, commerce, customInstructions] = await Promise.all([
+        const [appointmentTypes, staffMembers, calendarStatus, commerce, customInstructions, productCatalog] =
+            await Promise.all([
             this.schedulingRepository.fetchAppointmentTypes(companyId),
             this.schedulingRepository.fetchStaffMembers(companyId),
             this.integrationService.getCalendarIntegrationStatus(companyId),
             this.integrationService.getCommerceConnections(companyId),
             this.customInstructionService.list(companyId),
+            this.loadProductCatalog(companyId),
         ]);
         const calendarProvider = this.integrationService.pickCalendarProvider(calendarStatus);
         const hasGoogleIntegration = this.integrationService.isCalendarConnected(calendarStatus);
@@ -154,10 +158,32 @@ export class AssistantSyncService {
                 appointmentTypes,
                 staffMembers,
             },
-            productCatalog: [],
+            productCatalog,
             voiceSettings,
             customInstructions: customInstructions.map((i) => i.instruction),
         };
+    }
+
+    private async loadProductCatalog(companyId: bigint) {
+        try {
+            const products = await this.productKnowledgeRepository.listByCompany(companyId, "published");
+            return products.map((product) => ({
+                id: product.id.toString(),
+                name: product.name,
+                sku: product.sku,
+                summary: product.summary ?? product.content.summary ?? null,
+                synonyms: product.synonyms,
+                status: product.status,
+                version: product.version,
+                updatedAt: product.updatedAt.toISOString(),
+            }));
+        } catch (error) {
+            console.error(
+                `[AssistantSyncService] Failed to load product catalog for company ${companyId.toString()}`,
+                error
+            );
+            return [];
+        }
     }
 
     private extractAssistantSyncErrorDetails(error: unknown): { messages: string[]; statusCode: number } | null {

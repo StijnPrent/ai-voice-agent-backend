@@ -256,6 +256,41 @@ export class VoiceService {
                 console.error(`[${callSid}] Failed to load product catalog`, error);
             }
 
+            const assistantOutsideHoursOnly = company.assistantOutsideHoursOnly ?? false;
+            if (assistantOutsideHoursOnly) {
+                const insideOpeningHours = this.isWithinOpeningHours(companyContext.hours ?? []);
+                if (insideOpeningHours) {
+                    console.warn(
+                        `[${callSid}] Assistant restricted to outside opening hours; routing call without assistant.`
+                    );
+                    const transferTarget = this.resolveTransferTarget();
+
+                    if (!transferTarget) {
+                        console.error(
+                            `[${callSid}] No transfer target available while assistant is limited to outside hours; ending streaming session.`
+                        );
+                        this.stopStreaming("assistant outside hours only (no transfer target)");
+                        return;
+                    }
+
+                    try {
+                        await this.transferCall(transferTarget, {
+                            callSid,
+                            callerId: this.companyTwilioNumber ?? undefined,
+                            reason: "assistant_outside_hours_only",
+                        });
+                    } catch (transferError) {
+                        console.error(
+                            `[${callSid}] Failed to transfer call while assistant limited to outside hours`,
+                            transferError
+                        );
+                    } finally {
+                        this.stopStreaming("assistant outside hours only (transferred)");
+                    }
+                    return;
+                }
+            }
+
             if (!company.assistantEnabled) {
                 console.warn(
                     `[${callSid}] Assistant disabled for company ${company.id.toString()}; initiating direct transfer.`
@@ -670,6 +705,52 @@ export class VoiceService {
         }
 
         return result;
+    }
+
+    private isWithinOpeningHours(
+        hours: Array<{ dayOfWeek: number; isOpen: boolean; openTime: string | null; closeTime: string | null }>,
+        now: Date = new Date()
+    ): boolean {
+        if (!hours || hours.length === 0) {
+            return false;
+        }
+
+        const dayOfWeek = now.getDay();
+        const entry = hours.find((h) => h.dayOfWeek === dayOfWeek);
+        if (!entry || !entry.isOpen) {
+            return false;
+        }
+
+        const openMinutes = this.timeStringToMinutes(entry.openTime);
+        const closeMinutes = this.timeStringToMinutes(entry.closeTime);
+        if (openMinutes === null || closeMinutes === null) {
+            return false;
+        }
+        if (closeMinutes <= openMinutes) {
+            return false;
+        }
+
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
+    }
+
+    private timeStringToMinutes(value: string | null | undefined): number | null {
+        if (!value) return null;
+        const match = value.match(/^(\d{1,2}):(\d{2})/);
+        if (!match) return null;
+        const hours = Number.parseInt(match[1], 10);
+        const minutes = Number.parseInt(match[2], 10);
+        if (
+            Number.isNaN(hours) ||
+            Number.isNaN(minutes) ||
+            hours < 0 ||
+            hours > 23 ||
+            minutes < 0 ||
+            minutes > 59
+        ) {
+            return null;
+        }
+        return hours * 60 + minutes;
     }
 
     private resolveTransferTarget(): string | null {
@@ -1134,4 +1215,3 @@ type TwilioMediaStreamEvent = {
 };
 
 type NullableString = string | null | undefined;
-

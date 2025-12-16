@@ -20,8 +20,8 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
     public async createCompany(company: CompanyModel): Promise<void> {
         const sql = `
             INSERT INTO company
-                (id, email, twilio_number, assistant_enabled, assistant_outside_hours_only, email_verified_at, created_at, updated_at, use_type)
-            VALUES (?, ?, ?, ?, ?, NULL, NOW(), NOW(), ?)
+                (id, email, twilio_number, assistant_enabled, assistant_outside_hours_only, assistant_transfers_enabled, email_verified_at, created_at, updated_at, use_type)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NOW(), NOW(), ?)
         `;
         await this.execute<ResultSetHeader>(sql, [
             company.id,
@@ -29,13 +29,14 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             company.twilioNumber,
             company.assistantEnabled ? 1 : 0,
             company.assistantOutsideHoursOnly ? 1 : 0,
+            company.assistantTransfersEnabled ? 1 : 0,
             company.useType ?? null,
         ]);
     }
 
     public async findByTwilioNumber(twilioNumber: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.email_verified_at, c.use_type
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.assistant_transfers_enabled, c.email_verified_at, c.use_type
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.twilio_number = ?
@@ -57,6 +58,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                 : r.assistant_outside_hours_only === 1 ||
                   r.assistant_outside_hours_only === "1" ||
                   r.assistant_outside_hours_only === true;
+        const assistantTransfersEnabled =
+            typeof r.assistant_transfers_enabled === "undefined" || r.assistant_transfers_enabled === null
+                ? true
+                : r.assistant_transfers_enabled === 1 ||
+                  r.assistant_transfers_enabled === "1" ||
+                  r.assistant_transfers_enabled === true;
 
         const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
         const useType = r.use_type ? String(r.use_type) : null;
@@ -71,6 +78,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             assistantId,
             assistantEnabled,
             assistantOutsideHoursOnly,
+            assistantTransfersEnabled,
             emailVerifiedAt,
             useType
         );
@@ -78,7 +86,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async findByEmail(email: string): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.email_verified_at, c.use_type
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.assistant_transfers_enabled, c.email_verified_at, c.use_type
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.email = ?
@@ -100,6 +108,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                 : r.assistant_outside_hours_only === 1 ||
                   r.assistant_outside_hours_only === "1" ||
                   r.assistant_outside_hours_only === true;
+        const assistantTransfersEnabled =
+            typeof r.assistant_transfers_enabled === "undefined" || r.assistant_transfers_enabled === null
+                ? true
+                : r.assistant_transfers_enabled === 1 ||
+                  r.assistant_transfers_enabled === "1" ||
+                  r.assistant_transfers_enabled === true;
 
         const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
         const useType = r.use_type ? String(r.use_type) : null;
@@ -113,6 +127,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             assistantId,
             assistantEnabled,
             assistantOutsideHoursOnly,
+            assistantTransfersEnabled,
             emailVerifiedAt,
             useType
         );
@@ -120,7 +135,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
 
     public async findById(companyId: bigint): Promise<CompanyModel | null> {
         const sql = `
-            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.email_verified_at, c.use_type
+            SELECT c.id, c.email, c.twilio_number, c.created_at, c.updated_at, cd.name, c.vapi_assistant_id, c.assistant_enabled, c.assistant_outside_hours_only, c.assistant_transfers_enabled, c.email_verified_at, c.use_type
             FROM company c
             LEFT JOIN company_details cd ON c.id = cd.company_id
             WHERE c.id = ?
@@ -142,6 +157,12 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
                 : r.assistant_outside_hours_only === 1 ||
                   r.assistant_outside_hours_only === "1" ||
                   r.assistant_outside_hours_only === true;
+        const assistantTransfersEnabled =
+            typeof r.assistant_transfers_enabled === "undefined" || r.assistant_transfers_enabled === null
+                ? true
+                : r.assistant_transfers_enabled === 1 ||
+                  r.assistant_transfers_enabled === "1" ||
+                  r.assistant_transfers_enabled === true;
 
         const emailVerifiedAt = r.email_verified_at ? new Date(r.email_verified_at) : null;
         const useType = r.use_type ? String(r.use_type) : null;
@@ -155,6 +176,7 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
             assistantId,
             assistantEnabled,
             assistantOutsideHoursOnly,
+            assistantTransfersEnabled,
             emailVerifiedAt,
             useType
         );
@@ -197,6 +219,18 @@ export class CompanyRepository extends BaseRepository implements ICompanyReposit
         const sql = `
             UPDATE company
             SET assistant_outside_hours_only = ?, updated_at = NOW()
+            WHERE id = ?
+        `;
+        await this.execute<ResultSetHeader>(sql, [
+            enabled ? 1 : 0,
+            companyId
+        ]);
+    }
+
+    public async setAssistantTransfersEnabled(companyId: bigint, enabled: boolean): Promise<void> {
+        const sql = `
+            UPDATE company
+            SET assistant_transfers_enabled = ?, updated_at = NOW()
             WHERE id = ?
         `;
         await this.execute<ResultSetHeader>(sql, [
