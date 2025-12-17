@@ -1,4 +1,4 @@
-// src/clients/VapiClient.ts
+﻿// src/clients/VapiClient.ts
 import axios, { AxiosInstance } from 'axios';
 import WebSocket, { RawData } from 'ws';
 import { inject, injectable, delay } from 'tsyringe';
@@ -3823,7 +3823,7 @@ export class VapiClient {
       provider: '11labs',
       model: 'eleven_turbo_v2_5',
       voiceId,
-      stability: 0.4,
+      stability: 0.5,
       similarityBoost: 0.75,
       style: 0,
       useSpeakerBoost: false,
